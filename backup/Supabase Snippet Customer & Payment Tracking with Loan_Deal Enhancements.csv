@@ -1,0 +1,550 @@
+table_name,column_name,data_type
+ai_conversations,id,uuid
+ai_conversations,business_id,uuid
+ai_conversations,user_id,uuid
+ai_conversations,messages,jsonb
+ai_conversations,context_type,text
+ai_conversations,context_id,uuid
+ai_conversations,is_active,boolean
+ai_conversations,created_at,timestamp with time zone
+ai_conversations,updated_at,timestamp with time zone
+bank_accounts,id,integer
+bank_accounts,dealer_id,integer
+bank_accounts,plaid_account_id,text
+bank_accounts,account_name,text
+bank_accounts,account_type,text
+bank_accounts,last_four,text
+bank_accounts,current_balance,numeric
+bank_accounts,access_token,text
+bank_accounts,institution_name,text
+bank_accounts,created_at,timestamp with time zone
+bhph_contracts,id,uuid
+bhph_contracts,business_id,uuid
+bhph_contracts,deal_id,uuid
+bhph_contracts,inventory_id,uuid
+bhph_contracts,customer_name,text
+bhph_contracts,contact_info,text
+bhph_contracts,term_months,integer
+bhph_contracts,interest_rate,numeric
+bhph_contracts,purchase_price,numeric
+bhph_contracts,down_payment,numeric
+bhph_contracts,amount_financed,numeric
+bhph_contracts,monthly_payment,numeric
+bhph_contracts,first_payment_date,date
+bhph_contracts,status,text
+bhph_contracts,balance_remaining,numeric
+bhph_contracts,created_at,timestamp with time zone
+bhph_contracts,updated_at,timestamp with time zone
+bhph_loans,id,integer
+bhph_loans,vehicle_id,text
+bhph_loans,client_name,text
+bhph_loans,term_months,integer
+bhph_loans,interest_rate,numeric
+bhph_loans,purchase_price,numeric
+bhph_loans,down_payment,numeric
+bhph_loans,monthly_payment,numeric
+bhph_loans,balance,numeric
+bhph_loans,status,text
+bhph_loans,created_at,timestamp with time zone
+bhph_loans,customer_id,integer
+bhph_loans,first_payment_date,date
+bhph_loans,next_payment_date,date
+bhph_loans,payments_made,integer
+bhph_loans,payments_remaining,integer
+bhph_loans,dealer_id,integer
+bhph_payments,id,uuid
+bhph_payments,contract_id,uuid
+bhph_payments,payment_date,date
+bhph_payments,amount,numeric
+bhph_payments,principal,numeric
+bhph_payments,interest,numeric
+bhph_payments,late_fee,numeric
+bhph_payments,payment_method,text
+bhph_payments,notes,text
+bhph_payments,created_at,timestamp with time zone
+businesses,id,uuid
+businesses,name,text
+businesses,address,text
+businesses,city,text
+businesses,state,text
+businesses,zip,text
+businesses,phone,text
+businesses,email,text
+businesses,owner_id,uuid
+businesses,created_at,timestamp with time zone
+businesses,updated_at,timestamp with time zone
+categories,id,integer
+categories,dealer_id,integer
+categories,name,text
+categories,type,text
+categories,color,text
+categories,created_at,timestamp with time zone
+commission_defaults,id,integer
+commission_defaults,dealer_id,integer
+commission_defaults,role,text
+commission_defaults,percentage,numeric
+commission_defaults,flat_amount,numeric
+commission_defaults,created_at,timestamp with time zone
+commissions,id,integer
+commissions,dealer_id,integer
+commissions,deal_id,integer
+commissions,employee_id,integer
+commissions,employee_name,text
+commissions,role,text
+commissions,amount,numeric
+commissions,percentage,numeric
+commissions,status,text
+commissions,paid_date,date
+commissions,created_at,timestamp with time zone
+compliance_alerts,id,uuid
+compliance_alerts,business_id,uuid
+compliance_alerts,alert_type,text
+compliance_alerts,severity,text
+compliance_alerts,title,text
+compliance_alerts,message,text
+compliance_alerts,action_url,text
+compliance_alerts,action_label,text
+compliance_alerts,related_type,text
+compliance_alerts,related_id,uuid
+compliance_alerts,trigger_date,date
+compliance_alerts,due_date,date
+compliance_alerts,is_read,boolean
+compliance_alerts,read_at,timestamp with time zone
+compliance_alerts,is_dismissed,boolean
+compliance_alerts,dismissed_at,timestamp with time zone
+compliance_alerts,dismissed_by,uuid
+compliance_alerts,is_resolved,boolean
+compliance_alerts,resolved_at,timestamp with time zone
+compliance_alerts,created_at,timestamp with time zone
+compliance_tasks,id,integer
+compliance_tasks,dealer_id,integer
+compliance_tasks,deal_id,integer
+compliance_tasks,compliance_id,integer
+compliance_tasks,task_name,text
+compliance_tasks,due_date,date
+compliance_tasks,completed_date,date
+compliance_tasks,status,text
+compliance_tasks,notes,text
+compliance_tasks,created_at,timestamp with time zone
+customers,id,integer
+customers,name,text
+customers,phone,text
+customers,email,text
+customers,address,text
+customers,city,text
+customers,state,text
+customers,zip,text
+customers,drivers_license,text
+customers,notes,text
+customers,created_at,timestamp with time zone
+customers,first_name,text
+customers,last_name,text
+customers,dl_number,text
+customers,dealer_id,integer
+deal_documents,id,uuid
+deal_documents,deal_id,uuid
+deal_documents,template_id,uuid
+deal_documents,business_id,uuid
+deal_documents,document_name,text
+deal_documents,document_code,text
+deal_documents,html_content,text
+deal_documents,pdf_url,text
+deal_documents,pdf_storage_path,text
+deal_documents,status,text
+deal_documents,requires_signature,boolean
+deal_documents,buyer_signed_at,timestamp with time zone
+deal_documents,buyer_signature_url,text
+deal_documents,seller_signed_at,timestamp with time zone
+deal_documents,seller_signature_url,text
+deal_documents,dealer_signed_at,timestamp with time zone
+deal_documents,dealer_signature_url,text
+deal_documents,esign_envelope_id,text
+deal_documents,esign_status,text
+deal_documents,filed_at,timestamp with time zone
+deal_documents,filed_by,uuid
+deal_documents,confirmation_number,text
+deal_documents,generated_at,timestamp with time zone
+deal_documents,generated_by,uuid
+deal_documents,created_at,timestamp with time zone
+deal_documents,updated_at,timestamp with time zone
+dealer_forms,id,integer
+dealer_forms,dealer_id,integer
+dealer_forms,form_registry_id,integer
+dealer_forms,is_enabled,boolean
+dealer_forms,custom_template_url,text
+dealer_forms,field_mapping,jsonb
+dealer_forms,created_at,timestamp with time zone
+dealer_profiles,id,uuid
+dealer_profiles,business_id,uuid
+dealer_profiles,dealer_license_number,text
+dealer_profiles,dealer_license_state,text
+dealer_profiles,dealer_license_expiration,date
+dealer_profiles,federal_ein,text
+dealer_profiles,state_tax_id,text
+dealer_profiles,dmv_dealer_account,text
+dealer_profiles,surety_bond_number,text
+dealer_profiles,surety_bond_amount,numeric
+dealer_profiles,surety_bond_company,text
+dealer_profiles,surety_bond_expiration,date
+dealer_profiles,insurance_policy_number,text
+dealer_profiles,insurance_company,text
+dealer_profiles,insurance_expiration,date
+dealer_profiles,insurance_coverage_amount,numeric
+dealer_profiles,business_type,text
+dealer_profiles,bhph_enabled,boolean
+dealer_profiles,wholesale_enabled,boolean
+dealer_profiles,default_doc_fee,numeric
+dealer_profiles,default_apr,numeric
+dealer_profiles,max_bhph_term_months,integer
+dealer_profiles,principals,jsonb
+dealer_profiles,onboarding_completed,boolean
+dealer_profiles,onboarding_step,integer
+dealer_profiles,created_at,timestamp with time zone
+dealer_profiles,updated_at,timestamp with time zone
+dealer_reports,id,uuid
+dealer_reports,business_id,uuid
+dealer_reports,requirement_id,uuid
+dealer_reports,period_label,text
+dealer_reports,period_start,date
+dealer_reports,period_end,date
+dealer_reports,due_date,date
+dealer_reports,status,text
+dealer_reports,report_data,jsonb
+dealer_reports,pdf_url,text
+dealer_reports,pdf_storage_path,text
+dealer_reports,filed_at,timestamp with time zone
+dealer_reports,filed_by,uuid
+dealer_reports,confirmation_number,text
+dealer_reports,filing_notes,text
+dealer_reports,reminder_7_day_sent,boolean
+dealer_reports,reminder_3_day_sent,boolean
+dealer_reports,reminder_1_day_sent,boolean
+dealer_reports,reminder_overdue_sent,boolean
+dealer_reports,created_at,timestamp with time zone
+dealer_reports,updated_at,timestamp with time zone
+dealer_settings,id,integer
+dealer_settings,dealer_name,text
+dealer_settings,state,text
+dealer_settings,county,text
+dealer_settings,dealer_license,text
+dealer_settings,address,text
+dealer_settings,city,text
+dealer_settings,zip,text
+dealer_settings,phone,text
+dealer_settings,email,text
+dealer_settings,logo_url,text
+dealer_settings,created_at,timestamp with time zone
+deals,id,integer
+deals,vehicle_id,text
+deals,purchaser_name,text
+deals,date_of_sale,date
+deals,salesman,text
+deals,price,numeric
+deals,balance_due,numeric
+deals,created_at,timestamp with time zone
+deals,customer_id,integer
+deals,deal_status,text
+deals,phone,text
+deals,address,text
+deals,city,text
+deals,state,text
+deals,zip,text
+deals,doc_fee,numeric
+deals,sales_tax,numeric
+deals,total_price,numeric
+deals,down_payment,numeric
+deals,trade_allowance,numeric
+deals,trade_vin,text
+deals,deal_type,text
+deals,sale_price,numeric
+deals,trade_payoff,numeric
+deals,amount_financed,numeric
+deals,apr,numeric
+deals,term_months,integer
+deals,monthly_payment,numeric
+deals,first_payment_date,date
+deals,total_of_payments,numeric
+deals,dealer_id,integer
+document_packages,id,integer
+document_packages,dealer_id,integer
+document_packages,name,text
+document_packages,description,text
+document_packages,deal_type,text
+document_packages,form_ids,ARRAY
+document_packages,created_at,timestamp with time zone
+document_rules,id,integer
+document_rules,dealer_id,integer
+document_rules,form_id,integer
+document_rules,trigger_event,text
+document_rules,deal_types,ARRAY
+document_rules,conditions,jsonb
+document_rules,is_required,boolean
+document_rules,auto_include,boolean
+document_rules,sort_order,integer
+document_rules,created_at,timestamp with time zone
+document_templates,id,uuid
+document_templates,name,text
+document_templates,code,text
+document_templates,state_code,text
+document_templates,document_type,text
+document_templates,category,text
+document_templates,required_for,ARRAY
+document_templates,is_required,boolean
+document_templates,html_template,text
+document_templates,css_styles,text
+document_templates,field_mappings,jsonb
+document_templates,page_size,text
+document_templates,orientation,text
+document_templates,margins,jsonb
+document_templates,signature_fields,jsonb
+document_templates,version,text
+document_templates,effective_date,date
+document_templates,supersedes_template_id,uuid
+document_templates,is_active,boolean
+document_templates,created_at,timestamp with time zone
+document_templates,updated_at,timestamp with time zone
+employees,id,integer
+employees,name,text
+employees,active,boolean
+employees,roles,ARRAY
+employees,created_at,timestamp with time zone
+employees,dealer_id,integer
+financing_settings,id,uuid
+financing_settings,business_id,uuid
+financing_settings,setting_name,text
+financing_settings,financing_type,text
+financing_settings,interest_rate,numeric
+financing_settings,credit_line_amount,numeric
+financing_settings,lender_name,text
+financing_settings,account_number,text
+financing_settings,contact_name,text
+financing_settings,contact_phone,text
+financing_settings,contact_email,text
+financing_settings,notes,text
+financing_settings,active,boolean
+financing_settings,created_at,timestamp with time zone
+form_discovery_log,id,integer
+form_discovery_log,dealer_id,integer
+form_discovery_log,state,text
+form_discovery_log,discovery_date,timestamp with time zone
+form_discovery_log,forms_found,integer
+form_discovery_log,forms_added,integer
+form_discovery_log,ai_response,jsonb
+form_discovery_log,status,text
+form_registry,id,integer
+form_registry,state,text
+form_registry,county,text
+form_registry,form_number,text
+form_registry,form_name,text
+form_registry,category,text
+form_registry,required_for,ARRAY
+form_registry,source_url,text
+form_registry,description,text
+form_registry,is_active,boolean
+form_registry,last_verified,date
+form_registry,created_at,timestamp with time zone
+form_registry,is_fillable,boolean
+form_registry,ai_discovered,boolean
+form_registry,usage_trigger,text
+form_registry,deal_type,ARRAY
+form_registry,auto_generate,boolean
+form_registry,deadline_days,integer
+form_registry,deadline_description,text
+form_registry,instructions,text
+form_registry,template_available,boolean
+form_templates,id,integer
+form_templates,form_registry_id,integer
+form_templates,dealer_id,integer
+form_templates,template_url,text
+form_templates,field_mapping,jsonb
+form_templates,is_custom,boolean
+form_templates,version,text
+form_templates,created_at,timestamp with time zone
+generated_documents,id,integer
+generated_documents,deal_id,integer
+generated_documents,form_registry_id,integer
+generated_documents,document_url,text
+generated_documents,status,text
+generated_documents,signed_at,timestamp with time zone
+generated_documents,signed_by,text
+generated_documents,docusign_envelope_id,text
+generated_documents,created_at,timestamp with time zone
+inventory,id,text
+inventory,year,integer
+inventory,make,text
+inventory,model,text
+inventory,trim,text
+inventory,vin,text
+inventory,miles,integer
+inventory,color,text
+inventory,purchased_from,text
+inventory,purchase_price,numeric
+inventory,sale_price,numeric
+inventory,profit,numeric
+inventory,status,text
+inventory,created_at,timestamp with time zone
+inventory,stock_number,text
+inventory,mileage,integer
+inventory,dealer_id,integer
+inventory,photos,ARRAY
+payments,id,integer
+payments,loan_id,integer
+payments,customer_id,integer
+payments,vehicle_id,text
+payments,amount,numeric
+payments,payment_date,date
+payments,due_date,date
+payments,method,text
+payments,status,text
+payments,late_fee,numeric
+payments,notes,text
+payments,created_at,timestamp with time zone
+payroll,id,uuid
+payroll,business_id,uuid
+payroll,employee_id,uuid
+payroll,pay_period_start,date
+payroll,pay_period_end,date
+payroll,total_commissions,numeric
+payroll,total_hours,numeric
+payroll,hourly_rate,numeric
+payroll,hourly_pay,numeric
+payroll,bonuses,numeric
+payroll,deductions,numeric
+payroll,total_pay,numeric
+payroll,payment_date,date
+payroll,payment_method,text
+payroll,status,text
+payroll,notes,text
+payroll,created_at,timestamp with time zone
+plaid_transactions,id,uuid
+plaid_transactions,business_id,uuid
+plaid_transactions,bank_account_id,uuid
+plaid_transactions,plaid_transaction_id,text
+plaid_transactions,date,date
+plaid_transactions,amount,numeric
+plaid_transactions,name,text
+plaid_transactions,plaid_category,ARRAY
+plaid_transactions,pending,boolean
+plaid_transactions,matched_inventory_id,uuid
+plaid_transactions,category_id,uuid
+plaid_transactions,imported,boolean
+plaid_transactions,notes,text
+plaid_transactions,created_at,timestamp with time zone
+reporting_requirements,id,uuid
+reporting_requirements,state_code,text
+reporting_requirements,report_name,text
+reporting_requirements,report_code,text
+reporting_requirements,report_type,text
+reporting_requirements,frequency,text
+reporting_requirements,due_day,integer
+reporting_requirements,due_months,ARRAY
+reporting_requirements,grace_period_days,integer
+reporting_requirements,form_number,text
+reporting_requirements,form_name,text
+reporting_requirements,form_url,text
+reporting_requirements,filing_url,text
+reporting_requirements,late_penalty_description,text
+reporting_requirements,late_penalty_flat,numeric
+reporting_requirements,late_penalty_pct,numeric
+reporting_requirements,applies_to,ARRAY
+reporting_requirements,is_mandatory,boolean
+reporting_requirements,description,text
+reporting_requirements,instructions,text
+reporting_requirements,data_needed,jsonb
+reporting_requirements,is_active,boolean
+reporting_requirements,created_at,timestamp with time zone
+state_compliance,id,integer
+state_compliance,state,text
+state_compliance,requirement_type,text
+state_compliance,name,text
+state_compliance,frequency,text
+state_compliance,due_day,integer
+state_compliance,form_number,text
+state_compliance,notes,text
+state_compliance,is_active,boolean
+state_compliance,penalty_amount,numeric
+state_compliance_rules,id,uuid
+state_compliance_rules,state_code,text
+state_compliance_rules,state_name,text
+state_compliance_rules,base_sales_tax_rate,numeric
+state_compliance_rules,has_county_tax,boolean
+state_compliance_rules,has_city_tax,boolean
+state_compliance_rules,tax_on_trade_difference,boolean
+state_compliance_rules,max_trade_in_credit,numeric
+state_compliance_rules,doc_fee_cap,numeric
+state_compliance_rules,doc_fee_must_disclose,boolean
+state_compliance_rules,title_fee,numeric
+state_compliance_rules,registration_base_fee,numeric
+state_compliance_rules,temp_permit_fee,numeric
+state_compliance_rules,bhph_max_apr,numeric
+state_compliance_rules,bhph_late_fee_cap,numeric
+state_compliance_rules,bhph_late_fee_pct_cap,numeric
+state_compliance_rules,bhph_right_to_cure_days,integer
+state_compliance_rules,bhph_repo_notice_required,boolean
+state_compliance_rules,bhph_repo_notice_days,integer
+state_compliance_rules,title_submission_days,integer
+state_compliance_rules,temp_permit_validity_days,integer
+state_compliance_rules,required_deal_documents,jsonb
+state_compliance_rules,required_bhph_documents,jsonb
+state_compliance_rules,required_trade_documents,jsonb
+state_compliance_rules,sales_tax_frequency,text
+state_compliance_rules,sales_tax_due_day,integer
+state_compliance_rules,dmv_website,text
+state_compliance_rules,tax_website,text
+state_compliance_rules,dealer_board_website,text
+state_compliance_rules,notes,text
+state_compliance_rules,last_updated,date
+state_compliance_rules,is_active,boolean
+tax_jurisdictions,id,uuid
+tax_jurisdictions,state_code,text
+tax_jurisdictions,county_name,text
+tax_jurisdictions,county_fips,text
+tax_jurisdictions,city_name,text
+tax_jurisdictions,zip_codes,ARRAY
+tax_jurisdictions,state_rate,numeric
+tax_jurisdictions,county_rate,numeric
+tax_jurisdictions,city_rate,numeric
+tax_jurisdictions,special_district_rate,numeric
+tax_jurisdictions,total_rate,numeric
+tax_jurisdictions,effective_date,date
+tax_jurisdictions,expiration_date,date
+tax_jurisdictions,is_active,boolean
+tax_jurisdictions,created_at,timestamp with time zone
+time_clock,id,uuid
+time_clock,business_id,uuid
+time_clock,employee_id,uuid
+time_clock,clock_in,timestamp with time zone
+time_clock,clock_out,timestamp with time zone
+time_clock,total_hours,numeric
+time_clock,paid,boolean
+time_clock,payroll_id,uuid
+time_clock,notes,text
+time_clock,created_at,timestamp with time zone
+transactions,id,integer
+transactions,dealer_id,integer
+transactions,bank_account_id,integer
+transactions,plaid_transaction_id,text
+transactions,date,date
+transactions,amount,numeric
+transactions,vendor,text
+transactions,plaid_category,text
+transactions,user_category,text
+transactions,status,text
+transactions,created_at,timestamp with time zone
+user_settings,id,uuid
+user_settings,user_id,uuid
+user_settings,business_id,uuid
+user_settings,role,text
+user_settings,commission_structure,text
+user_settings,auto_sync_plaid,boolean
+user_settings,email_notifications,boolean
+user_settings,last_login,timestamp with time zone
+user_settings,created_at,timestamp with time zone
+user_settings,updated_at,timestamp with time zone
+utah_fees,id,integer
+utah_fees,fee_type,text
+utah_fees,category,text
+utah_fees,county_state,text
+utah_fees,value,numeric
+utah_fees,effective_date,date
+utah_fees,notes,text
