@@ -40,6 +40,9 @@ export default function Layout() {
   const { dealer, clearDealer } = useStore();
   const navigate = useNavigate();
 
+  // Check if this is the admin (OG DiX Motor Club)
+  const isAdmin = dealer?.dealer_name === 'OG DiX Motor Club';
+
   useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 768);
@@ -170,6 +173,37 @@ export default function Layout() {
             {(sidebarOpen || isMobile) && <span>{item.label}</span>}
           </NavLink>
         ))}
+
+        {/* Admin Dev Console - Only for OG DiX Motor Club */}
+        {isAdmin && (
+          <NavLink
+            to="/admin/dev-console"
+            onClick={onNavClick}
+            style={({ isActive }) => ({
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: (sidebarOpen || isMobile) ? '10px 12px' : '10px',
+              borderRadius: '8px',
+              color: '#ef4444',
+              backgroundColor: isActive ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
+              textDecoration: 'none',
+              fontSize: '14px',
+              fontWeight: '600',
+              marginTop: '12px',
+              justifyContent: (sidebarOpen || isMobile) ? 'flex-start' : 'center',
+              borderLeft: isActive ? '3px solid #ef4444' : '3px solid transparent',
+              transition: 'all 0.15s ease'
+            })}
+            title={!sidebarOpen && !isMobile ? 'Dev Console' : undefined}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+            {(sidebarOpen || isMobile) && <span>Dev Console</span>}
+          </NavLink>
+        )}
       </nav>
 
       <div style={{ padding: '12px', borderTop: `1px solid ${theme.border}` }}>
