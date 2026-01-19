@@ -3,24 +3,15 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import AIAssistant from './AIAssistant';
 
-// Theme Context - export so pages can use it
-const ThemeContext = createContext({
-  darkMode: true,
-  setDarkMode: () => {},
+// Theme context for dark mode
+const ThemeContext = createContext(null);
+export const useTheme = () => ({
   theme: {
-    dark: true,
-    bg: '#09090b',
-    bgCard: '#18181b',
-    bgCardHover: '#27272a',
-    border: '#27272a',
-    text: '#ffffff',
-    textSecondary: '#a1a1aa',
-    textMuted: '#71717a',
-    accent: '#f97316',
-    accentBg: 'rgba(249,115,22,0.15)'
+    bg: '#09090b', bgCard: '#18181b', border: '#27272a',
+    text: '#ffffff', textSecondary: '#a1a1aa', textMuted: '#71717a',
+    accent: '#f97316', accentBg: 'rgba(249,115,22,0.15)'
   }
 });
-export const useTheme = () => useContext(ThemeContext);
 
 export default function Layout() {
   const [showAI, setShowAI] = useState(false);
