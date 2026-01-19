@@ -2,83 +2,319 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
-import { Building2, ChevronRight, Plus, Loader2 } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { dealerId, setDealer, fetchAllData } = useStore();
-  const [dealers, setDealers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selecting, setSelecting] = useState(null);
+  const { setDealer } = useStore();
+  
+  const [mode, setMode] = useState('login'); // 'login' or 'signup'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [dealerName, setDealerName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
 
+  // Check if already logged in
   useEffect(() => {
-    if (dealerId) {
-      navigate('/dashboard');
-      return;
-    }
-    loadDealers();
-  }, [dealerId]);
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        await loadDealerForUser(session.user.id);
+      }
+    };
+    checkSession();
+  }, []);
 
-  const loadDealers = async () => {
-    const { data, error } = await supabase
+  // Load dealer for authenticated user
+  const loadDealerForUser = async (userId) => {
+    const { data: dealer, error } = await supabase
       .from('dealer_settings')
       .select('*')
-      .order('created_at', { ascending: false });
-    if (!error) setDealers(data || []);
-    setLoading(false);
+      .eq('owner_user_id', userId)
+      .single();
+
+    if (dealer) {
+      setDealer(dealer);
+      navigate('/dashboard');
+    }
   };
 
-  const selectDealer = async (dealer) => {
-    setSelecting(dealer.id);
+  // Handle Login
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (authError) {
+      setError(authError.message);
+      setLoading(false);
+      return;
+    }
+
+    // Load dealer for this user
+    const { data: dealer, error: dealerError } = await supabase
+      .from('dealer_settings')
+      .select('*')
+      .eq('owner_user_id', data.user.id)
+      .single();
+
+    if (dealerError || !dealer) {
+      setError('No dealership found for this account. Please sign up.');
+      await supabase.auth.signOut();
+      setLoading(false);
+      return;
+    }
+
     setDealer(dealer);
-    await fetchAllData();
     navigate('/dashboard');
   };
 
+  // Handle Signup
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    if (!dealerName.trim()) {
+      setError('Please enter your dealership name');
+      setLoading(false);
+      return;
+    }
+
+    // Create auth user
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password
+    });
+
+    if (authError) {
+      setError(authError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (!authData.user) {
+      setError('Signup failed. Please try again.');
+      setLoading(false);
+      return;
+    }
+
+    // Create dealer record
+    const { data: dealer, error: dealerError } = await supabase
+      .from('dealer_settings')
+      .insert({
+        dealer_name: dealerName.trim(),
+        owner_user_id: authData.user.id,
+        email: email,
+        subscription_status: 'trial',
+        trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+      })
+      .select()
+      .single();
+
+    if (dealerError) {
+      setError('Failed to create dealership: ' + dealerError.message);
+      setLoading(false);
+      return;
+    }
+
+    // Check if email confirmation is required
+    if (authData.user.identities?.length === 0) {
+      setMessage('Check your email to confirm your account, then log in.');
+      setMode('login');
+      setLoading(false);
+      return;
+    }
+
+    setDealer(dealer);
+    navigate('/dashboard');
+  };
+
+  const inputStyle = {
+    width: '100%',
+    padding: '14px 16px',
+    backgroundColor: '#18181b',
+    border: '1px solid #27272a',
+    borderRadius: '8px',
+    color: '#fff',
+    fontSize: '15px',
+    outline: 'none'
+  };
+
+  const buttonStyle = {
+    width: '100%',
+    padding: '14px',
+    backgroundColor: '#f97316',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '15px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    opacity: loading ? 0.7 : 1
+  };
+
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-      <img src="/OGDiXDealerApp.png" alt="OG DiX" style={{ height: '120px', marginBottom: '40px' }} />
-      
-      <div style={{ width: '100%', maxWidth: '500px' }}>
-        <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#fff', textAlign: 'center', marginBottom: '8px' }}>Welcome Back</h1>
-        <p style={{ fontSize: '16px', color: '#a1a1aa', textAlign: 'center', marginBottom: '32px' }}>Select your dealership to continue</p>
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#09090b',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px'
+    }}>
+      <div style={{
+        width: '100%',
+        maxWidth: '400px',
+        backgroundColor: '#18181b',
+        borderRadius: '16px',
+        padding: '40px',
+        border: '1px solid #27272a'
+      }}>
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+          <div style={{
+            width: '60px',
+            height: '60px',
+            backgroundColor: '#f97316',
+            borderRadius: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 16px',
+            fontSize: '24px',
+            fontWeight: '700',
+            color: '#fff'
+          }}>
+            OG
+          </div>
+          <h1 style={{ color: '#fff', fontSize: '24px', fontWeight: '700', margin: '0 0 4px' }}>
+            OG Dealer App
+          </h1>
+          <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
+            {mode === 'login' ? 'Sign in to your dealership' : 'Start your 14-day free trial'}
+          </p>
+        </div>
 
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '40px' }}><Loader2 className="animate-spin" size={32} color="#f97316" /></div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {dealers.map((dealer) => (
-              <div
-                key={dealer.id}
-                onClick={() => !selecting && selectDealer(dealer)}
-                style={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '16px', padding: '20px', cursor: selecting ? 'wait' : 'pointer', opacity: selecting && selecting !== dealer.id ? 0.5 : 1 }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <div style={{ width: '48px', height: '48px', backgroundColor: '#27272a', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Building2 size={24} color="#f97316" />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '16px', fontWeight: '600', color: '#fff' }}>{dealer.dealer_name}</div>
-                      <div style={{ fontSize: '14px', color: '#71717a' }}>{dealer.city}{dealer.city && dealer.state ? ', ' : ''}{dealer.state}</div>
-                    </div>
-                  </div>
-                  {selecting === dealer.id ? <Loader2 className="animate-spin" size={20} color="#f97316" /> : <ChevronRight size={20} color="#71717a" />}
-                </div>
-              </div>
-            ))}
-
-            <div
-              onClick={() => navigate('/onboarding')}
-              style={{ backgroundColor: 'transparent', border: '2px dashed #3f3f46', borderRadius: '16px', padding: '20px', cursor: 'pointer', marginTop: '8px' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-                <Plus size={20} color="#f97316" />
-                <span style={{ fontSize: '16px', fontWeight: '500', color: '#f97316' }}>Add New Dealership</span>
-              </div>
-            </div>
+        {/* Error Message */}
+        {error && (
+          <div style={{
+            padding: '12px 16px',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '8px',
+            color: '#ef4444',
+            fontSize: '14px',
+            marginBottom: '20px'
+          }}>
+            {error}
           </div>
         )}
+
+        {/* Success Message */}
+        {message && (
+          <div style={{
+            padding: '12px 16px',
+            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+            border: '1px solid rgba(34, 197, 94, 0.3)',
+            borderRadius: '8px',
+            color: '#22c55e',
+            fontSize: '14px',
+            marginBottom: '20px'
+          }}>
+            {message}
+          </div>
+        )}
+
+        {/* Form */}
+        <form onSubmit={mode === 'login' ? handleLogin : handleSignup}>
+          {mode === 'signup' && (
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                Dealership Name
+              </label>
+              <input
+                type="text"
+                value={dealerName}
+                onChange={(e) => setDealerName(e.target.value)}
+                placeholder="Your Dealership Name"
+                style={inputStyle}
+                required
+              />
+            </div>
+          )}
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+              Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@dealership.com"
+              style={inputStyle}
+              required
+            />
+          </div>
+
+          <div style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              style={inputStyle}
+              required
+              minLength={6}
+            />
+          </div>
+
+          <button type="submit" disabled={loading} style={buttonStyle}>
+            {loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : 'Start Free Trial')}
+          </button>
+        </form>
+
+        {/* Toggle Mode */}
+        <div style={{ textAlign: 'center', marginTop: '24px' }}>
+          {mode === 'login' ? (
+            <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
+              Don't have an account?{' '}
+              <button
+                onClick={() => { setMode('signup'); setError(''); setMessage(''); }}
+                style={{ color: '#f97316', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}
+              >
+                Sign up free
+              </button>
+            </p>
+          ) : (
+            <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
+              Already have an account?{' '}
+              <button
+                onClick={() => { setMode('login'); setError(''); setMessage(''); }}
+                style={{ color: '#f97316', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}
+              >
+                Sign in
+              </button>
+            </p>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ textAlign: 'center', marginTop: '32px', paddingTop: '24px', borderTop: '1px solid #27272a' }}>
+          <p style={{ color: '#52525b', fontSize: '12px', margin: 0 }}>
+            By signing up, you agree to our Terms of Service
+          </p>
+        </div>
       </div>
     </div>
   );

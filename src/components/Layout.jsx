@@ -78,8 +78,8 @@ export default function Layout() {
     root.style.setProperty('--accent-bg', darkMode ? 'rgba(249,115,22,0.15)' : 'rgba(249,115,22,0.1)');
   }, [darkMode]);
 
-  const handleLogout = () => {
-    clearDealer();
+  const handleLogout = async () => {
+    await clearDealer();
     navigate('/login');
   };
 
@@ -135,7 +135,9 @@ export default function Layout() {
             <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {dealer?.dealer_name || 'OG Dealer'}
             </div>
-            <div style={{ color: theme.textMuted, fontSize: '12px' }}>{dealer?.state || 'UT'}</div>
+            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+              {dealer?.subscription_status === 'trial' ? '14-day trial' : dealer?.state || 'UT'}
+            </div>
           </div>
         )}
       </div>
@@ -209,13 +211,13 @@ export default function Layout() {
             backgroundColor: 'transparent',
             border: `1px solid ${theme.border}`,
             borderRadius: '8px',
-            color: theme.textSecondary,
+            color: '#ef4444',
             fontSize: '14px',
             cursor: 'pointer'
           }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-          {(sidebarOpen || isMobile) && <span>Switch Dealer</span>}
+          {(sidebarOpen || isMobile) && <span>Logout</span>}
         </button>
       </div>
     </>

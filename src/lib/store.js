@@ -7,6 +7,7 @@ export const useStore = create(
     (set, get) => ({
       dealerId: null,
       dealer: null,
+      user: null,
       inventory: [],
       employees: [],
       bhphLoans: [],
@@ -16,7 +17,21 @@ export const useStore = create(
 
       setDealer: (dealer) => set({ dealer, dealerId: dealer?.id }),
       
-      clearDealer: () => set({ dealer: null, dealerId: null, inventory: [], employees: [], bhphLoans: [], deals: [], customers: [] }),
+      setUser: (user) => set({ user }),
+
+      clearDealer: async () => {
+        await supabase.auth.signOut();
+        set({ 
+          dealer: null, 
+          dealerId: null, 
+          user: null,
+          inventory: [], 
+          employees: [], 
+          bhphLoans: [], 
+          deals: [], 
+          customers: [] 
+        });
+      },
 
       fetchAllData: async () => {
         const { dealerId } = get();
