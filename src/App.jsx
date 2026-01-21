@@ -16,17 +16,20 @@ import BooksPage from './pages/BooksPage';
 import ReportsPage from './pages/ReportsPage';
 import DocumentRulesPage from './pages/DocumentRulesPage';
 import AdminDevConsole from './pages/AdminDevConsole';
+import TimeClockPage from './pages/TimeClockPage';
+import PayrollPage from './pages/PayrollPage';
+import DevConsolePage from './pages/DevConsolePage';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public routes - NO Layout wrapper */}
+        {/* Public routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/embed/:dealerId" element={<EmbedInventory />} />
         <Route path="/find-rig/:dealerId" element={<EmbedFindRig />} />
         
-        {/* Protected routes - WITH Layout wrapper (sidebar, nav) */}
+        {/* Protected routes with Layout */}
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -41,7 +44,10 @@ export default function App() {
           <Route path="/document-rules" element={<DocumentRulesPage />} />
           <Route path="/research" element={<ResearchPage />} />
           <Route path="/settings" element={<SettingsPage />} />
-<Route path="/admin/dev-console" element={<AdminDevConsole />} />
+          <Route path="/timeclock" element={<TimeClockPage />} />
+          <Route path="/payroll" element={<PayrollPage />} />
+          <Route path="/dev" element={<DevConsolePage />} />
+          <Route path="/admin/dev-console" element={<AdminDevConsole />} />
         </Route>
       </Routes>
     </BrowserRouter>

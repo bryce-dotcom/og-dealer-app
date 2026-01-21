@@ -24,13 +24,24 @@ const SendIcon = () => (
   </svg>
 );
 
+const SpeakerIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+  </svg>
+);
+
 export default function AIAssistant({ isOpen, onClose }) {
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: "Hey there! OG Arnie here. What can I help you with today?" }
+    { role: 'assistant', content: "Ay, what's good? O.G. Arnie here. You need somethin', I got you. What's the word?" }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voices, setVoices] = useState([]);
+  const [selectedVoice, setSelectedVoice] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -40,6 +51,38 @@ export default function AIAssistant({ isOpen, onClose }) {
   const speechSupported = typeof window !== 'undefined' && 
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
+  // Load available voices for text-to-speech
+  useEffect(() => {
+    const loadVoices = () => {
+      const availableVoices = speechSynthesis.getVoices();
+      setVoices(availableVoices);
+      // Find a deep, gruff voice for gangster grandpa Arnie
+      const preferredVoice = availableVoices.find(v => 
+        v.name.includes('Google UK English Male') ||
+        v.name.includes('Daniel') ||
+        v.name.includes('Google US English Male')
+      ) || availableVoices.find(v => 
+        v.name.includes('Male') || 
+        v.name.includes('David') || 
+        v.name.includes('James') ||
+        v.name.includes('Alex')
+      ) || availableVoices.find(v => v.lang.startsWith('en')) || availableVoices[0];
+      setSelectedVoice(preferredVoice);
+    };
+    
+    loadVoices();
+    if (typeof speechSynthesis !== 'undefined') {
+      speechSynthesis.onvoiceschanged = loadVoices;
+    }
+    
+    return () => { 
+      if (typeof speechSynthesis !== 'undefined') {
+        speechSynthesis.onvoiceschanged = null; 
+      }
+    };
+  }, []);
+
+  // Speech recognition setup
   useEffect(() => {
     if (speechSupported) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -52,12 +95,18 @@ export default function AIAssistant({ isOpen, onClose }) {
         const transcript = event.results[0][0].transcript;
         setInput(transcript);
         setIsListening(false);
+        // Auto-send in voice mode
+        if (voiceMode) {
+          setTimeout(() => {
+            handleSendWithText(transcript);
+          }, 300);
+        }
       };
 
       recognitionRef.current.onerror = () => setIsListening(false);
       recognitionRef.current.onend = () => setIsListening(false);
     }
-  }, []);
+  }, [voiceMode]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -67,7 +116,17 @@ export default function AIAssistant({ isOpen, onClose }) {
     if (isOpen) inputRef.current?.focus();
   }, [isOpen]);
 
+  // Stop speaking when modal closes
+  useEffect(() => {
+    if (!isOpen && isSpeaking) {
+      stopSpeaking();
+    }
+  }, [isOpen]);
+
   const toggleListening = () => {
+    if (isSpeaking) {
+      stopSpeaking();
+    }
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
@@ -75,6 +134,30 @@ export default function AIAssistant({ isOpen, onClose }) {
       recognitionRef.current?.start();
       setIsListening(true);
     }
+  };
+
+  const speakText = (text) => {
+    if (!voiceMode || !selectedVoice) return;
+    
+    // Cancel any ongoing speech
+    speechSynthesis.cancel();
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = selectedVoice;
+    utterance.rate = 0.9; // Slightly slower, deliberate like a wise old gangster
+    utterance.pitch = 0.75; // Deep, gruff gangster grandpa voice
+    utterance.volume = 1.0;
+    
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    
+    speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeaking = () => {
+    speechSynthesis.cancel();
+    setIsSpeaking(false);
   };
 
   const buildContext = () => ({
@@ -101,34 +184,142 @@ export default function AIAssistant({ isOpen, onClose }) {
     }))
   });
 
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
+  // Local fallback - gangster grandpa Arnie responses
+  const generateLocalResponse = (query) => {
+    const q = query.toLowerCase();
+    const fmt = (n) => (n || 0).toLocaleString();
+    
+    // Inventory
+    if (q.includes('inventory') || q.includes('car') || q.includes('vehicle') || q.includes('stock') || q.includes('lot')) {
+      const inStock = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale');
+      const totalValue = inStock.reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0);
+      
+      if (q.includes('how many') || q.includes('count')) {
+        return `Listen, we got ${inStock.length} rides on the lot. That's $${fmt(totalValue)} in iron sittin' there. Capisce?`;
+      }
+      if (q.includes('value') || q.includes('worth')) {
+        return `The inventory's worth about $${fmt(totalValue)}. That's ${inStock.length} vehicles, family. Good metal.`;
+      }
+      if (q.includes('list') || q.includes('show') || q.includes('what')) {
+        const list = inStock.slice(0, 5).map(v => `${v.year} ${v.make} ${v.model}`).join(', ');
+        return `Here's what we're workin' with: ${list}${inStock.length > 5 ? `, plus ${inStock.length - 5} more` : ''}. Solid rides, every one.`;
+      }
+      if (q.includes('for sale')) {
+        const forSale = (inventory || []).filter(v => v.status === 'For Sale');
+        return `We got ${forSale.length} cars marked for sale right now. Ready to move.`;
+      }
+      return `${inStock.length} vehicles on the lot, about $${fmt(totalValue)} worth. What else you need, family?`;
+    }
 
-    const userMessage = input.trim();
+    // Team
+    if (q.includes('team') || q.includes('employee') || q.includes('staff') || q.includes('who') || q.includes('crew')) {
+      const active = (employees || []).filter(e => e.active);
+      if (active.length === 0) return "Ain't got nobody in the system yet. We gotta fix that.";
+      const names = active.map(e => e.name).join(', ');
+      return `The crew? ${active.length} soldiers: ${names}. Good people, all of 'em.`;
+    }
+
+    // BHPH
+    if (q.includes('bhph') || q.includes('loan') || q.includes('owe') || q.includes('payment') || q.includes('financ')) {
+      const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
+      const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+      const monthly = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
+      
+      if (activeLoans.length === 0) return "No BHPH deals active right now. Clean slate.";
+      return `Got ${activeLoans.length} BHPH loans out there. People owe us $${fmt(totalOwed)}. That's $${fmt(monthly)} comin' in monthly. They better pay up.`;
+    }
+
+    // Deals
+    if (q.includes('deal') || q.includes('sale') || q.includes('sold') || q.includes('sell')) {
+      const allDeals = deals || [];
+      const totalRevenue = allDeals.reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0);
+      if (allDeals.length === 0) return "No deals closed yet. We gotta move some metal.";
+      return `${allDeals.length} deals done, $${fmt(totalRevenue)} in revenue. Keep that energy, family.`;
+    }
+
+    // Customers
+    if (q.includes('customer') || q.includes('client') || q.includes('buyer')) {
+      const count = (customers || []).length;
+      return count > 0 ? `${count} customers in the book. That's ${count} relationships, family.` : "Customer list is empty. Gotta build that network.";
+    }
+
+    // Greetings
+    if (q.includes('hello') || q.includes('hey') || q.includes('hi') || q.includes('what\'s up') || q.includes('yo')) {
+      return "Ay, what's good? O.G. Arnie here. What you need?";
+    }
+
+    // Help
+    if (q.includes('help') || q.includes('what can you')) {
+      return "I know everything about the lot - inventory, BHPH loans, deals, the crew, customers. Just ask me straight up.";
+    }
+
+    // Summary
+    if (q.includes('summary') || q.includes('overview') || q.includes('status')) {
+      const inStock = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale');
+      const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
+      const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+      return `Alright, here's the rundown: ${inStock.length} cars on the lot, ${activeLoans.length} BHPH loans worth $${fmt(totalOwed)}, ${(deals || []).length} deals closed, ${(employees || []).filter(e => e.active).length} on the team. We're movin'.`;
+    }
+
+    // Default
+    return "I hear you, but I ain't sure what you're askin'. Try inventory, BHPH, deals, team, or customers. I got all the numbers.";
+  };
+
+  const handleSendWithText = async (textToSend) => {
+    if (!textToSend.trim() || loading) return;
+
+    const userMessage = textToSend.trim();
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
+    let reply;
+    let isLocal = false;
+
     try {
+      // Try the API first
       const { data, error } = await supabase.functions.invoke('og-arnie-chat', {
         body: { message: userMessage, context: buildContext() }
       });
 
-      if (error) throw error;
+      console.log('API Response:', data, 'Error:', error);
 
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: data.reply || "Sorry, couldn't get a response." 
-      }]);
+      if (error) throw error;
+      reply = data?.reply;
+      
+      if (!reply) {
+        console.log('No reply in data, falling back to local');
+        throw new Error('No reply');
+      }
     } catch (err) {
-      console.error('AI Error:', err);
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: "Having trouble connecting. Check your internet and try again." 
-      }]);
-    } finally {
-      setLoading(false);
+      console.log('API unavailable:', err.message, '- using local fallback');
+      isLocal = true;
     }
+
+    // If no API reply, use local fallback
+    if (!reply) {
+      reply = generateLocalResponse(userMessage);
+      isLocal = true;
+    }
+
+    // Add indicator if using local mode (for debugging)
+    if (isLocal) {
+      reply = reply + "\n\n(Local mode - AI offline)";
+    }
+
+    setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+    
+    // Speak the response if voice mode is on (without the debug text)
+    if (voiceMode) {
+      const speakReply = reply.replace("\n\n(Local mode - AI offline)", "");
+      setTimeout(() => speakText(speakReply), 100);
+    }
+    
+    setLoading(false);
+  };
+
+  const handleSend = async () => {
+    await handleSendWithText(input);
   };
 
   const handleKeyPress = (e) => {
@@ -161,8 +352,8 @@ export default function AIAssistant({ isOpen, onClose }) {
       <div style={{
         width: '100%',
         maxWidth: '500px',
-        height: '600px',
-        maxHeight: '80vh',
+        height: '650px',
+        maxHeight: '85vh',
         backgroundColor: '#18181b',
         borderRadius: '20px',
         display: 'flex',
@@ -189,6 +380,32 @@ export default function AIAssistant({ isOpen, onClose }) {
             <div style={{ fontWeight: '600', color: '#fff', fontSize: '16px' }}>OG Arnie</div>
             <div style={{ fontSize: '12px', color: '#71717a' }}>AI Assistant • {dealer?.dealer_name}</div>
           </div>
+          
+          {/* Voice Mode Toggle */}
+          <button 
+            onClick={() => {
+              if (voiceMode) stopSpeaking();
+              setVoiceMode(!voiceMode);
+            }}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '20px',
+              border: voiceMode ? '2px solid #22c55e' : '1px solid #3f3f46',
+              backgroundColor: voiceMode ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
+              color: voiceMode ? '#22c55e' : '#71717a',
+              fontSize: '12px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s'
+            }}
+            title={voiceMode ? 'Voice mode ON - Arnie will speak' : 'Turn on voice mode'}
+          >
+            {voiceMode ? '🔊' : '🔇'} {voiceMode ? 'Voice ON' : 'Voice'}
+          </button>
+          
           <button onClick={onClose} style={{
             background: 'none',
             border: 'none',
@@ -198,6 +415,58 @@ export default function AIAssistant({ isOpen, onClose }) {
             lineHeight: 1
           }}>×</button>
         </div>
+
+        {/* Voice Settings Bar (when voice mode is on) */}
+        {voiceMode && (
+          <div style={{
+            padding: '10px 20px',
+            backgroundColor: 'rgba(34, 197, 94, 0.08)',
+            borderBottom: '1px solid #27272a',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            <span style={{ color: '#71717a', fontSize: '12px', whiteSpace: 'nowrap' }}>Voice:</span>
+            <select
+              value={selectedVoice?.name || ''}
+              onChange={(e) => setSelectedVoice(voices.find(v => v.name === e.target.value))}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                backgroundColor: '#09090b',
+                border: '1px solid #3f3f46',
+                borderRadius: '6px',
+                color: '#fff',
+                fontSize: '12px',
+                outline: 'none'
+              }}
+            >
+              {voices.filter(v => v.lang.startsWith('en')).map(v => (
+                <option key={v.name} value={v.name}>{v.name}</option>
+              ))}
+            </select>
+            {isSpeaking && (
+              <button 
+                onClick={stopSpeaking}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#ef4444',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                ⏹ Stop
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Messages */}
         <div style={{
@@ -219,9 +488,34 @@ export default function AIAssistant({ isOpen, onClose }) {
                 color: '#fff',
                 fontSize: '14px',
                 lineHeight: '1.5',
-                whiteSpace: 'pre-wrap'
+                whiteSpace: 'pre-wrap',
+                position: 'relative'
               }}>
                 {msg.content}
+                {/* Replay button for assistant messages when voice mode is on */}
+                {msg.role === 'assistant' && voiceMode && i > 0 && (
+                  <button
+                    onClick={() => speakText(msg.content)}
+                    style={{
+                      position: 'absolute',
+                      bottom: '4px',
+                      right: '4px',
+                      padding: '4px 6px',
+                      backgroundColor: 'rgba(255,255,255,0.1)',
+                      border: 'none',
+                      borderRadius: '4px',
+                      color: '#a1a1aa',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '2px'
+                    }}
+                    title="Replay this message"
+                  >
+                    <SpeakerIcon />
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -236,6 +530,20 @@ export default function AIAssistant({ isOpen, onClose }) {
               ))}
             </div>
           )}
+          {isSpeaking && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 12px',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              borderRadius: '8px',
+              marginBottom: '8px'
+            }}>
+              <span style={{ animation: 'pulse 1s infinite' }}>🔊</span>
+              <span style={{ color: '#22c55e', fontSize: '13px' }}>Arnie is speaking...</span>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -247,7 +555,14 @@ export default function AIAssistant({ isOpen, onClose }) {
           flexWrap: 'wrap'
         }}>
           {quickQueries.map((q, i) => (
-            <button key={i} onClick={() => { setInput(q.query); inputRef.current?.focus(); }} style={{
+            <button key={i} onClick={() => { 
+              if (voiceMode) {
+                handleSendWithText(q.query);
+              } else {
+                setInput(q.query); 
+                inputRef.current?.focus(); 
+              }
+            }} style={{
               padding: '8px 12px',
               borderRadius: '20px',
               border: '1px solid #3f3f46',
@@ -295,7 +610,7 @@ export default function AIAssistant({ isOpen, onClose }) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask OG Arnie anything..."
+              placeholder={voiceMode ? "Tap mic to talk or type..." : "Ask OG Arnie anything..."}
               style={{
                 flex: 1,
                 padding: '14px 16px',
@@ -309,18 +624,19 @@ export default function AIAssistant({ isOpen, onClose }) {
             />
             
             {speechSupported && (
-              <button onClick={toggleListening} style={{
+              <button onClick={toggleListening} disabled={isSpeaking} style={{
                 width: '50px',
                 height: '50px',
                 borderRadius: '14px',
                 border: 'none',
-                backgroundColor: isListening ? '#ef4444' : '#27272a',
+                backgroundColor: isListening ? '#ef4444' : (voiceMode ? '#22c55e' : '#27272a'),
                 color: '#fff',
-                cursor: 'pointer',
+                cursor: isSpeaking ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
+                opacity: isSpeaking ? 0.5 : 1
               }}>
                 {isListening ? <MicOffIcon /> : <MicIcon />}
               </button>
