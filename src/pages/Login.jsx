@@ -7,7 +7,7 @@ export default function Login() {
   const navigate = useNavigate();
   const { setDealer } = useStore();
   
-  const [mode, setMode] = useState('login'); // 'login' or 'signup'
+  const [mode, setMode] = useState('login'); // 'login', 'signup', or 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [dealerName, setDealerName] = useState('');
@@ -73,6 +73,27 @@ export default function Login() {
 
     setDealer(dealer);
     navigate('/dashboard');
+  };
+
+  // Handle Password Reset
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/login`
+    });
+
+    if (resetError) {
+      setError(resetError.message);
+      setLoading(false);
+      return;
+    }
+
+    setMessage('Check your email for a password reset link.');
+    setLoading(false);
   };
 
   // Handle Signup
@@ -198,7 +219,9 @@ export default function Login() {
             OG Dealer App
           </h1>
           <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
-            {mode === 'login' ? 'Sign in to your dealership' : 'Start your 14-day free trial'}
+            {mode === 'login' && 'Sign in to your dealership'}
+            {mode === 'signup' && 'Start your 14-day free trial'}
+            {mode === 'forgot' && 'Reset your password'}
           </p>
         </div>
 
@@ -233,7 +256,7 @@ export default function Login() {
         )}
 
         {/* Form */}
-        <form onSubmit={mode === 'login' ? handleLogin : handleSignup}>
+        <form onSubmit={mode === 'login' ? handleLogin : mode === 'signup' ? handleSignup : handleForgotPassword}>
           {mode === 'signup' && (
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
@@ -264,29 +287,49 @@ export default function Login() {
             />
           </div>
 
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              style={inputStyle}
-              required
-              minLength={6}
-            />
-          </div>
+          {mode !== 'forgot' && (
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                style={inputStyle}
+                required
+                minLength={6}
+              />
+            </div>
+          )}
+
+          {mode === 'login' && (
+            <div style={{ textAlign: 'right', marginBottom: '16px' }}>
+              <button
+                type="button"
+                onClick={() => { setMode('forgot'); setError(''); setMessage(''); }}
+                style={{ color: '#71717a', background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
+
+          {mode === 'forgot' && <div style={{ marginBottom: '24px' }} />}
 
           <button type="submit" disabled={loading} style={buttonStyle}>
-            {loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : 'Start Free Trial')}
+            {loading ? 'Please wait...' : (
+              mode === 'login' ? 'Sign In' :
+              mode === 'signup' ? 'Start Free Trial' :
+              'Send Reset Link'
+            )}
           </button>
         </form>
 
         {/* Toggle Mode */}
         <div style={{ textAlign: 'center', marginTop: '24px' }}>
-          {mode === 'login' ? (
+          {mode === 'login' && (
             <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
               Don't have an account?{' '}
               <button
@@ -296,7 +339,8 @@ export default function Login() {
                 Sign up free
               </button>
             </p>
-          ) : (
+          )}
+          {mode === 'signup' && (
             <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
               Already have an account?{' '}
               <button
@@ -304,6 +348,17 @@ export default function Login() {
                 style={{ color: '#f97316', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}
               >
                 Sign in
+              </button>
+            </p>
+          )}
+          {mode === 'forgot' && (
+            <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
+              Remember your password?{' '}
+              <button
+                onClick={() => { setMode('login'); setError(''); setMessage(''); }}
+                style={{ color: '#f97316', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}
+              >
+                Back to sign in
               </button>
             </p>
           )}
