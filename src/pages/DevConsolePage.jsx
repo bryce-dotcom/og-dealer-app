@@ -17,12 +17,17 @@ export default function DevConsolePage() {
   const [promoCodes, setPromoCodes] = useState([]);
   const [messageTemplates, setMessageTemplates] = useState([]);
   
-  // Form Library states
-  const [formRegistry, setFormRegistry] = useState([]);
-  const [dealerForms, setDealerForms] = useState([]);
+  // Form Library states - 3 tabs system
+  const [formLibraryTab, setFormLibraryTab] = useState('rules');
+  const [complianceRules, setComplianceRules] = useState([]);
+  const [formStaging, setFormStaging] = useState([]);
+  const [formLibrary, setFormLibrary] = useState([]);
   const [formFilter, setFormFilter] = useState('all');
   const [formModal, setFormModal] = useState(null);
+  const [fieldMapperModal, setFieldMapperModal] = useState(null);
   const [aiResearching, setAiResearching] = useState(false);
+  const [ruleModal, setRuleModal] = useState(null);
+  const [stagingFilter, setStagingFilter] = useState('pending');
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -98,21 +103,21 @@ export default function DevConsolePage() {
       whenToUse: 'Disable users who leave the company. Delete only for test accounts.'
     },
     forms: {
-      title: 'Form Library',
-      description: 'Manage state-specific DMV forms and compliance documents.',
+      title: 'Form Library (3-Tab System)',
+      description: 'Complete form management with compliance rules, AI discovery staging, and production library.',
       functions: [
-        { name: 'View Forms', desc: 'See all forms in the registry by state and category' },
-        { name: 'Add Form', desc: 'Manually add a new form to the library' },
-        { name: 'AI Research', desc: 'Use AI to discover required forms for a state' },
-        { name: 'Enable/Disable', desc: 'Toggle which forms are active for your dealership' },
-        { name: 'Categories', desc: 'deal, title, compliance, financing, tax' },
+        { name: 'Rules Tab', desc: 'State compliance rules with deadlines, penalties, and required forms' },
+        { name: 'Staging Tab', desc: 'AI-discovered forms pending review. Analyze, Promote, or Reject.' },
+        { name: 'Library Tab', desc: 'Production-ready forms with field mappings for auto-fill' },
+        { name: 'Field Mapper', desc: 'Click forms <99% in Library to map PDF fields to deal context' },
+        { name: 'AI Discover', desc: 'Use AI to find forms for your state (adds to Staging)' },
       ],
       warnings: [
-        'AI Research calls the Anthropic API (uses credits)',
-        'Disabling a form hides it from deal workflows',
-        'Some forms are legally required - check before disabling'
+        'AI Discover calls external APIs (uses credits)',
+        'Forms must reach 99% mapping to be fully functional',
+        'Compliance rules should be verified before relying on them'
       ],
-      whenToUse: 'Set up when onboarding a new state. Review quarterly for compliance updates.'
+      whenToUse: 'Set up rules when onboarding a new state. Review staging weekly. Map fields for auto-fill.'
     },
     data: {
       title: 'Data Browser',
@@ -242,15 +247,16 @@ export default function DevConsolePage() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [dealers, users, feedback, audit, promos, templates, forms, dForms] = await Promise.all([
+      const [dealers, users, feedback, audit, promos, templates, rules, staging, library] = await Promise.all([
         supabase.from('dealer_settings').select('*').order('id'),
         supabase.from('employees').select('*').order('name'),
         supabase.from('feedback').select('*').order('created_at', { ascending: false }),
         supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(100),
         supabase.from('promo_codes').select('*').order('created_at', { ascending: false }),
         supabase.from('message_templates').select('*').order('name'),
-        supabase.from('form_registry').select('*').order('state, form_number'),
-        supabase.from('dealer_forms').select('*').eq('dealer_id', dealerId),
+        supabase.from('compliance_rules').select('*').order('state, category'),
+        supabase.from('form_staging').select('*').order('created_at', { ascending: false }),
+        supabase.from('form_library').select('*').order('state, form_number'),
       ]);
       if (dealers.data) setAllDealers(dealers.data);
       if (users.data) setAllUsers(users.data);
@@ -258,13 +264,14 @@ export default function DevConsolePage() {
       if (audit.data) setAuditLogs(audit.data);
       if (promos.data) setPromoCodes(promos.data);
       if (templates.data) setMessageTemplates(templates.data);
-      if (forms.data) setFormRegistry(forms.data);
-      if (dForms.data) setDealerForms(dForms.data);
+      if (rules.data) setComplianceRules(rules.data);
+      if (staging.data) setFormStaging(staging.data);
+      if (library.data) setFormLibrary(library.data);
     } catch (err) { console.error(err); }
     setLoading(false);
   };
 
-  const tables = ['inventory', 'deals', 'bhph_loans', 'customers', 'employees', 'dealer_settings', 'feedback', 'audit_log', 'promo_codes', 'message_templates', 'form_registry', 'dealer_forms'];
+  const tables = ['inventory', 'deals', 'bhph_loans', 'customers', 'employees', 'dealer_settings', 'feedback', 'audit_log', 'promo_codes', 'message_templates', 'compliance_rules', 'form_staging', 'form_library'];
 
   const loadTableData = async (tableName) => {
     setLoading(true);
@@ -446,63 +453,43 @@ export default function DevConsolePage() {
     showToast('SMS integration not configured yet', 'error');
   };
 
-  // ========== FORM LIBRARY FUNCTIONS ==========
-  
-  const saveForm = async () => {
-    if (!formModal) return;
-    setLoading(true);
-    try {
-      if (formModal.id) {
-        await supabase.from('form_registry').update({
-          state: formModal.state,
-          county: formModal.county,
-          form_number: formModal.form_number,
-          form_name: formModal.form_name,
-          category: formModal.category,
-          source_url: formModal.source_url,
-          description: formModal.description,
-          is_fillable: formModal.is_fillable,
-        }).eq('id', formModal.id);
-        await logAudit('UPDATE', 'form_registry', formModal.id);
-        showToast('Form updated');
-      } else {
-        const { data } = await supabase.from('form_registry').insert({
-          state: formModal.state,
-          county: formModal.county,
-          form_number: formModal.form_number,
-          form_name: formModal.form_name,
-          category: formModal.category,
-          source_url: formModal.source_url,
-          description: formModal.description,
-          is_fillable: formModal.is_fillable || false,
-          ai_discovered: false,
-          last_verified: new Date().toISOString().split('T')[0],
-        }).select().single();
-        await logAudit('INSERT', 'form_registry', data.id);
-        // Link to current dealer
-        await supabase.from('dealer_forms').insert({
-          dealer_id: dealerId,
-          form_registry_id: data.id,
-          is_enabled: true,
-        });
-        showToast('Form added');
-      }
-      setFormModal(null);
-      loadAllData();
-    } catch (err) { 
-      showToast('Error: ' + err.message, 'error'); 
-    }
-    setLoading(false);
+  // ========== FORM LIBRARY FUNCTIONS (3-Tab System) ==========
+
+  const formCategories = ['deal', 'title', 'compliance', 'financing', 'tax'];
+  const categoryColors = {
+    deal: '#3b82f6',
+    title: '#8b5cf6',
+    compliance: '#ef4444',
+    financing: '#22c55e',
+    tax: '#f97316',
   };
 
-  const deleteForm = async (id) => {
-    if (!confirm('Delete this form from the library?')) return;
+  // === RULES TAB (compliance_rules) ===
+  const saveRule = async () => {
+    if (!ruleModal) return;
     setLoading(true);
     try {
-      await supabase.from('dealer_forms').delete().eq('form_registry_id', id);
-      await supabase.from('form_registry').delete().eq('id', id);
-      await logAudit('DELETE', 'form_registry', id);
-      showToast('Form deleted');
+      const ruleData = {
+        rule_name: ruleModal.rule_name,
+        state: ruleModal.state,
+        category: ruleModal.category,
+        deadline_days: parseInt(ruleModal.deadline_days) || 0,
+        late_fee: parseFloat(ruleModal.late_fee) || 0,
+        agency: ruleModal.agency,
+        required_forms: ruleModal.required_forms,
+        description: ruleModal.description,
+        is_verified: ruleModal.is_verified || false,
+      };
+      if (ruleModal.id) {
+        await supabase.from('compliance_rules').update(ruleData).eq('id', ruleModal.id);
+        await logAudit('UPDATE', 'compliance_rules', ruleModal.id);
+        showToast('Rule updated');
+      } else {
+        const { data } = await supabase.from('compliance_rules').insert(ruleData).select().single();
+        await logAudit('INSERT', 'compliance_rules', data.id);
+        showToast('Rule added');
+      }
+      setRuleModal(null);
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -510,15 +497,69 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
-  const toggleFormEnabled = async (formId, currentState) => {
+  const deleteRule = async (id) => {
+    if (!confirm('Delete this compliance rule?')) return;
+    setLoading(true);
     try {
-      const existing = dealerForms.find(df => df.form_registry_id === formId);
-      if (existing) {
-        await supabase.from('dealer_forms').update({ is_enabled: !currentState }).eq('dealer_id', dealerId).eq('form_registry_id', formId);
-      } else {
-        await supabase.from('dealer_forms').insert({ dealer_id: dealerId, form_registry_id: formId, is_enabled: true });
-      }
-      showToast(currentState ? 'Form disabled' : 'Form enabled');
+      await supabase.from('compliance_rules').delete().eq('id', id);
+      await logAudit('DELETE', 'compliance_rules', id);
+      showToast('Rule deleted');
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  // === STAGING TAB (form_staging) ===
+  const analyzeForm = async (form) => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('analyze-form', {
+        body: { form_id: form.id, source_url: form.source_url }
+      });
+      if (error) throw error;
+      showToast('Analysis complete - confidence: ' + (data?.confidence || 0) + '%');
+      loadAllData();
+    } catch (err) {
+      showToast('Analysis failed: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const promoteToLibrary = async (form) => {
+    setLoading(true);
+    try {
+      // Create form_library entry
+      const { data: newForm, error: insertErr } = await supabase.from('form_library').insert({
+        form_number: form.form_number,
+        form_name: form.form_name,
+        state: form.state,
+        county: form.county,
+        category: form.category || 'deal',
+        source_url: form.source_url,
+        description: form.description,
+        field_mapping: {},
+        mapping_confidence: 0,
+        is_active: true,
+      }).select().single();
+      if (insertErr) throw insertErr;
+
+      // Update staging status
+      await supabase.from('form_staging').update({ status: 'approved' }).eq('id', form.id);
+      await logAudit('INSERT', 'form_library', newForm.id);
+      showToast('Form promoted to library');
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const rejectStagedForm = async (id) => {
+    try {
+      await supabase.from('form_staging').update({ status: 'rejected' }).eq('id', id);
+      showToast('Form rejected');
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -536,7 +577,7 @@ export default function DevConsolePage() {
         body: { state: dealer.state, county: dealer.county, dealer_id: dealerId }
       });
       if (error) throw error;
-      showToast(`AI found ${data?.forms_added || 0} new forms`);
+      showToast(`AI discovered ${data?.forms_added || 0} new forms in staging`);
       loadAllData();
     } catch (err) {
       showToast('AI Research failed: ' + err.message, 'error');
@@ -544,32 +585,109 @@ export default function DevConsolePage() {
     setAiResearching(false);
   };
 
-  const isFormEnabled = (formId) => {
-    const df = dealerForms.find(d => d.form_registry_id === formId);
-    return df?.is_enabled ?? false;
+  const getFilteredStaging = () => {
+    if (stagingFilter === 'all') return formStaging;
+    return formStaging.filter(f => f.status === stagingFilter);
   };
 
-  const getFilteredForms = () => {
-    let filtered = formRegistry;
-    if (formFilter === 'enabled') {
-      const enabledIds = dealerForms.filter(df => df.is_enabled).map(df => df.form_registry_id);
-      filtered = filtered.filter(f => enabledIds.includes(f.id));
-    } else if (formFilter === 'disabled') {
-      const enabledIds = dealerForms.filter(df => df.is_enabled).map(df => df.form_registry_id);
-      filtered = filtered.filter(f => !enabledIds.includes(f.id));
-    } else if (formFilter !== 'all') {
-      filtered = filtered.filter(f => f.category === formFilter);
+  // === LIBRARY TAB (form_library) ===
+  const saveLibraryForm = async () => {
+    if (!formModal) return;
+    setLoading(true);
+    try {
+      const formData = {
+        form_number: formModal.form_number,
+        form_name: formModal.form_name,
+        state: formModal.state,
+        county: formModal.county,
+        category: formModal.category,
+        source_url: formModal.source_url,
+        description: formModal.description,
+        is_active: formModal.is_active ?? true,
+      };
+      if (formModal.id) {
+        await supabase.from('form_library').update(formData).eq('id', formModal.id);
+        await logAudit('UPDATE', 'form_library', formModal.id);
+        showToast('Form updated');
+      } else {
+        const { data } = await supabase.from('form_library').insert({
+          ...formData,
+          field_mapping: {},
+          mapping_confidence: 0,
+        }).select().single();
+        await logAudit('INSERT', 'form_library', data.id);
+        showToast('Form added');
+      }
+      setFormModal(null);
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
     }
-    return filtered;
+    setLoading(false);
   };
 
-  const formCategories = ['deal', 'title', 'compliance', 'financing', 'tax'];
-  const categoryColors = {
-    deal: '#3b82f6',
-    title: '#8b5cf6',
-    compliance: '#ef4444',
-    financing: '#22c55e',
-    tax: '#f97316',
+  const deleteLibraryForm = async (id) => {
+    if (!confirm('Delete this form from the library?')) return;
+    setLoading(true);
+    try {
+      await supabase.from('form_library').delete().eq('id', id);
+      await logAudit('DELETE', 'form_library', id);
+      showToast('Form deleted');
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const getFilteredLibrary = () => {
+    if (formFilter === 'all') return formLibrary;
+    if (formFilter === 'needs_mapping') return formLibrary.filter(f => (f.mapping_confidence || 0) < 99);
+    if (formFilter === 'ready') return formLibrary.filter(f => (f.mapping_confidence || 0) >= 99);
+    return formLibrary.filter(f => f.category === formFilter);
+  };
+
+  // === FIELD MAPPER ===
+  const fieldContextOptions = [
+    { group: 'Dealer', fields: ['dealer.name', 'dealer.address', 'dealer.city', 'dealer.state', 'dealer.zip', 'dealer.phone', 'dealer.license_number', 'dealer.ein'] },
+    { group: 'Vehicle', fields: ['vehicle.year', 'vehicle.make', 'vehicle.model', 'vehicle.vin', 'vehicle.color', 'vehicle.mileage', 'vehicle.stock_number', 'vehicle.price'] },
+    { group: 'Deal', fields: ['deal.sale_price', 'deal.trade_value', 'deal.down_payment', 'deal.tax', 'deal.total', 'deal.date', 'deal.salesperson'] },
+    { group: 'Customer', fields: ['customer.name', 'customer.address', 'customer.city', 'customer.state', 'customer.zip', 'customer.phone', 'customer.email', 'customer.dl_number'] },
+    { group: 'Financing', fields: ['financing.amount_financed', 'financing.apr', 'financing.term', 'financing.monthly_payment', 'financing.first_payment_date'] },
+  ];
+
+  const saveFieldMapping = async () => {
+    if (!fieldMapperModal) return;
+    setLoading(true);
+    try {
+      // Calculate confidence based on mapped fields
+      const mappedCount = Object.values(fieldMapperModal.field_mapping || {}).filter(v => v).length;
+      const totalFields = fieldMapperModal.detected_fields?.length || 1;
+      const confidence = Math.round((mappedCount / totalFields) * 100);
+
+      await supabase.from('form_library').update({
+        field_mapping: fieldMapperModal.field_mapping,
+        mapping_confidence: confidence,
+      }).eq('id', fieldMapperModal.id);
+
+      await logAudit('UPDATE', 'form_library', fieldMapperModal.id, null, { mapping_confidence: confidence });
+      showToast(`Mapping saved - ${confidence}% complete`);
+      setFieldMapperModal(null);
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const updateFieldMapping = (fieldName, contextPath) => {
+    setFieldMapperModal(prev => ({
+      ...prev,
+      field_mapping: {
+        ...prev.field_mapping,
+        [fieldName]: contextPath
+      }
+    }));
   };
 
   // ========== END FORM LIBRARY FUNCTIONS ==========
@@ -583,7 +701,7 @@ export default function DevConsolePage() {
     { id: 'feedback', label: 'Feedback (' + feedbackList.filter(f => f.status === 'new').length + ')' },
     { id: 'dealers', label: 'Dealers' },
     { id: 'users', label: 'Users' },
-    { id: 'forms', label: 'Form Library (' + formRegistry.length + ')' },
+    { id: 'forms', label: 'Form Library (' + formLibrary.length + ')' },
     { id: 'data', label: 'Data Browser' },
     { id: 'bulk', label: 'Bulk Ops' },
     { id: 'sql', label: 'SQL Runner' },
@@ -720,7 +838,7 @@ export default function DevConsolePage() {
                 { label: 'BHPH Late', value: lateLoans.length, color: lateLoans.length > 0 ? '#ef4444' : null },
                 { label: 'Customers', value: customers?.length || 0 },
                 { label: 'New Feedback', value: feedbackList.filter(f => f.status === 'new').length, color: feedbackList.filter(f => f.status === 'new').length > 0 ? '#f97316' : null },
-                { label: 'Forms', value: formRegistry.length },
+                { label: 'Forms Ready', value: formLibrary.filter(f => (f.mapping_confidence || 0) >= 99).length, color: formLibrary.filter(f => (f.mapping_confidence || 0) < 99).length > 0 ? '#eab308' : null },
                 { label: 'Promos Active', value: promoCodes.filter(p => p.active).length },
                 { label: 'Templates', value: messageTemplates.length },
               ].map((stat, i) => (
@@ -843,107 +961,256 @@ export default function DevConsolePage() {
           </div>
         )}
 
-        {/* FORM LIBRARY */}
+        {/* FORM LIBRARY - 3 Tab System */}
         {activeSection === 'forms' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Form Library ({formRegistry.length})</h2>
+              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Form Library</h2>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={runAIResearch} disabled={aiResearching} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
-                  {aiResearching ? 'Researching...' : 'AI Research'}
+                  {aiResearching ? 'Discovering...' : 'AI Discover Forms'}
                 </button>
-                <button onClick={() => setFormModal({ state: dealer?.state || 'UT', county: '', form_number: '', form_name: '', category: 'deal', source_url: '', description: '', is_fillable: false })} style={btnSuccess}>+ Add Form</button>
                 <HelpButton />
               </div>
             </div>
 
-            {/* Stats */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-              <div style={cardStyle}>
-                <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Forms</div>
-                <div style={{ fontSize: '24px', fontWeight: '700' }}>{formRegistry.length}</div>
-              </div>
-              <div style={cardStyle}>
-                <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Enabled</div>
-                <div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{dealerForms.filter(df => df.is_enabled).length}</div>
-              </div>
-              <div style={cardStyle}>
-                <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>AI Discovered</div>
-                <div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{formRegistry.filter(f => f.ai_discovered).length}</div>
-              </div>
-              <div style={cardStyle}>
-                <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Fillable</div>
-                <div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>{formRegistry.filter(f => f.is_fillable).length}</div>
-              </div>
-            </div>
-
-            {/* Filters */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-              {['all', 'enabled', 'disabled', ...formCategories].map(filter => (
+            {/* Tab Navigation */}
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', borderBottom: '1px solid #3f3f46', paddingBottom: '4px' }}>
+              {[
+                { id: 'rules', label: 'Rules', count: complianceRules.length, color: '#ef4444' },
+                { id: 'staging', label: 'Staging', count: formStaging.filter(f => f.status === 'pending').length, color: '#eab308' },
+                { id: 'library', label: 'Library', count: formLibrary.length, color: '#22c55e' },
+              ].map(tab => (
                 <button
-                  key={filter}
-                  onClick={() => setFormFilter(filter)}
+                  key={tab.id}
+                  onClick={() => setFormLibraryTab(tab.id)}
                   style={{
-                    padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer',
-                    backgroundColor: formFilter === filter ? (categoryColors[filter] || '#f97316') : '#3f3f46',
-                    color: '#fff', textTransform: 'capitalize'
+                    padding: '10px 20px',
+                    borderRadius: '8px 8px 0 0',
+                    border: 'none',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    backgroundColor: formLibraryTab === tab.id ? '#27272a' : 'transparent',
+                    color: formLibraryTab === tab.id ? '#fff' : '#71717a',
+                    borderBottom: formLibraryTab === tab.id ? `2px solid ${tab.color}` : '2px solid transparent',
                   }}
                 >
-                  {filter}
+                  {tab.label}
+                  <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', backgroundColor: tab.color, color: '#fff' }}>{tab.count}</span>
                 </button>
               ))}
             </div>
 
-            {/* Forms Table */}
-            <div style={cardStyle}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #3f3f46' }}>
-                    <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
-                    <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Name</th>
-                    <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
-                    <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
-                    <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
-                    <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {getFilteredForms().map(f => (
-                    <tr key={f.id} style={{ borderBottom: '1px solid #3f3f46' }}>
-                      <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>{f.form_number}</td>
-                      <td style={{ padding: '10px 8px' }}>
-                        <div>{f.form_name}</div>
-                        {f.description && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{f.description.substring(0, 60)}...</div>}
-                      </td>
-                      <td style={{ padding: '10px 8px' }}>
-                        <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[f.category] || '#71717a', textTransform: 'uppercase' }}>{f.category}</span>
-                      </td>
-                      <td style={{ padding: '10px 8px', color: '#a1a1aa' }}>{f.state}</td>
-                      <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                          {isFormEnabled(f.id) && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#22c55e' }}>ON</span>}
-                          {f.is_fillable && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#8b5cf6' }}>PDF</span>}
-                          {f.ai_discovered && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#3b82f6' }}>AI</span>}
-                        </div>
-                      </td>
-                      <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                        <button onClick={() => toggleFormEnabled(f.id, isFormEnabled(f.id))} style={{ background: 'none', border: 'none', color: isFormEnabled(f.id) ? '#ef4444' : '#22c55e', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>
-                          {isFormEnabled(f.id) ? 'Disable' : 'Enable'}
-                        </button>
-                        <button onClick={() => setFormModal(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
-                        {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#a1a1aa', fontSize: '11px', marginRight: '8px' }}>Link</a>}
-                        <button onClick={() => deleteForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Del</button>
-                      </td>
-                    </tr>
+            {/* === RULES TAB === */}
+            {formLibraryTab === 'rules' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>State compliance rules with deadlines, penalties, and required forms</p>
+                  <button onClick={() => setRuleModal({ state: dealer?.state || 'UT', rule_name: '', category: 'title', deadline_days: 30, late_fee: 0, agency: '', required_forms: '', description: '', is_verified: false })} style={btnSuccess}>+ Add Rule</button>
+                </div>
+
+                {/* Rules Stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Rules</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{complianceRules.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Verified</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{complianceRules.filter(r => r.is_verified).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{[...new Set(complianceRules.map(r => r.state))].length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Avg Deadline</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#f97316' }}>{Math.round(complianceRules.reduce((s, r) => s + (r.deadline_days || 0), 0) / (complianceRules.length || 1))}d</div></div>
+                </div>
+
+                {/* Rules Table */}
+                <div style={cardStyle}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Rule Name</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Deadline</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Late Fee</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Agency</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {complianceRules.map(r => (
+                        <tr key={r.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <td style={{ padding: '10px 8px', fontWeight: '500' }}>{r.rule_name}</td>
+                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{r.state}</span></td>
+                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[r.category] || '#71717a', textTransform: 'uppercase' }}>{r.category}</span></td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center', fontFamily: 'monospace' }}>{r.deadline_days}d</td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center', color: r.late_fee > 0 ? '#ef4444' : '#71717a' }}>${r.late_fee || 0}</td>
+                          <td style={{ padding: '10px 8px', color: '#a1a1aa', fontSize: '12px' }}>{r.agency || '-'}</td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>{r.is_verified ? <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#22c55e' }}>VERIFIED</span> : <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#eab308' }}>UNVERIFIED</span>}</td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <button onClick={() => setRuleModal(r)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
+                            <button onClick={() => deleteRule(r.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Del</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {complianceRules.length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No compliance rules yet. Add rules manually or use AI Discover.</p>}
+                </div>
+              </div>
+            )}
+
+            {/* === STAGING TAB === */}
+            {formLibraryTab === 'staging' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>AI-discovered forms waiting for review before promotion to library</p>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {['all', 'pending', 'approved', 'rejected'].map(filter => (
+                      <button key={filter} onClick={() => setStagingFilter(filter)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer', backgroundColor: stagingFilter === filter ? '#f97316' : '#3f3f46', color: '#fff', textTransform: 'capitalize' }}>{filter}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Staging Stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Staged</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{formStaging.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Pending Review</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formStaging.filter(f => f.status === 'pending').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Approved</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => f.status === 'approved').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Rejected</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#ef4444' }}>{formStaging.filter(f => f.status === 'rejected').length}</div></div>
+                </div>
+
+                {/* Staging Table */}
+                <div style={cardStyle}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form Name</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>AI Confidence</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getFilteredStaging().map(f => (
+                        <tr key={f.id} style={{ borderBottom: '1px solid #3f3f46', opacity: f.status === 'rejected' ? 0.5 : 1 }}>
+                          <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>{f.form_number}</td>
+                          <td style={{ padding: '10px 8px' }}>
+                            <div>{f.form_name}</div>
+                            {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#71717a', fontSize: '11px' }}>View Source</a>}
+                          </td>
+                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                              <div style={{ width: '60px', height: '6px', backgroundColor: '#3f3f46', borderRadius: '3px', overflow: 'hidden' }}>
+                                <div style={{ width: `${f.ai_confidence || 0}%`, height: '100%', backgroundColor: (f.ai_confidence || 0) >= 80 ? '#22c55e' : (f.ai_confidence || 0) >= 50 ? '#eab308' : '#ef4444' }} />
+                              </div>
+                              <span style={{ fontSize: '12px', color: '#a1a1aa' }}>{f.ai_confidence || 0}%</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: f.status === 'approved' ? '#22c55e' : f.status === 'rejected' ? '#ef4444' : '#eab308', textTransform: 'uppercase' }}>{f.status}</span>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            {f.status === 'pending' && (
+                              <>
+                                <button onClick={() => analyzeForm(f)} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Analyze</button>
+                                <button onClick={() => promoteToLibrary(f)} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Promote</button>
+                                <button onClick={() => rejectStagedForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Reject</button>
+                              </>
+                            )}
+                            {f.status === 'approved' && <span style={{ color: '#71717a', fontSize: '11px' }}>In Library</span>}
+                            {f.status === 'rejected' && <span style={{ color: '#71717a', fontSize: '11px' }}>-</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {getFilteredStaging().length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No staged forms. Click "AI Discover Forms" to find forms for {dealer?.state || 'your state'}.</p>}
+                </div>
+              </div>
+            )}
+
+            {/* === LIBRARY TAB === */}
+            {formLibraryTab === 'library' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Production-ready forms with field mappings. Click forms &lt;99% to open Field Mapper.</p>
+                  <button onClick={() => setFormModal({ state: dealer?.state || 'UT', county: '', form_number: '', form_name: '', category: 'deal', source_url: '', description: '', is_active: true })} style={btnSuccess}>+ Add Form</button>
+                </div>
+
+                {/* Library Stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Forms</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{formLibrary.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready (99%+)</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formLibrary.filter(f => (f.mapping_confidence || 0) >= 99).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Needs Mapping</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formLibrary.filter(f => (f.mapping_confidence || 0) < 99).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Avg Mapping</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{Math.round(formLibrary.reduce((s, f) => s + (f.mapping_confidence || 0), 0) / (formLibrary.length || 1))}%</div></div>
+                </div>
+
+                {/* Filters */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                  {['all', 'needs_mapping', 'ready', ...formCategories].map(filter => (
+                    <button
+                      key={filter}
+                      onClick={() => setFormFilter(filter)}
+                      style={{
+                        padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer',
+                        backgroundColor: formFilter === filter ? (categoryColors[filter] || '#f97316') : '#3f3f46',
+                        color: '#fff', textTransform: 'capitalize'
+                      }}
+                    >
+                      {filter === 'needs_mapping' ? 'Needs Mapping' : filter}
+                    </button>
                   ))}
-                </tbody>
-              </table>
-              {getFilteredForms().length === 0 && (
-                <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>
-                  No forms found. Click "AI Research" to discover forms for {dealer?.state || 'your state'}.
-                </p>
-              )}
-            </div>
+                </div>
+
+                {/* Library Table */}
+                <div style={cardStyle}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form Name</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping Score</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getFilteredLibrary().map(f => (
+                        <tr
+                          key={f.id}
+                          style={{ borderBottom: '1px solid #3f3f46', cursor: (f.mapping_confidence || 0) < 99 ? 'pointer' : 'default', backgroundColor: (f.mapping_confidence || 0) < 99 ? 'rgba(234, 179, 8, 0.05)' : 'transparent' }}
+                          onClick={() => { if ((f.mapping_confidence || 0) < 99) setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || ['field1', 'field2', 'field3', 'field4', 'field5'] }); }}
+                        >
+                          <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>{f.form_number}</td>
+                          <td style={{ padding: '10px 8px' }}>
+                            <div>{f.form_name}</div>
+                            {f.description && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{f.description.substring(0, 50)}...</div>}
+                          </td>
+                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
+                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[f.category] || '#71717a', textTransform: 'uppercase' }}>{f.category}</span></td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                              <div style={{ width: '80px', height: '8px', backgroundColor: '#3f3f46', borderRadius: '4px', overflow: 'hidden' }}>
+                                <div style={{ width: `${f.mapping_confidence || 0}%`, height: '100%', backgroundColor: (f.mapping_confidence || 0) >= 99 ? '#22c55e' : (f.mapping_confidence || 0) >= 50 ? '#eab308' : '#ef4444' }} />
+                              </div>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: (f.mapping_confidence || 0) >= 99 ? '#22c55e' : '#eab308' }}>{f.mapping_confidence || 0}%</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                            {(f.mapping_confidence || 0) < 99 && <button onClick={() => setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || ['field1', 'field2', 'field3', 'field4', 'field5'] })} style={{ background: 'none', border: 'none', color: '#eab308', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Map Fields</button>}
+                            <button onClick={() => setFormModal(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
+                            {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#a1a1aa', fontSize: '11px', marginRight: '8px' }}>PDF</a>}
+                            <button onClick={() => deleteLibraryForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Del</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {getFilteredLibrary().length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No forms in library. Promote forms from Staging or add manually.</p>}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1374,7 +1641,7 @@ export default function DevConsolePage() {
         </div>
       )}
 
-      {/* FORM MODAL */}
+      {/* FORM MODAL (Library) */}
       {formModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
           <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
@@ -1392,13 +1659,142 @@ export default function DevConsolePage() {
               <input type="url" placeholder="Source URL (link to PDF)" value={formModal.source_url || ''} onChange={(e) => setFormModal({ ...formModal, source_url: e.target.value })} style={inputStyle} />
               <textarea placeholder="Description..." value={formModal.description || ''} onChange={(e) => setFormModal({ ...formModal, description: e.target.value })} rows={3} style={inputStyle} />
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a1a1aa', fontSize: '14px' }}>
-                <input type="checkbox" checked={formModal.is_fillable || false} onChange={(e) => setFormModal({ ...formModal, is_fillable: e.target.checked })} />
-                Fillable PDF (can auto-populate fields)
+                <input type="checkbox" checked={formModal.is_active ?? true} onChange={(e) => setFormModal({ ...formModal, is_active: e.target.checked })} />
+                Active (available for use in deals)
               </label>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
               <button onClick={() => setFormModal(null)} style={btnSecondary}>Cancel</button>
-              <button onClick={saveForm} style={btnSuccess}>Save</button>
+              <button onClick={saveLibraryForm} style={btnSuccess}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RULE MODAL (Compliance Rules) */}
+      {ruleModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>{ruleModal.id ? 'Edit' : 'Add'} Compliance Rule</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <input type="text" placeholder="Rule Name (e.g. Title Transfer Deadline)" value={ruleModal.rule_name || ''} onChange={(e) => setRuleModal({ ...ruleModal, rule_name: e.target.value })} style={inputStyle} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="text" placeholder="State" value={ruleModal.state || ''} onChange={(e) => setRuleModal({ ...ruleModal, state: e.target.value.toUpperCase() })} style={{ ...inputStyle, flex: 1 }} maxLength={2} />
+                <select value={ruleModal.category || 'title'} onChange={(e) => setRuleModal({ ...ruleModal, category: e.target.value })} style={{ ...inputStyle, flex: 2 }}>
+                  {formCategories.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Deadline (days)</label>
+                  <input type="number" placeholder="30" value={ruleModal.deadline_days || ''} onChange={(e) => setRuleModal({ ...ruleModal, deadline_days: e.target.value })} style={inputStyle} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Late Fee ($)</label>
+                  <input type="number" placeholder="25" value={ruleModal.late_fee || ''} onChange={(e) => setRuleModal({ ...ruleModal, late_fee: e.target.value })} style={inputStyle} />
+                </div>
+              </div>
+              <input type="text" placeholder="Agency (e.g. Utah DMV)" value={ruleModal.agency || ''} onChange={(e) => setRuleModal({ ...ruleModal, agency: e.target.value })} style={inputStyle} />
+              <input type="text" placeholder="Required Forms (comma separated)" value={ruleModal.required_forms || ''} onChange={(e) => setRuleModal({ ...ruleModal, required_forms: e.target.value })} style={inputStyle} />
+              <textarea placeholder="Description / Notes..." value={ruleModal.description || ''} onChange={(e) => setRuleModal({ ...ruleModal, description: e.target.value })} rows={3} style={inputStyle} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a1a1aa', fontSize: '14px' }}>
+                <input type="checkbox" checked={ruleModal.is_verified || false} onChange={(e) => setRuleModal({ ...ruleModal, is_verified: e.target.checked })} />
+                Verified (human-reviewed for accuracy)
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button onClick={() => setRuleModal(null)} style={btnSecondary}>Cancel</button>
+              <button onClick={saveRule} style={btnSuccess}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FIELD MAPPER MODAL */}
+      {fieldMapperModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '1200px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', margin: '0 0 4px 0' }}>Field Mapper: {fieldMapperModal.form_number}</h3>
+                <p style={{ color: '#a1a1aa', fontSize: '13px', margin: 0 }}>{fieldMapperModal.form_name}</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '12px', color: '#a1a1aa' }}>Mapping Confidence</div>
+                  <div style={{ fontSize: '24px', fontWeight: '700', color: Object.values(fieldMapperModal.field_mapping || {}).filter(v => v).length === (fieldMapperModal.detected_fields?.length || 0) ? '#22c55e' : '#eab308' }}>
+                    {Math.round((Object.values(fieldMapperModal.field_mapping || {}).filter(v => v).length / (fieldMapperModal.detected_fields?.length || 1)) * 100)}%
+                  </div>
+                </div>
+                <button onClick={() => setFieldMapperModal(null)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>×</button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+              {/* PDF Preview (left) */}
+              <div style={{ flex: 1, borderRight: '1px solid #27272a', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600' }}>PDF Preview</div>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#09090b', padding: '20px' }}>
+                  {fieldMapperModal.source_url ? (
+                    <iframe src={fieldMapperModal.source_url} style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }} title="PDF Preview" />
+                  ) : (
+                    <div style={{ textAlign: 'center', color: '#71717a' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '12px' }}>📄</div>
+                      <p>No PDF URL provided</p>
+                      <p style={{ fontSize: '12px' }}>Add a source URL to the form to preview</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Field Mapping (right) */}
+              <div style={{ width: '450px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600' }}>Detected Fields ({fieldMapperModal.detected_fields?.length || 0})</div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                  <p style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '16px' }}>Map each PDF field to a deal context variable:</p>
+                  {(fieldMapperModal.detected_fields || []).map((field, idx) => (
+                    <div key={idx} style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#27272a', borderRadius: '8px', border: fieldMapperModal.field_mapping?.[field] ? '1px solid #22c55e' : '1px solid #3f3f46' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600' }}>{field}</span>
+                        {fieldMapperModal.field_mapping?.[field] && <span style={{ fontSize: '10px', color: '#22c55e' }}>MAPPED</span>}
+                      </div>
+                      <select
+                        value={fieldMapperModal.field_mapping?.[field] || ''}
+                        onChange={(e) => updateFieldMapping(field, e.target.value)}
+                        style={{ ...inputStyle, fontSize: '12px' }}
+                      >
+                        <option value="">-- Select mapping --</option>
+                        {fieldContextOptions.map(group => (
+                          <optgroup key={group.group} label={group.group}>
+                            {group.fields.map(f => (
+                              <option key={f} value={f}>{f}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                  {(!fieldMapperModal.detected_fields || fieldMapperModal.detected_fields.length === 0) && (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
+                      <p>No fields detected yet.</p>
+                      <p style={{ fontSize: '12px' }}>Use "Analyze" on the Staging tab to detect PDF fields.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ color: '#71717a', fontSize: '12px' }}>
+                {Object.values(fieldMapperModal.field_mapping || {}).filter(v => v).length} of {fieldMapperModal.detected_fields?.length || 0} fields mapped
+              </div>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={() => setFieldMapperModal(null)} style={btnSecondary}>Cancel</button>
+                <button onClick={saveFieldMapping} style={btnSuccess}>Save Mapping</button>
+              </div>
             </div>
           </div>
         </div>
