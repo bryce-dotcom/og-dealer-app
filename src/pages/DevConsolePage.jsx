@@ -258,21 +258,6 @@ export default function DevConsolePage() {
         supabase.from('form_staging').select('*').order('created_at', { ascending: false }),
         supabase.from('form_library').select('*').order('state, form_number'),
       ]);
-
-      // DEBUG: Log form_staging query results
-      console.log('=== FORM STAGING DEBUG ===');
-      console.log('staging.data:', staging.data);
-      console.log('staging.error:', staging.error);
-      console.log('staging count:', staging.data?.length || 0);
-      console.log('=== FORM LIBRARY DEBUG ===');
-      console.log('library.data:', library.data);
-      console.log('library.error:', library.error);
-      console.log('library count:', library.data?.length || 0);
-      console.log('=== COMPLIANCE RULES DEBUG ===');
-      console.log('rules.data:', rules.data);
-      console.log('rules.error:', rules.error);
-      console.log('rules count:', rules.data?.length || 0);
-
       if (dealers.data) setAllDealers(dealers.data);
       if (users.data) setAllUsers(users.data);
       if (feedback.data) setFeedbackList(feedback.data);
@@ -282,7 +267,7 @@ export default function DevConsolePage() {
       if (rules.data) setComplianceRules(rules.data);
       if (staging.data) setFormStaging(staging.data);
       if (library.data) setFormLibrary(library.data);
-    } catch (err) { console.error('loadAllData error:', err); }
+    } catch (err) { console.error(err); }
     setLoading(false);
   };
 
@@ -588,97 +573,24 @@ export default function DevConsolePage() {
     }
     setAiResearching(true);
     try {
-      console.log('=== AI RESEARCH DEBUG ===');
-      console.log('Calling discover-state-forms with:', { state: dealer.state, county: dealer.county, dealer_id: dealerId });
-
       const response = await supabase.functions.invoke('discover-state-forms', {
         body: { state: dealer.state, county: dealer.county, dealer_id: dealerId }
       });
 
-      console.log('Edge function full response:', response);
-      console.log('Edge function response - data:', response.data);
-      console.log('Edge function response - error:', response.error);
-
-      // Check for function-level errors
       if (response.error) {
-        console.error('Function error:', response.error);
         throw new Error(response.error.message || 'Edge function failed');
       }
 
-      // Check for application-level errors in the response data
       if (response.data?.error) {
-        console.error('Application error:', response.data.error);
         throw new Error(response.data.error);
       }
 
-      const data = response.data;
-      showToast(`AI discovered ${data?.forms_added || 0} new forms in staging`);
-
-      // Wait a moment then reload to check if forms appear
-      setTimeout(() => {
-        console.log('Reloading data after AI research...');
-        loadAllData();
-      }, 1000);
+      showToast(`AI discovered ${response.data?.forms_added || 0} new forms in staging`);
+      loadAllData();
     } catch (err) {
-      console.error('AI Research error:', err);
       showToast('AI Research failed: ' + err.message, 'error');
     }
     setAiResearching(false);
-  };
-
-  // DEBUG: Test form_staging table access
-  const debugFormStaging = async () => {
-    console.log('=== DEBUG FORM_STAGING ===');
-
-    // Test 1: Try to read from form_staging
-    console.log('Test 1: Reading from form_staging...');
-    const { data: readData, error: readError } = await supabase
-      .from('form_staging')
-      .select('*')
-      .limit(10);
-    console.log('Read result:', { data: readData, error: readError });
-
-    // Test 2: Try to insert a test form (minimal fields)
-    console.log('Test 2: Inserting test form...');
-    const testForm = {
-      form_number: 'TEST-' + Date.now(),
-      form_name: 'Debug Test Form',
-      state: dealer?.state || 'UT',
-      status: 'pending',
-    };
-    console.log('Inserting:', testForm);
-    const { data: insertData, error: insertError } = await supabase
-      .from('form_staging')
-      .insert(testForm)
-      .select();
-    console.log('Insert result:', { data: insertData, error: insertError });
-    if (insertError) {
-      console.log('INSERT ERROR DETAILS:', JSON.stringify(insertError, null, 2));
-      console.log('Error code:', insertError.code);
-      console.log('Error message:', insertError.message);
-      console.log('Error details:', insertError.details);
-      console.log('Error hint:', insertError.hint);
-    }
-
-    // Test 3: Check table structure
-    console.log('Test 3: Checking what columns exist...');
-    const { data: sampleRow, error: structError } = await supabase
-      .from('form_staging')
-      .select('*')
-      .limit(1);
-    console.log('Table structure check:', { sampleRow, structError });
-
-    // Show results in alert for visibility
-    const msg = `
-READ: ${readError ? 'ERROR - ' + readError.message : 'OK (' + (readData?.length || 0) + ' rows)'}
-
-INSERT: ${insertError ? 'ERROR - ' + insertError.message + '\nCode: ' + insertError.code + '\nHint: ' + (insertError.hint || 'none') : 'OK'}
-
-Check console for full details.
-    `;
-    alert(msg);
-
-    loadAllData();
   };
 
   const getFilteredStaging = () => {
@@ -1065,9 +977,6 @@ Check console for full details.
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={runAIResearch} disabled={aiResearching} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
                   {aiResearching ? 'Discovering...' : 'AI Discover Forms'}
-                </button>
-                <button onClick={debugFormStaging} style={{ ...btnSecondary, backgroundColor: '#7c3aed' }}>
-                  Debug Table
                 </button>
                 <HelpButton />
               </div>
