@@ -4,6 +4,10 @@ import { useStore } from '../lib/store';
 
 export default function DevConsolePage() {
   const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, setDealer, fetchAllData: storeRefresh } = useStore();
+
+  // ACCESS CONTROL: Developer only - must be OG DiX Motor Club
+  const isDeveloper = dealer?.dealer_name === 'OG DiX Motor Club';
+
   const [activeSection, setActiveSection] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
@@ -28,6 +32,8 @@ export default function DevConsolePage() {
   const [aiResearching, setAiResearching] = useState(false);
   const [ruleModal, setRuleModal] = useState(null);
   const [stagingFilter, setStagingFilter] = useState('pending');
+  const [uploadFormModal, setUploadFormModal] = useState(null);
+  const [libraryStateFilter, setLibraryStateFilter] = useState('all');
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -608,14 +614,79 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
-  const rejectStagedForm = async (id) => {
+  const [deleteStagedModal, setDeleteStagedModal] = useState(null);
+
+  const deleteStagedForm = async (form) => {
+    setLoading(true);
     try {
-      await supabase.from('form_staging').update({ status: 'rejected' }).eq('id', id);
-      showToast('Form rejected');
+      // Delete from form_library if it was promoted
+      if (form.status === 'approved') {
+        await supabase.from('form_library').delete().eq('form_number', form.form_number).eq('state', form.state);
+      }
+
+      // Delete from form_staging
+      await supabase.from('form_staging').delete().eq('id', form.id);
+
+      await logAudit('DELETE', 'form_staging', form.id, { form_number: form.form_number, form_name: form.form_name });
+      showToast('Form deleted');
+      setDeleteStagedModal(null);
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
     }
+    setLoading(false);
+  };
+
+  // Manual form upload to staging
+  const uploadFormToStaging = async () => {
+    if (!uploadFormModal) return;
+    if (!uploadFormModal.state || !uploadFormModal.form_number || !uploadFormModal.form_name) {
+      showToast('State, form number, and form name are required', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      let sourceUrl = uploadFormModal.source_url || null;
+
+      // If a file was uploaded, upload it to Supabase storage
+      if (uploadFormModal.file) {
+        const fileExt = uploadFormModal.file.name.split('.').pop();
+        const fileName = `${uploadFormModal.state.toUpperCase()}_${uploadFormModal.form_number.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.${fileExt}`;
+
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('form-pdfs')
+          .upload(fileName, uploadFormModal.file);
+
+        if (uploadError) {
+          console.error('Upload error:', uploadError);
+          // Continue without file if upload fails - user can add URL manually later
+          showToast('PDF upload failed, saving form without file', 'error');
+        } else {
+          const { data: { publicUrl } } = supabase.storage.from('form-pdfs').getPublicUrl(fileName);
+          sourceUrl = publicUrl;
+        }
+      }
+
+      const { data: newForm, error: insertError } = await supabase.from('form_staging').insert({
+        form_number: uploadFormModal.form_number.toUpperCase().trim(),
+        form_name: uploadFormModal.form_name.trim(),
+        state: uploadFormModal.state.toUpperCase(),
+        source_url: sourceUrl,
+        status: 'pending',
+        ai_confidence: null, // Manual upload - no AI confidence
+        ai_is_current_version: true, // Assume manual uploads are current
+      }).select().single();
+
+      if (insertError) throw insertError;
+
+      await logAudit('INSERT', 'form_staging', newForm.id, null, { manual_upload: true });
+      showToast('Form uploaded to staging');
+      setUploadFormModal(null);
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
   };
 
   const runAIResearch = async () => {
@@ -701,11 +772,22 @@ export default function DevConsolePage() {
   };
 
   const getFilteredLibrary = () => {
-    if (formFilter === 'all') return formLibrary;
-    if (formFilter === 'needs_mapping') return formLibrary.filter(f => (f.mapping_confidence || 0) < 99);
-    if (formFilter === 'ready') return formLibrary.filter(f => (f.mapping_confidence || 0) >= 99);
-    return formLibrary.filter(f => f.category === formFilter);
+    let filtered = formLibrary;
+
+    // Apply state filter first
+    if (libraryStateFilter !== 'all') {
+      filtered = filtered.filter(f => f.state === libraryStateFilter);
+    }
+
+    // Then apply category/status filter
+    if (formFilter === 'all') return filtered;
+    if (formFilter === 'needs_mapping') return filtered.filter(f => (f.mapping_confidence || 0) < 99);
+    if (formFilter === 'ready') return filtered.filter(f => (f.mapping_confidence || 0) >= 99);
+    return filtered.filter(f => f.category === formFilter);
   };
+
+  // Get unique states from library for filter dropdown
+  const libraryStates = [...new Set(formLibrary.map(f => f.state))].sort();
 
   // === FIELD MAPPER ===
   const fieldContextOptions = [
@@ -849,13 +931,33 @@ export default function DevConsolePage() {
     );
   };
 
+  // ACCESS CONTROL: Block non-developers
+  if (!isDeveloper) {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#18181b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <div style={{ fontSize: '64px', marginBottom: '20px' }}>🔒</div>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '12px', color: '#ef4444' }}>Access Denied</h1>
+          <p style={{ color: '#a1a1aa', marginBottom: '8px' }}>Data Console is restricted to developers only.</p>
+          <p style={{ color: '#71717a', fontSize: '14px' }}>Current account: {dealer?.dealer_name || 'Unknown'}</p>
+          <button
+            onClick={() => window.history.back()}
+            style={{ marginTop: '20px', padding: '10px 24px', backgroundColor: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer', fontWeight: '600' }}
+          >
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#18181b', display: 'flex', color: '#fff' }}>
       {/* Sidebar */}
       <div style={{ width: '200px', backgroundColor: '#09090b', borderRight: '1px solid #27272a', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #27272a' }}>
           <h1 style={{ fontSize: '18px', fontWeight: '700', color: '#f97316', margin: 0 }}>Data Console</h1>
-          <p style={{ fontSize: '12px', color: '#71717a', margin: '4px 0 0 0' }}>Master Control</p>
+          <p style={{ fontSize: '12px', color: '#71717a', margin: '4px 0 0 0' }}>Developer Only</p>
         </div>
         <nav style={{ flex: 1, padding: '8px', overflowY: 'auto' }}>
           {sections.map(s => (
@@ -1122,10 +1224,18 @@ export default function DevConsolePage() {
             {/* === STAGING TAB === */}
             {formLibraryTab === 'staging' && (
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>AI-discovered forms waiting for review. Analyze to detect fields, then map to 99%+ to promote.</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>AI-discovered or manually uploaded forms.</p>
+                    <button
+                      onClick={() => setUploadFormModal({ state: '', form_number: '', form_name: '', source_url: '', file: null })}
+                      style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#22c55e', color: '#fff', fontWeight: '600' }}
+                    >
+                      + Upload Form
+                    </button>
+                  </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    {['all', 'pending', 'analyzed', 'approved', 'rejected'].map(filter => (
+                    {['all', 'pending', 'analyzed', 'approved'].map(filter => (
                       <button key={filter} onClick={() => setStagingFilter(filter)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer', backgroundColor: stagingFilter === filter ? '#f97316' : '#3f3f46', color: '#fff', textTransform: 'capitalize' }}>{filter}</button>
                     ))}
                   </div>
@@ -1204,22 +1314,16 @@ export default function DevConsolePage() {
                               <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: f.status === 'approved' ? '#22c55e' : f.status === 'rejected' ? '#ef4444' : f.status === 'analyzed' ? '#3b82f6' : '#eab308', textTransform: 'uppercase' }}>{f.status}</span>
                             </td>
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              {(f.status === 'pending' || f.status === 'analyzed') && (
-                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                  <button onClick={() => analyzeForm(f)} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', fontSize: '11px' }}>Analyze</button>
-                                  {hasMapping && (
-                                    <button onClick={() => openStagingMapper(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}>View Mapping</button>
-                                  )}
-                                  {isReadyToPromote ? (
-                                    <button onClick={() => promoteToLibrary(f)} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Promote</button>
-                                  ) : (
-                                    <span style={{ color: '#71717a', fontSize: '10px', padding: '0 4px' }} title="Need 99% mapping to promote">Need 99%</span>
-                                  )}
-                                  <button onClick={() => rejectStagedForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Reject</button>
-                                </div>
-                              )}
-                              {f.status === 'approved' && <span style={{ color: '#71717a', fontSize: '11px' }}>In Library</span>}
-                              {f.status === 'rejected' && <span style={{ color: '#71717a', fontSize: '11px' }}>-</span>}
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                <button onClick={() => analyzeForm(f)} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', fontSize: '11px' }}>Analyze</button>
+                                {hasMapping && (
+                                  <button onClick={() => openStagingMapper(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}>View Mapping</button>
+                                )}
+                                {isReadyToPromote && (
+                                  <button onClick={() => promoteToLibrary(f)} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Promote</button>
+                                )}
+                                <button onClick={() => setDeleteStagedModal(f)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Delete</button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1234,34 +1338,51 @@ export default function DevConsolePage() {
             {/* === LIBRARY TAB === */}
             {formLibraryTab === 'library' && (
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Production-ready forms with field mappings. Click forms &lt;99% to open Field Mapper.</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Master form library for ALL states. Click forms &lt;99% to open Field Mapper.</p>
                   <button onClick={() => setFormModal({ state: dealer?.state || 'UT', county: '', form_number: '', form_name: '', category: 'deal', source_url: '', description: '', is_active: true })} style={btnSuccess}>+ Add Form</button>
                 </div>
 
                 {/* Library Stats */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Forms</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{formLibrary.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>{libraryStates.length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready (99%+)</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formLibrary.filter(f => (f.mapping_confidence || 0) >= 99).length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Needs Mapping</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formLibrary.filter(f => (f.mapping_confidence || 0) < 99).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Avg Mapping</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{Math.round(formLibrary.reduce((s, f) => s + (f.mapping_confidence || 0), 0) / (formLibrary.length || 1))}%</div></div>
                 </div>
 
-                {/* Filters */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                  {['all', 'needs_mapping', 'ready', ...formCategories].map(filter => (
-                    <button
-                      key={filter}
-                      onClick={() => setFormFilter(filter)}
-                      style={{
-                        padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer',
-                        backgroundColor: formFilter === filter ? (categoryColors[filter] || '#f97316') : '#3f3f46',
-                        color: '#fff', textTransform: 'capitalize'
-                      }}
+                {/* State Filter */}
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ color: '#a1a1aa', fontSize: '13px' }}>State:</span>
+                    <select
+                      value={libraryStateFilter}
+                      onChange={(e) => setLibraryStateFilter(e.target.value)}
+                      style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '8px 12px', borderRadius: '6px', border: 'none', fontSize: '13px', minWidth: '120px' }}
                     >
-                      {filter === 'needs_mapping' ? 'Needs Mapping' : filter}
-                    </button>
-                  ))}
+                      <option value="all">All States ({formLibrary.length})</option>
+                      {libraryStates.map(state => (
+                        <option key={state} value={state}>{state} ({formLibrary.filter(f => f.state === state).length})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ borderLeft: '1px solid #3f3f46', height: '24px' }} />
+                  {/* Category Filters */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {['all', 'needs_mapping', 'ready', ...formCategories].map(filter => (
+                      <button
+                        key={filter}
+                        onClick={() => setFormFilter(filter)}
+                        style={{
+                          padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer',
+                          backgroundColor: formFilter === filter ? (categoryColors[filter] || '#f97316') : '#3f3f46',
+                          color: '#fff', textTransform: 'capitalize'
+                        }}
+                      >
+                        {filter === 'needs_mapping' ? 'Needs Mapping' : filter}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Library Table */}
@@ -1897,6 +2018,109 @@ export default function DevConsolePage() {
                 <button onClick={() => setFieldMapperModal(null)} style={btnSecondary}>Cancel</button>
                 <button onClick={saveFieldMapping} style={btnSuccess}>Save Mapping</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE STAGED FORM MODAL */}
+      {deleteStagedModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '450px', width: '90%' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '12px', color: '#ef4444' }}>Delete Form?</h3>
+            <p style={{ color: '#a1a1aa', marginBottom: '16px' }}>
+              Delete <strong style={{ color: '#fff' }}>{deleteStagedModal.form_name}</strong> ({deleteStagedModal.form_number})?
+            </p>
+            <p style={{ color: '#71717a', fontSize: '13px', marginBottom: '16px' }}>
+              This will permanently remove it from staging{deleteStagedModal.status === 'approved' ? ' and the library' : ''}.
+            </p>
+            <p style={{ color: '#ef4444', fontSize: '13px', fontWeight: '600', marginBottom: '20px' }}>This cannot be undone.</p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteStagedModal(null)} style={btnSecondary}>Cancel</button>
+              <button onClick={() => deleteStagedForm(deleteStagedModal)} style={btnDanger}>Delete Forever</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UPLOAD FORM MODAL */}
+      {uploadFormModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Upload Form to Staging</h3>
+            <p style={{ color: '#a1a1aa', fontSize: '13px', marginBottom: '20px' }}>
+              Manually add a form that AI missed. Form will be added to staging for analysis and mapping.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>State *</label>
+                <select
+                  value={uploadFormModal.state || ''}
+                  onChange={(e) => setUploadFormModal({ ...uploadFormModal, state: e.target.value })}
+                  style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '10px 12px', borderRadius: '6px', border: 'none', width: '100%' }}
+                >
+                  <option value="">Select State...</option>
+                  {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Form Number *</label>
+                <input
+                  type="text"
+                  placeholder="e.g., TC-69, MVD-13"
+                  value={uploadFormModal.form_number || ''}
+                  onChange={(e) => setUploadFormModal({ ...uploadFormModal, form_number: e.target.value.toUpperCase() })}
+                  style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '10px 12px', borderRadius: '6px', border: 'none', width: '100%', fontFamily: 'monospace' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Form Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Motor Vehicle Contract of Sale"
+                  value={uploadFormModal.form_name || ''}
+                  onChange={(e) => setUploadFormModal({ ...uploadFormModal, form_name: e.target.value })}
+                  style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '10px 12px', borderRadius: '6px', border: 'none', width: '100%' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>PDF File (optional)</label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={(e) => setUploadFormModal({ ...uploadFormModal, file: e.target.files?.[0] || null })}
+                  style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '10px 12px', borderRadius: '6px', border: 'none', width: '100%' }}
+                />
+                {uploadFormModal.file && (
+                  <p style={{ color: '#22c55e', fontSize: '12px', marginTop: '4px' }}>Selected: {uploadFormModal.file.name}</p>
+                )}
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Or Source URL (if no file upload)</label>
+                <input
+                  type="url"
+                  placeholder="https://dmv.state.gov/forms/tc-69.pdf"
+                  value={uploadFormModal.source_url || ''}
+                  onChange={(e) => setUploadFormModal({ ...uploadFormModal, source_url: e.target.value })}
+                  style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '10px 12px', borderRadius: '6px', border: 'none', width: '100%' }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button onClick={() => setUploadFormModal(null)} style={btnSecondary}>Cancel</button>
+              <button
+                onClick={uploadFormToStaging}
+                disabled={!uploadFormModal.state || !uploadFormModal.form_number || !uploadFormModal.form_name}
+                style={{
+                  ...btnSuccess,
+                  opacity: (!uploadFormModal.state || !uploadFormModal.form_number || !uploadFormModal.form_name) ? 0.5 : 1,
+                  cursor: (!uploadFormModal.state || !uploadFormModal.form_number || !uploadFormModal.form_name) ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Upload to Staging
+              </button>
             </div>
           </div>
         </div>
