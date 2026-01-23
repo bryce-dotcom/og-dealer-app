@@ -31,9 +31,11 @@ export default function DevConsolePage() {
   const [fieldMapperModal, setFieldMapperModal] = useState(null);
   const [aiResearching, setAiResearching] = useState(false);
   const [ruleModal, setRuleModal] = useState(null);
-  const [stagingFilter, setStagingFilter] = useState('pending');
+  const [stagingFilter, setStagingFilter] = useState('all');
+  const [stagingStateFilter, setStagingStateFilter] = useState('all');
   const [uploadFormModal, setUploadFormModal] = useState(null);
   const [libraryStateFilter, setLibraryStateFilter] = useState('all');
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(null);
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -717,8 +719,46 @@ export default function DevConsolePage() {
   };
 
   const getFilteredStaging = () => {
-    if (stagingFilter === 'all') return formStaging;
-    return formStaging.filter(f => f.status === stagingFilter);
+    let filtered = formStaging;
+
+    // Apply state filter first
+    if (stagingStateFilter !== 'all') {
+      filtered = filtered.filter(f => f.state === stagingStateFilter);
+    }
+
+    // Then apply status filter
+    if (stagingFilter === 'all') return filtered;
+    if (stagingFilter === 'ready') return filtered.filter(f => (f.mapping_confidence || 0) >= 99);
+    return filtered.filter(f => f.status === stagingFilter);
+  };
+
+  // Get unique states from staging for filter dropdown
+  const stagingStates = [...new Set(formStaging.map(f => f.state))].sort();
+
+  // Bulk delete all forms for a state
+  const bulkDeleteStagingState = async (state) => {
+    setLoading(true);
+    try {
+      const formsToDelete = formStaging.filter(f => f.state === state);
+
+      // Delete from form_library any promoted forms
+      const promotedForms = formsToDelete.filter(f => f.status === 'approved');
+      for (const form of promotedForms) {
+        await supabase.from('form_library').delete().eq('form_number', form.form_number).eq('state', form.state);
+      }
+
+      // Delete all staging forms for this state
+      await supabase.from('form_staging').delete().eq('state', state);
+
+      await logAudit('BULK_DELETE', 'form_staging', `state:${state}`, { count: formsToDelete.length });
+      showToast(`Deleted ${formsToDelete.length} forms for ${state}`);
+      setConfirmBulkDelete(null);
+      setStagingStateFilter('all');
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
   };
 
   // === LIBRARY TAB (form_library) ===
@@ -1224,30 +1264,75 @@ export default function DevConsolePage() {
             {/* === STAGING TAB === */}
             {formLibraryTab === 'staging' && (
               <div>
+                {/* Header with Upload button */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>AI-discovered or manually uploaded forms.</p>
-                    <button
-                      onClick={() => setUploadFormModal({ state: '', form_number: '', form_name: '', source_url: '', file: null })}
-                      style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#22c55e', color: '#fff', fontWeight: '600' }}
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Developer tooling to maintain form freshness across all states.</p>
+                  <button
+                    onClick={() => setUploadFormModal({ state: stagingStateFilter !== 'all' ? stagingStateFilter : '', form_number: '', form_name: '', source_url: '', file: null })}
+                    style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#22c55e', color: '#fff', fontWeight: '600' }}
+                  >
+                    + Upload Form
+                  </button>
+                </div>
+
+                {/* State Filter & Status Filters */}
+                <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {/* State Dropdown */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ color: '#a1a1aa', fontSize: '13px' }}>State:</span>
+                    <select
+                      value={stagingStateFilter}
+                      onChange={(e) => setStagingStateFilter(e.target.value)}
+                      style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '8px 12px', borderRadius: '6px', border: 'none', fontSize: '13px', minWidth: '140px' }}
                     >
-                      + Upload Form
-                    </button>
+                      <option value="all">All States ({formStaging.length})</option>
+                      {stagingStates.map(state => (
+                        <option key={state} value={state}>{state} ({formStaging.filter(f => f.state === state).length})</option>
+                      ))}
+                    </select>
+                    {stagingStateFilter !== 'all' && (
+                      <button
+                        onClick={() => setConfirmBulkDelete(stagingStateFilter)}
+                        style={{ padding: '8px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer', backgroundColor: '#ef4444', color: '#fff', fontWeight: '600' }}
+                      >
+                        Delete All {stagingStateFilter}
+                      </button>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    {['all', 'pending', 'analyzed', 'approved'].map(filter => (
-                      <button key={filter} onClick={() => setStagingFilter(filter)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer', backgroundColor: stagingFilter === filter ? '#f97316' : '#3f3f46', color: '#fff', textTransform: 'capitalize' }}>{filter}</button>
+
+                  <div style={{ borderLeft: '1px solid #3f3f46', height: '24px' }} />
+
+                  {/* Status Filters */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {[
+                      { id: 'all', label: 'All' },
+                      { id: 'pending', label: 'Pending' },
+                      { id: 'analyzed', label: 'Analyzed' },
+                      { id: 'ready', label: 'Ready (99%+)' },
+                      { id: 'approved', label: 'Promoted' },
+                    ].map(filter => (
+                      <button
+                        key={filter.id}
+                        onClick={() => setStagingFilter(filter.id)}
+                        style={{
+                          padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer',
+                          backgroundColor: stagingFilter === filter.id ? '#f97316' : '#3f3f46',
+                          color: '#fff'
+                        }}
+                      >
+                        {filter.label}
+                      </button>
                     ))}
                   </div>
                 </div>
 
                 {/* Staging Stats */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Staged</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{formStaging.length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Pending</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formStaging.filter(f => f.status === 'pending').length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Analyzed</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.status === 'analyzed').length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready (99%+)</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.mapping_confidence || 0) >= 99).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Promoted</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>{formStaging.filter(f => f.status === 'approved').length}</div></div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total{stagingStateFilter !== 'all' ? ` (${stagingStateFilter})` : ''}</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{stagingStateFilter !== 'all' ? formStaging.filter(f => f.state === stagingStateFilter).length : formStaging.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>{stagingStates.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Pending</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formStaging.filter(f => f.status === 'pending' && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Analyzed</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.status === 'analyzed' && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready (99%+)</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.mapping_confidence || 0) >= 99 && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                 </div>
 
                 {/* Staging Table */}
@@ -2018,6 +2103,33 @@ export default function DevConsolePage() {
                 <button onClick={() => setFieldMapperModal(null)} style={btnSecondary}>Cancel</button>
                 <button onClick={saveFieldMapping} style={btnSuccess}>Save Mapping</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK DELETE STATE MODAL */}
+      {confirmBulkDelete && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '450px', width: '90%' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '12px', color: '#ef4444' }}>Delete All {confirmBulkDelete} Forms?</h3>
+            <p style={{ color: '#a1a1aa', marginBottom: '16px' }}>
+              This will permanently delete <strong style={{ color: '#fff' }}>{formStaging.filter(f => f.state === confirmBulkDelete).length} forms</strong> for {confirmBulkDelete} from staging.
+            </p>
+            <p style={{ color: '#71717a', fontSize: '13px', marginBottom: '16px' }}>
+              {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'approved').length > 0 && (
+                <span style={{ color: '#eab308' }}>
+                  {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'approved').length} promoted forms will also be removed from the library.
+                </span>
+              )}
+              {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'approved').length === 0 && (
+                'This allows fresh AI discovery for this state.'
+              )}
+            </p>
+            <p style={{ color: '#ef4444', fontSize: '13px', fontWeight: '600', marginBottom: '20px' }}>This cannot be undone.</p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmBulkDelete(null)} style={btnSecondary}>Cancel</button>
+              <button onClick={() => bulkDeleteStagingState(confirmBulkDelete)} style={btnDanger}>Delete All {confirmBulkDelete}</button>
             </div>
           </div>
         </div>
