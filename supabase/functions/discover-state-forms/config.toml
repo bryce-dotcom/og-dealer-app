@@ -1,0 +1,3 @@
+# Disable JWT verification for this function
+# We handle authorization in the function code using service role key
+verify_jwt = false

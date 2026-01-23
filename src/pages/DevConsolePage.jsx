@@ -512,6 +512,8 @@ export default function DevConsolePage() {
   };
 
   // === STAGING TAB (form_staging) ===
+  const [stagingMapperModal, setStagingMapperModal] = useState(null);
+
   const analyzeForm = async (form) => {
     setLoading(true);
     try {
@@ -519,7 +521,8 @@ export default function DevConsolePage() {
         body: { form_id: form.id, source_url: form.source_url }
       });
       if (error) throw error;
-      showToast('Analysis complete - confidence: ' + (data?.confidence || 0) + '%');
+      if (data?.error) throw new Error(data.error);
+      showToast(`Analysis complete - ${data?.mapped_fields || 0}/${data?.total_fields || 0} fields mapped (${data?.mapping_confidence || 0}%)`);
       loadAllData();
     } catch (err) {
       showToast('Analysis failed: ' + err.message, 'error');
@@ -527,20 +530,69 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
-  const promoteToLibrary = async (form) => {
+  const openStagingMapper = (form) => {
+    setStagingMapperModal({
+      ...form,
+      detected_fields: form.detected_fields || [],
+      field_mapping: form.field_mapping || {},
+    });
+  };
+
+  const saveStagingMapping = async () => {
+    if (!stagingMapperModal) return;
     setLoading(true);
     try {
-      // Create form_library entry
+      const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
+      const totalFields = stagingMapperModal.detected_fields?.length || 1;
+      const confidence = Math.round((mappedCount / totalFields) * 100);
+
+      await supabase.from('form_staging').update({
+        field_mapping: stagingMapperModal.field_mapping,
+        mapping_confidence: confidence,
+      }).eq('id', stagingMapperModal.id);
+
+      showToast(`Mapping saved - ${confidence}% complete`);
+      setStagingMapperModal(null);
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const updateStagingFieldMapping = (fieldName, contextPath) => {
+    setStagingMapperModal(prev => ({
+      ...prev,
+      field_mapping: {
+        ...prev.field_mapping,
+        [fieldName]: contextPath
+      }
+    }));
+  };
+
+  const promoteToLibrary = async (form) => {
+    // Only allow promotion if mapping_confidence >= 99
+    const confidence = form.mapping_confidence || 0;
+    if (confidence < 99) {
+      showToast(`Cannot promote - mapping confidence is ${confidence}%, needs 99%+`, 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Create form_library entry with field mappings from staging
       const { data: newForm, error: insertErr } = await supabase.from('form_library').insert({
         form_number: form.form_number,
         form_name: form.form_name,
         state: form.state,
         county: form.county,
-        category: form.category || 'deal',
+        category: form.form_type || form.category || 'deal',
         source_url: form.source_url,
         description: form.description,
-        field_mapping: {},
-        mapping_confidence: 0,
+        detected_fields: form.detected_fields || [],
+        field_mapping: form.field_mapping || {},
+        mapping_confidence: confidence,
+        mapping_status: 'reviewed',
         is_active: true,
       }).select().single();
       if (insertErr) throw insertErr;
@@ -548,7 +600,7 @@ export default function DevConsolePage() {
       // Update staging status
       await supabase.from('form_staging').update({ status: 'approved' }).eq('id', form.id);
       await logAudit('INSERT', 'form_library', newForm.id);
-      showToast('Form promoted to library');
+      showToast('Form promoted to library with field mappings');
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -657,11 +709,14 @@ export default function DevConsolePage() {
 
   // === FIELD MAPPER ===
   const fieldContextOptions = [
-    { group: 'Dealer', fields: ['dealer.name', 'dealer.address', 'dealer.city', 'dealer.state', 'dealer.zip', 'dealer.phone', 'dealer.license_number', 'dealer.ein'] },
-    { group: 'Vehicle', fields: ['vehicle.year', 'vehicle.make', 'vehicle.model', 'vehicle.vin', 'vehicle.color', 'vehicle.mileage', 'vehicle.stock_number', 'vehicle.price'] },
-    { group: 'Deal', fields: ['deal.sale_price', 'deal.trade_value', 'deal.down_payment', 'deal.tax', 'deal.total', 'deal.date', 'deal.salesperson'] },
-    { group: 'Customer', fields: ['customer.name', 'customer.address', 'customer.city', 'customer.state', 'customer.zip', 'customer.phone', 'customer.email', 'customer.dl_number'] },
-    { group: 'Financing', fields: ['financing.amount_financed', 'financing.apr', 'financing.term', 'financing.monthly_payment', 'financing.first_payment_date'] },
+    { group: 'Dealer', fields: ['dealer.dealer_name', 'dealer.address', 'dealer.city', 'dealer.state', 'dealer.zip', 'dealer.phone', 'dealer.license_number', 'dealer.ein', 'dealer.email'] },
+    { group: 'Vehicle', fields: ['vehicle.vin', 'vehicle.year', 'vehicle.make', 'vehicle.model', 'vehicle.trim', 'vehicle.color', 'vehicle.mileage', 'vehicle.stock_number', 'vehicle.body_type', 'vehicle.engine', 'vehicle.transmission', 'vehicle.fuel_type'] },
+    { group: 'Deal', fields: ['deal.purchaser_name', 'deal.purchaser_address', 'deal.purchaser_city', 'deal.purchaser_state', 'deal.purchaser_zip', 'deal.purchaser_phone', 'deal.purchaser_email', 'deal.purchaser_dl', 'deal.co_buyer_name', 'deal.co_buyer_address', 'deal.date_of_sale', 'deal.sale_price', 'deal.trade_value', 'deal.trade_payoff', 'deal.down_payment', 'deal.sales_tax', 'deal.doc_fee', 'deal.registration_fee', 'deal.title_fee', 'deal.total_price', 'deal.salesperson'] },
+    { group: 'Financing', fields: ['financing.amount_financed', 'financing.apr', 'financing.interest_rate', 'financing.term_months', 'financing.monthly_payment', 'financing.first_payment_date', 'financing.final_payment_date', 'financing.total_of_payments', 'financing.finance_charge'] },
+    { group: 'Lien', fields: ['lien.holder_name', 'lien.holder_address', 'lien.holder_city', 'lien.holder_state', 'lien.holder_zip', 'lien.amount', 'lien.release_date'] },
+    { group: 'Trade-in', fields: ['trade.vin', 'trade.year', 'trade.make', 'trade.model', 'trade.mileage'] },
+    { group: 'Signatures', fields: ['signature.buyer', 'signature.co_buyer', 'signature.dealer', 'signature.date'] },
+    { group: 'Odometer', fields: ['odometer.reading', 'odometer.status', 'odometer.date'] },
   ];
 
   const saveFieldMapping = async () => {
@@ -1068,9 +1123,9 @@ export default function DevConsolePage() {
             {formLibraryTab === 'staging' && (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>AI-discovered forms waiting for review before promotion to library</p>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>AI-discovered forms waiting for review. Analyze to detect fields, then map to 99%+ to promote.</p>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    {['all', 'pending', 'approved', 'rejected'].map(filter => (
+                    {['all', 'pending', 'analyzed', 'approved', 'rejected'].map(filter => (
                       <button key={filter} onClick={() => setStagingFilter(filter)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer', backgroundColor: stagingFilter === filter ? '#f97316' : '#3f3f46', color: '#fff', textTransform: 'capitalize' }}>{filter}</button>
                     ))}
                   </div>
@@ -1079,9 +1134,10 @@ export default function DevConsolePage() {
                 {/* Staging Stats */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Staged</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{formStaging.length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Pending Review</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formStaging.filter(f => f.status === 'pending').length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Approved</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => f.status === 'approved').length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Rejected</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#ef4444' }}>{formStaging.filter(f => f.status === 'rejected').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Pending</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formStaging.filter(f => f.status === 'pending').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Analyzed</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.status === 'analyzed').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready (99%+)</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.mapping_confidence || 0) >= 99).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Promoted</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>{formStaging.filter(f => f.status === 'approved').length}</div></div>
                 </div>
 
                 {/* Staging Table */}
@@ -1092,44 +1148,82 @@ export default function DevConsolePage() {
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form Name</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>AI Confidence</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping Score</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {getFilteredStaging().map(f => (
-                        <tr key={f.id} style={{ borderBottom: '1px solid #3f3f46', opacity: f.status === 'rejected' ? 0.5 : 1 }}>
-                          <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>{f.form_number}</td>
-                          <td style={{ padding: '10px 8px' }}>
-                            <div>{f.form_name}</div>
-                            {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#71717a', fontSize: '11px' }}>View Source</a>}
-                          </td>
-                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                              <div style={{ width: '60px', height: '6px', backgroundColor: '#3f3f46', borderRadius: '3px', overflow: 'hidden' }}>
-                                <div style={{ width: `${f.ai_confidence || 0}%`, height: '100%', backgroundColor: (f.ai_confidence || 0) >= 80 ? '#22c55e' : (f.ai_confidence || 0) >= 50 ? '#eab308' : '#ef4444' }} />
+                      {getFilteredStaging().map(f => {
+                        const mappingScore = f.mapping_confidence || 0;
+                        const hasMapping = (f.detected_fields?.length || 0) > 0;
+                        const isReadyToPromote = mappingScore >= 99;
+                        const isCurrentVersion = f.ai_is_current_version === true;
+                        return (
+                          <tr key={f.id} style={{
+                            borderBottom: '1px solid #3f3f46',
+                            opacity: f.status === 'rejected' ? 0.5 : 1,
+                            borderLeft: isCurrentVersion ? '3px solid #22c55e' : (f.ai_is_current_version === false ? '3px solid #eab308' : 'none'),
+                            backgroundColor: isCurrentVersion ? 'rgba(34, 197, 94, 0.05)' : 'transparent'
+                          }}>
+                            <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {f.form_number}
+                                {isCurrentVersion ? (
+                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#22c55e', color: '#000', fontWeight: '600' }}>LATEST</span>
+                                ) : f.ai_is_current_version === false ? (
+                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#eab308', color: '#000', fontWeight: '600' }}>OUTDATED</span>
+                                ) : null}
                               </div>
-                              <span style={{ fontSize: '12px', color: '#a1a1aa' }}>{f.ai_confidence || 0}%</span>
-                            </div>
-                          </td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: f.status === 'approved' ? '#22c55e' : f.status === 'rejected' ? '#ef4444' : '#eab308', textTransform: 'uppercase' }}>{f.status}</span>
-                          </td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            {f.status === 'pending' && (
-                              <>
-                                <button onClick={() => analyzeForm(f)} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Analyze</button>
-                                <button onClick={() => promoteToLibrary(f)} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Promote</button>
-                                <button onClick={() => rejectStagedForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Reject</button>
-                              </>
-                            )}
-                            {f.status === 'approved' && <span style={{ color: '#71717a', fontSize: '11px' }}>In Library</span>}
-                            {f.status === 'rejected' && <span style={{ color: '#71717a', fontSize: '11px' }}>-</span>}
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td style={{ padding: '10px 8px' }}>
+                              <div>{f.form_name}</div>
+                              {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#71717a', fontSize: '11px' }}>View Source</a>}
+                              {f.form_type && <span style={{ marginLeft: '8px', padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#3f3f46', textTransform: 'uppercase' }}>{f.form_type}</span>}
+                            </td>
+                            <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              {hasMapping ? (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                  <span style={{
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    backgroundColor: isReadyToPromote ? '#22c55e' : mappingScore >= 50 ? '#eab308' : '#ef4444',
+                                    color: '#000'
+                                  }}>
+                                    {mappingScore}% mapped
+                                  </span>
+                                </div>
+                              ) : (
+                                <span style={{ color: '#71717a', fontSize: '12px' }}>Not analyzed</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: f.status === 'approved' ? '#22c55e' : f.status === 'rejected' ? '#ef4444' : f.status === 'analyzed' ? '#3b82f6' : '#eab308', textTransform: 'uppercase' }}>{f.status}</span>
+                            </td>
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              {(f.status === 'pending' || f.status === 'analyzed') && (
+                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                  <button onClick={() => analyzeForm(f)} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', fontSize: '11px' }}>Analyze</button>
+                                  {hasMapping && (
+                                    <button onClick={() => openStagingMapper(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}>View Mapping</button>
+                                  )}
+                                  {isReadyToPromote ? (
+                                    <button onClick={() => promoteToLibrary(f)} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Promote</button>
+                                  ) : (
+                                    <span style={{ color: '#71717a', fontSize: '10px', padding: '0 4px' }} title="Need 99% mapping to promote">Need 99%</span>
+                                  )}
+                                  <button onClick={() => rejectStagedForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Reject</button>
+                                </div>
+                              )}
+                              {f.status === 'approved' && <span style={{ color: '#71717a', fontSize: '11px' }}>In Library</span>}
+                              {f.status === 'rejected' && <span style={{ color: '#71717a', fontSize: '11px' }}>-</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                   {getFilteredStaging().length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No staged forms. Click "AI Discover Forms" to find forms for {dealer?.state || 'your state'}.</p>}
@@ -1718,7 +1812,7 @@ export default function DevConsolePage() {
         </div>
       )}
 
-      {/* FIELD MAPPER MODAL */}
+      {/* FIELD MAPPER MODAL (Library) */}
       {fieldMapperModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
           <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '1200px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
@@ -1802,6 +1896,126 @@ export default function DevConsolePage() {
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={() => setFieldMapperModal(null)} style={btnSecondary}>Cancel</button>
                 <button onClick={saveFieldMapping} style={btnSuccess}>Save Mapping</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STAGING MAPPER MODAL */}
+      {stagingMapperModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '1200px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', margin: '0 0 4px 0' }}>
+                  <span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: '#eab308', color: '#000', marginRight: '10px' }}>STAGING</span>
+                  {stagingMapperModal.form_number}
+                </h3>
+                <p style={{ color: '#a1a1aa', fontSize: '13px', margin: 0 }}>{stagingMapperModal.form_name}</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '12px', color: '#a1a1aa' }}>Mapping Score</div>
+                  {(() => {
+                    const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
+                    const totalFields = stagingMapperModal.detected_fields?.length || 1;
+                    const score = Math.round((mappedCount / totalFields) * 100);
+                    const isReady = score >= 99;
+                    return (
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: isReady ? '#22c55e' : '#eab308' }}>
+                        {score}%
+                        {isReady && <span style={{ fontSize: '12px', marginLeft: '8px', color: '#22c55e' }}>Ready!</span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <button onClick={() => setStagingMapperModal(null)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>×</button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+              {/* PDF Preview (left) */}
+              <div style={{ flex: 1, borderRight: '1px solid #27272a', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600' }}>PDF Preview</div>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#09090b', padding: '20px' }}>
+                  {stagingMapperModal.source_url ? (
+                    <iframe src={stagingMapperModal.source_url} style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }} title="PDF Preview" />
+                  ) : (
+                    <div style={{ textAlign: 'center', color: '#71717a' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '12px' }}>📄</div>
+                      <p>No PDF URL provided</p>
+                      <p style={{ fontSize: '12px' }}>Add a source URL to the form to preview</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Field Mapping (right) */}
+              <div style={{ width: '450px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>PDF Fields ({stagingMapperModal.detected_fields?.length || 0})</span>
+                  <span style={{ color: '#a1a1aa' }}>
+                    {Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length} mapped
+                  </span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                  {(stagingMapperModal.detected_fields || []).map((field, idx) => {
+                    const isMapped = !!stagingMapperModal.field_mapping?.[field];
+                    return (
+                      <div key={idx} style={{ marginBottom: '12px', padding: '12px', backgroundColor: '#27272a', borderRadius: '8px', border: isMapped ? '1px solid #22c55e' : '1px solid #ef4444' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600' }}>{field}</span>
+                          {isMapped ? (
+                            <span style={{ fontSize: '14px', color: '#22c55e' }}>✓</span>
+                          ) : (
+                            <span style={{ fontSize: '14px', color: '#ef4444' }}>⚠</span>
+                          )}
+                        </div>
+                        <select
+                          value={stagingMapperModal.field_mapping?.[field] || ''}
+                          onChange={(e) => updateStagingFieldMapping(field, e.target.value)}
+                          style={{ ...inputStyle, fontSize: '12px', borderColor: isMapped ? '#22c55e' : '#ef4444' }}
+                        >
+                          <option value="">-- Select mapping --</option>
+                          {fieldContextOptions.map(group => (
+                            <optgroup key={group.group} label={group.group}>
+                              {group.fields.map(f => (
+                                <option key={f} value={f}>{f}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                  {(!stagingMapperModal.detected_fields || stagingMapperModal.detected_fields.length === 0) && (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
+                      <p>No fields detected.</p>
+                      <p style={{ fontSize: '12px' }}>Click "Analyze" to detect PDF fields.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ color: '#71717a', fontSize: '12px' }}>
+                {(() => {
+                  const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
+                  const totalFields = stagingMapperModal.detected_fields?.length || 0;
+                  const unmapped = totalFields - mappedCount;
+                  return unmapped > 0
+                    ? `${unmapped} field${unmapped > 1 ? 's' : ''} need${unmapped === 1 ? 's' : ''} mapping to reach 99%`
+                    : 'All fields mapped - ready to promote!';
+                })()}
+              </div>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={() => setStagingMapperModal(null)} style={btnSecondary}>Cancel</button>
+                <button onClick={saveStagingMapping} style={btnSuccess}>Save Mapping</button>
               </div>
             </div>
           </div>

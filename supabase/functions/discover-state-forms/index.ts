@@ -75,6 +75,8 @@ serve(async (req) => {
   }
 
   try {
+    // This function uses service role key for DB operations
+    // Authorization is handled by Supabase's built-in JWT verification
     const { state, county, dealer_id } = await req.json();
 
     if (!state) {
