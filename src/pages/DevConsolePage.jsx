@@ -249,7 +249,7 @@ export default function DevConsolePage() {
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), type === 'error' ? 10000 : 3000);
   };
 
   useEffect(() => { loadAllData(); }, []);
@@ -257,7 +257,7 @@ export default function DevConsolePage() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [dealers, users, feedback, audit, promos, templates, rules, staging, library] = await Promise.all([
+      const [dealers, users, feedback, audit, promos, templates, rules, staging] = await Promise.all([
         supabase.from('dealer_settings').select('*').order('id'),
         supabase.from('employees').select('*').order('name'),
         supabase.from('feedback').select('*').order('created_at', { ascending: false }),
@@ -266,7 +266,6 @@ export default function DevConsolePage() {
         supabase.from('message_templates').select('*').order('name'),
         supabase.from('compliance_rules').select('*').order('state, category'),
         supabase.from('form_staging').select('*').order('created_at', { ascending: false }),
-        supabase.from('form_library').select('*').order('state, form_number'),
       ]);
       if (dealers.data) setAllDealers(dealers.data);
       if (users.data) setAllUsers(users.data);
@@ -275,8 +274,11 @@ export default function DevConsolePage() {
       if (promos.data) setPromoCodes(promos.data);
       if (templates.data) setMessageTemplates(templates.data);
       if (rules.data) setComplianceRules(rules.data);
-      if (staging.data) setFormStaging(staging.data);
-      if (library.data) setFormLibrary(library.data);
+      if (staging.data) {
+        setFormStaging(staging.data);
+        // Library is just approved forms from staging - no separate table needed
+        setFormLibrary(staging.data.filter(f => f.status === 'approved'));
+      }
     } catch (err) { console.error(err); }
     setLoading(false);
   };
@@ -588,29 +590,22 @@ export default function DevConsolePage() {
       return;
     }
 
+    // Check if already promoted
+    if (form.status === 'approved') {
+      showToast(`Form ${form.form_number} (${form.state}) is already in library`, 'error');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Create form_library entry with field mappings from staging
-      const { data: newForm, error: insertErr } = await supabase.from('form_library').insert({
-        form_number: form.form_number,
-        form_name: form.form_name,
-        state: form.state,
-        county: form.county,
-        category: form.form_type || form.category || 'deal',
-        source_url: form.source_url,
-        description: form.description,
-        detected_fields: form.detected_fields || [],
-        field_mapping: form.field_mapping || {},
-        mapping_confidence: confidence,
-        mapping_status: 'reviewed',
-        is_active: true,
-      }).select().single();
-      if (insertErr) throw insertErr;
+      // Simply update staging status to 'approved' - Library is a filtered view of staging
+      const { error } = await supabase.from('form_staging')
+        .update({ status: 'approved', promoted_at: new Date().toISOString() })
+        .eq('id', form.id);
+      if (error) throw error;
 
-      // Update staging status
-      await supabase.from('form_staging').update({ status: 'approved' }).eq('id', form.id);
-      await logAudit('INSERT', 'form_library', newForm.id);
-      showToast('Form promoted to library with field mappings');
+      await logAudit('PROMOTE', 'form_staging', form.id, { status: 'pending' }, { status: 'approved' });
+      showToast('Form promoted to library');
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -623,12 +618,7 @@ export default function DevConsolePage() {
   const deleteStagedForm = async (form) => {
     setLoading(true);
     try {
-      // Delete from form_library if it was promoted
-      if (form.status === 'approved') {
-        await supabase.from('form_library').delete().eq('form_number', form.form_number).eq('state', form.state);
-      }
-
-      // Delete from form_staging
+      // Delete from form_staging (Library is just a view, so this removes from both)
       await supabase.from('form_staging').delete().eq('id', form.id);
 
       await logAudit('DELETE', 'form_staging', form.id, { form_number: form.form_number, form_name: form.form_name });
@@ -703,6 +693,7 @@ export default function DevConsolePage() {
 
     try {
       let totalFormsAdded = 0;
+      let totalRulesAdded = 0;
       let statesProcessed = 0;
 
       if (discoverState === 'all') {
@@ -710,7 +701,7 @@ export default function DevConsolePage() {
         const statesToProcess = keyStates;
         for (let i = 0; i < statesToProcess.length; i++) {
           const state = statesToProcess[i];
-          setDiscoverProgress(`Discovering ${state}... (${i + 1}/${statesToProcess.length})`);
+          setDiscoverProgress(`Discovering ${state} forms & rules... (${i + 1}/${statesToProcess.length})`);
 
           try {
             const response = await supabase.functions.invoke('discover-state-forms', {
@@ -720,18 +711,21 @@ export default function DevConsolePage() {
             if (response.data?.forms_added) {
               totalFormsAdded += response.data.forms_added;
             }
+            if (response.data?.rules_added) {
+              totalRulesAdded += response.data.rules_added;
+            }
             statesProcessed++;
           } catch (err) {
-            console.error(`Failed to discover forms for ${state}:`, err);
+            console.error(`Failed to discover for ${state}:`, err);
             // Continue with other states even if one fails
           }
         }
 
         setDiscoverProgress('');
-        showToast(`Found ${totalFormsAdded} forms across ${statesProcessed} states`);
+        showToast(`Found ${totalFormsAdded} forms and ${totalRulesAdded} rules across ${statesProcessed} states`);
       } else {
         // Discover for single state
-        setDiscoverProgress(`Discovering ${discoverState}...`);
+        setDiscoverProgress(`Discovering ${discoverState} forms & rules...`);
 
         const response = await supabase.functions.invoke('discover-state-forms', {
           body: { state: discoverState, dealer_id: dealerId }
@@ -746,8 +740,9 @@ export default function DevConsolePage() {
         }
 
         totalFormsAdded = response.data?.forms_added || 0;
+        totalRulesAdded = response.data?.rules_added || 0;
         setDiscoverProgress('');
-        showToast(`Found ${totalFormsAdded} forms for ${discoverState}`);
+        showToast(`Found ${totalFormsAdded} forms and ${totalRulesAdded} rules for ${discoverState}`);
       }
 
       loadAllData();
@@ -781,13 +776,7 @@ export default function DevConsolePage() {
     try {
       const formsToDelete = formStaging.filter(f => f.state === state);
 
-      // Delete from form_library any promoted forms
-      const promotedForms = formsToDelete.filter(f => f.status === 'approved');
-      for (const form of promotedForms) {
-        await supabase.from('form_library').delete().eq('form_number', form.form_number).eq('state', form.state);
-      }
-
-      // Delete all staging forms for this state
+      // Delete all staging forms for this state (Library is a view, so this removes from both)
       await supabase.from('form_staging').delete().eq('state', state);
 
       await logAudit('BULK_DELETE', 'form_staging', `state:${state}`, { count: formsToDelete.length });
@@ -837,13 +826,14 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
-  const deleteLibraryForm = async (id) => {
-    if (!confirm('Delete this form from the library?')) return;
+  const removeFromLibrary = async (id) => {
+    if (!confirm('Remove this form from the library? It will return to staging.')) return;
     setLoading(true);
     try {
-      await supabase.from('form_library').delete().eq('id', id);
-      await logAudit('DELETE', 'form_library', id);
-      showToast('Form deleted');
+      // Library is a view of staging - "removing" just changes status back to analyzed
+      await supabase.from('form_staging').update({ status: 'analyzed', promoted_at: null }).eq('id', id);
+      await logAudit('DEMOTE', 'form_staging', id, { status: 'approved' }, { status: 'analyzed' });
+      showToast('Form removed from library (returned to staging)');
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -1580,7 +1570,7 @@ export default function DevConsolePage() {
                             {(f.mapping_confidence || 0) < 99 && <button onClick={() => setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || ['field1', 'field2', 'field3', 'field4', 'field5'] })} style={{ background: 'none', border: 'none', color: '#eab308', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Map Fields</button>}
                             <button onClick={() => setFormModal(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
                             {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#a1a1aa', fontSize: '11px', marginRight: '8px' }}>PDF</a>}
-                            <button onClick={() => deleteLibraryForm(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Del</button>
+                            <button onClick={() => removeFromLibrary(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Remove</button>
                           </td>
                         </tr>
                       ))}

@@ -268,6 +268,139 @@ Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the bas
       console.log(`Successfully inserted ${insertedCount} forms`);
     }
 
+    // === PHASE 2: Discover Compliance Rules ===
+    console.log(`Discovering compliance rules for ${stateUpper}...`);
+
+    // Check existing rules to avoid duplicates
+    const { data: existingRules } = await supabase
+      .from("compliance_rules")
+      .select("rule_name")
+      .eq("state", stateUpper);
+
+    const existingRuleNames = new Set(existingRules?.map((r) => r.rule_name.toLowerCase()) || []);
+
+    const rulesSystemPrompt = `You are an expert on US state auto dealer compliance requirements.
+
+Your task: Return a JSON array of compliance rules and filing requirements for auto dealers in the given state.
+
+Response format - return ONLY valid JSON, no markdown:
+[
+  {
+    "rule_name": "Sales Tax Filing",
+    "category": "tax",
+    "agency": "Utah State Tax Commission",
+    "description": "Monthly sales tax return for vehicle sales",
+    "deadline_days": 25,
+    "deadline_description": "Due by 25th of following month",
+    "filing_cadence": "monthly",
+    "late_fee": 25.00,
+    "penalty_description": "5% penalty plus 1% per month interest",
+    "required_forms": ["TC-62M", "TC-941"],
+    "reminder_days_before": 7
+  }
+]
+
+Categories: tax, title, registration, disclosure, reporting, licensing
+Filing cadence: daily, weekly, monthly, quarterly, annually, per_transaction
+deadline_days: Days after period end (for periodic) or days after sale (for per_transaction)
+
+Include rules for:
+- Sales tax filing (monthly/quarterly)
+- Title transfer deadlines
+- Registration requirements
+- Dealer license renewals
+- Required disclosures (timing)
+- DMV reporting requirements
+- Temporary tag limits
+
+Only include rules you're confident about. Be accurate with deadlines and fees.`;
+
+    const rulesUserPrompt = `List the compliance rules and filing requirements for auto dealers in ${stateUpper}.
+
+For each rule include:
+- Exact filing deadline (days after period/sale)
+- Filing frequency (monthly, quarterly, per transaction)
+- Late fees and penalties
+- Which forms are required
+- The responsible agency`;
+
+    const rulesResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-3-haiku-20240307",
+        max_tokens: 4000,
+        system: rulesSystemPrompt,
+        messages: [{ role: "user", content: rulesUserPrompt }],
+      }),
+    });
+
+    let rulesInserted = 0;
+    if (rulesResponse.ok) {
+      const rulesResult = await rulesResponse.json();
+      const rulesContent = rulesResult.content?.[0]?.text || "[]";
+
+      let rules: any[] = [];
+      try {
+        let cleanedRules = rulesContent;
+        cleanedRules = cleanedRules.replace(/```json\s*/gi, "");
+        cleanedRules = cleanedRules.replace(/```\s*/g, "");
+        const arrayMatch = cleanedRules.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          cleanedRules = arrayMatch[0];
+        }
+        rules = JSON.parse(cleanedRules.trim());
+      } catch (parseError) {
+        console.error("Failed to parse rules response:", rulesContent);
+        rules = [];
+      }
+
+      if (Array.isArray(rules)) {
+        const validRules: any[] = [];
+
+        for (const rule of rules) {
+          if (!rule.rule_name || existingRuleNames.has(rule.rule_name.toLowerCase())) {
+            continue;
+          }
+
+          validRules.push({
+            rule_name: rule.rule_name,
+            state: stateUpper,
+            category: rule.category || "compliance",
+            agency: rule.agency || `${stateUpper} DMV`,
+            description: rule.description || "",
+            deadline_days: parseInt(rule.deadline_days) || 30,
+            deadline_description: rule.deadline_description || "",
+            filing_cadence: rule.filing_cadence || "per_transaction",
+            late_fee: parseFloat(rule.late_fee) || 0,
+            penalty_description: rule.penalty_description || "",
+            required_forms: rule.required_forms || [],
+            reminder_days_before: parseInt(rule.reminder_days_before) || 7,
+            is_verified: false,
+            ai_discovered: true,
+          });
+        }
+
+        if (validRules.length > 0) {
+          const { data: insertedRules, error: rulesError } = await supabase
+            .from("compliance_rules")
+            .insert(validRules)
+            .select();
+
+          if (!rulesError) {
+            rulesInserted = insertedRules?.length || 0;
+            console.log(`Inserted ${rulesInserted} compliance rules`);
+          } else {
+            console.error("Rules insert error:", rulesError);
+          }
+        }
+      }
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -276,6 +409,7 @@ Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the bas
         forms_added: insertedCount,
         forms_skipped: skippedForms.length,
         valid_forms: validForms.length,
+        rules_added: rulesInserted,
         skipped_reasons: skippedForms.length > 0 ? skippedForms : undefined,
       }),
       {
