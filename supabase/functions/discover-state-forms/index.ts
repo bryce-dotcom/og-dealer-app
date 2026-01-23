@@ -99,43 +99,74 @@ serve(async (req) => {
 
     const existingFormNumbers = new Set(existingForms?.map((f) => f.form_number) || []);
 
-    // AI prompt that REQUIRES source_url
+    // AI prompt with doc_type and deadline tracking
     const systemPrompt = `You are an expert on US state DMV forms and dealer compliance requirements.
 
 Your task: Return a JSON array of official DMV/state forms required for auto dealers in the given state.
 
 CRITICAL REQUIREMENTS:
-1. Every form MUST have a source_url - this is REQUIRED, not optional
-2. Use official state DMV/DOT/DOR website URLs only
-3. If you don't know the exact URL, use the state's main forms page: ${fallbackUrl}
-4. Form numbers must be accurate and real
+1. Every form MUST have a source_url - use official state DMV/DOT/DOR website URLs
+2. If you don't know the exact URL, use the state's main forms page: ${fallbackUrl}
+3. Form numbers must be accurate and real
+4. Categorize each form by doc_type and identify deadlines
 
 Response format - return ONLY valid JSON, no markdown:
 [
   {
     "form_number": "TC-69",
     "form_name": "Application for Utah Title",
-    "category": "title",
+    "doc_type": "deal",
     "source_url": "https://dmv.utah.gov/forms/tc-69.pdf",
-    "description": "Required for all vehicle title transfers"
+    "description": "Required for all vehicle title transfers",
+    "has_deadline": true,
+    "deadline_days": 30,
+    "deadline_description": "Within 30 days of sale",
+    "cadence": "per_transaction"
+  },
+  {
+    "form_number": "TC-62M",
+    "form_name": "Monthly Sales Tax Return",
+    "doc_type": "tax",
+    "source_url": "https://tax.utah.gov/forms/tc-62m.pdf",
+    "description": "Monthly sales tax filing for vehicle sales",
+    "has_deadline": true,
+    "deadline_days": 25,
+    "deadline_description": "Due by 25th of following month",
+    "cadence": "monthly"
   }
 ]
 
-Categories: title, registration, tax, disclosure, financing, compliance
+doc_type values:
+- deal: Forms needed per vehicle sale (title, registration, bill of sale, odometer)
+- finance: BHPH/financing disclosures, loan agreements, truth in lending
+- licensing: Dealer license renewal, surety bonds, business permits
+- tax: Sales tax returns, use tax filings
+- reporting: DMV reports, inventory reports, dealer reports
 
-DO NOT include forms you're unsure about. Only include forms you're confident exist.
-Every form MUST have source_url - forms without URLs will be rejected.`;
+cadence values:
+- per_transaction: Required for each vehicle sale
+- monthly: Monthly filing requirement
+- quarterly: Quarterly filing requirement
+- annually: Annual renewal/filing
 
-    const userPrompt = `List the required DMV forms for auto dealers in ${stateUpper}${county ? `, ${county} County` : ""}.
+has_deadline: true if there's a compliance deadline, false if informational only
+
+Only include forms you're confident exist. Every form MUST have source_url.`;
+
+    const userPrompt = `List ALL required forms for auto dealers in ${stateUpper}${county ? `, ${county} County` : ""}.
+
+For EACH form, specify:
+- doc_type (deal, finance, licensing, tax, reporting)
+- has_deadline (true/false)
+- deadline_days (if applicable)
+- cadence (per_transaction, monthly, quarterly, annually)
 
 Include:
-- Title transfer forms
-- Registration forms
-- Tax forms (sales tax, use tax)
-- Required disclosures (buyer's guide, odometer, damage disclosure)
-- Bill of sale forms
-- Lien release forms
-- Dealer-specific compliance forms
+1. DEAL DOCS (per sale): Title transfer, registration, bill of sale, odometer disclosure
+2. FINANCE DOCS: BHPH disclosures, retail installment contracts, truth in lending
+3. LICENSING DOCS: Dealer license renewal, surety bond, business license
+4. TAX DOCS: Sales tax returns (monthly/quarterly), use tax filings
+5. REPORTING DOCS: DMV reports, inventory reports
 
 Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the base URL if needed.`;
 
@@ -237,15 +268,19 @@ Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the bas
         console.log(`Invalid URL for ${form.form_number}, using fallback: ${sourceUrl}`);
       }
 
-      // Only include columns that definitely exist in form_staging
-      // Keep it minimal to avoid schema mismatches
+      // Include doc_type and deadline tracking
       validForms.push({
         form_number: form.form_number.toUpperCase().trim(),
         form_name: form.form_name.trim(),
         state: stateUpper,
-        source_url: sourceUrl, // Now guaranteed to have a value
+        source_url: sourceUrl,
         status: "pending",
-        ai_confidence: 0.70, // Decimal 0-1 range in case it's a decimal field
+        ai_confidence: 0.70,
+        doc_type: form.doc_type || "deal",
+        has_deadline: form.has_deadline === true,
+        deadline_days: form.deadline_days ? parseInt(form.deadline_days) : null,
+        deadline_description: form.deadline_description || null,
+        cadence: form.cadence || (form.has_deadline ? "per_transaction" : null),
       });
     }
 
@@ -269,59 +304,88 @@ Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the bas
     }
 
     // === PHASE 2: Discover Compliance Rules ===
-    console.log(`Discovering compliance rules for ${stateUpper}...`);
+    let rulesInserted = 0;
+    try {
+      console.log(`Discovering compliance rules for ${stateUpper}...`);
 
-    // Check existing rules to avoid duplicates
-    const { data: existingRules } = await supabase
-      .from("compliance_rules")
-      .select("rule_name")
-      .eq("state", stateUpper);
+      // Check existing rules to avoid duplicates
+      const { data: existingRules } = await supabase
+        .from("compliance_rules")
+        .select("rule_name")
+        .eq("state", stateUpper);
 
-    const existingRuleNames = new Set(existingRules?.map((r) => r.rule_name.toLowerCase()) || []);
+      const existingRuleNames = new Set(existingRules?.map((r) => r.rule_name.toLowerCase()) || []);
 
-    const rulesSystemPrompt = `You are an expert on US state auto dealer compliance requirements.
+    const rulesSystemPrompt = `You are an expert on US state auto dealer compliance requirements for independent auto dealers.
 
-Your task: Return a JSON array of compliance rules and filing requirements for auto dealers in the given state.
+Your task: Return a JSON array of ALL compliance rules and filing requirements for auto dealers in the given state.
 
 Response format - return ONLY valid JSON, no markdown:
 [
   {
-    "rule_name": "Sales Tax Filing",
+    "rule_name": "Monthly Sales Tax Return",
     "category": "tax",
     "agency": "Utah State Tax Commission",
-    "description": "Monthly sales tax return for vehicle sales",
+    "description": "Report and remit sales tax collected on vehicle sales",
     "deadline_days": 25,
     "deadline_description": "Due by 25th of following month",
     "filing_cadence": "monthly",
     "late_fee": 25.00,
     "penalty_description": "5% penalty plus 1% per month interest",
-    "required_forms": ["TC-62M", "TC-941"],
-    "reminder_days_before": 7
+    "required_forms": ["TC-62M", "TC-941"]
   }
 ]
 
-Categories: tax, title, registration, disclosure, reporting, licensing
-Filing cadence: daily, weekly, monthly, quarterly, annually, per_transaction
-deadline_days: Days after period end (for periodic) or days after sale (for per_transaction)
+Categories to cover:
+- tax: Sales tax filing, use tax, inventory tax
+- title: Title transfer deadlines per sale
+- registration: Vehicle registration requirements
+- licensing: Dealer license renewal, bond requirements, surety
+- disclosure: Required buyer disclosures (AS-IS, damage, odometer)
+- financing: BHPH/financing disclosure requirements, usury limits
+- reporting: DMV/state reporting requirements
 
-Include rules for:
-- Sales tax filing (monthly/quarterly)
-- Title transfer deadlines
-- Registration requirements
-- Dealer license renewals
-- Required disclosures (timing)
-- DMV reporting requirements
-- Temporary tag limits
+Filing cadence options: monthly, quarterly, annually, per_transaction
 
-Only include rules you're confident about. Be accurate with deadlines and fees.`;
+IMPORTANT: Include rules for ALL deal types:
+1. CASH SALES - what's required per cash sale
+2. BHPH (Buy Here Pay Here) - in-house financing requirements, disclosures, usury laws
+3. BANK/OUTSIDE FINANCING - third party financing requirements
+4. TRADE-INS - title/lien payoff requirements
 
-    const rulesUserPrompt = `List the compliance rules and filing requirements for auto dealers in ${stateUpper}.
+Be specific about deadlines. Example: "Title must be transferred within 30 days of sale"
 
-For each rule include:
-- Exact filing deadline (days after period/sale)
-- Filing frequency (monthly, quarterly, per transaction)
-- Late fees and penalties
-- Which forms are required
+Only include rules you're confident about for this specific state.`;
+
+    const rulesUserPrompt = `List ALL compliance rules for auto dealers in ${stateUpper}, covering:
+
+1. TAX RULES:
+   - Sales tax filing frequency and deadlines
+   - Use tax requirements
+   - Late penalties
+
+2. TITLE/REGISTRATION (per sale):
+   - Days to transfer title after sale
+   - Registration requirements
+   - Temporary tag limits and duration
+
+3. DEALER LICENSING:
+   - License renewal deadlines
+   - Bond requirements
+   - Continuing education
+
+4. DEAL-TYPE SPECIFIC:
+   - BHPH/In-house financing rules (interest rate caps, disclosure requirements)
+   - Cash sale requirements
+   - Outside financing requirements
+
+5. REQUIRED DISCLOSURES:
+   - Buyer's Guide requirements
+   - AS-IS disclosure
+   - Damage/accident disclosure
+   - Odometer disclosure timing
+
+For each rule provide: deadline_days, filing_cadence, late_fee, required_forms, agency
 - The responsible agency`;
 
     const rulesResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -339,12 +403,14 @@ For each rule include:
       }),
     });
 
-    let rulesInserted = 0;
+    console.log(`Rules API response status: ${rulesResponse.status}`);
+
+    let rules: any[] = [];
     if (rulesResponse.ok) {
       const rulesResult = await rulesResponse.json();
       const rulesContent = rulesResult.content?.[0]?.text || "[]";
+      console.log(`Rules AI response length: ${rulesContent.length} chars`);
 
-      let rules: any[] = [];
       try {
         let cleanedRules = rulesContent;
         cleanedRules = cleanedRules.replace(/```json\s*/gi, "");
@@ -354,12 +420,17 @@ For each rule include:
           cleanedRules = arrayMatch[0];
         }
         rules = JSON.parse(cleanedRules.trim());
+        console.log(`Parsed ${rules.length} rules from AI`);
       } catch (parseError) {
-        console.error("Failed to parse rules response:", rulesContent);
+        console.error("Failed to parse rules response:", rulesContent.substring(0, 500));
         rules = [];
       }
+    } else {
+      const errorText = await rulesResponse.text();
+      console.error(`Rules API failed: ${rulesResponse.status} - ${errorText.substring(0, 200)}`);
+    }
 
-      if (Array.isArray(rules)) {
+    if (Array.isArray(rules) && rules.length > 0) {
         const validRules: any[] = [];
 
         for (const rule of rules) {
@@ -367,38 +438,48 @@ For each rule include:
             continue;
           }
 
+          // Only use columns that definitely exist in compliance_rules table
+          const ruleDescription = [
+            rule.description || "",
+            "",
+            `Filing: ${rule.filing_cadence || "per transaction"}`,
+            `Deadline: ${rule.deadline_description || (rule.deadline_days + " days after sale/period")}`,
+            rule.penalty_description ? `Penalty: ${rule.penalty_description}` : "",
+            rule.required_forms?.length ? `Forms: ${rule.required_forms.join(", ")}` : "",
+          ].filter(Boolean).join("\n");
+
           validRules.push({
             rule_name: rule.rule_name,
             state: stateUpper,
-            category: rule.category || "compliance",
+            category: rule.category || "tax",
             agency: rule.agency || `${stateUpper} DMV`,
-            description: rule.description || "",
+            description: ruleDescription,
             deadline_days: parseInt(rule.deadline_days) || 30,
-            deadline_description: rule.deadline_description || "",
-            filing_cadence: rule.filing_cadence || "per_transaction",
             late_fee: parseFloat(rule.late_fee) || 0,
-            penalty_description: rule.penalty_description || "",
-            required_forms: rule.required_forms || [],
-            reminder_days_before: parseInt(rule.reminder_days_before) || 7,
-            is_verified: false,
-            ai_discovered: true,
           });
+
+          console.log(`Prepared rule: ${rule.rule_name}`);
         }
 
-        if (validRules.length > 0) {
-          const { data: insertedRules, error: rulesError } = await supabase
-            .from("compliance_rules")
-            .insert(validRules)
-            .select();
+      console.log(`Valid rules to insert: ${validRules.length}`);
 
-          if (!rulesError) {
-            rulesInserted = insertedRules?.length || 0;
-            console.log(`Inserted ${rulesInserted} compliance rules`);
-          } else {
-            console.error("Rules insert error:", rulesError);
-          }
+      if (validRules.length > 0) {
+        const { data: insertedRules, error: rulesError } = await supabase
+          .from("compliance_rules")
+          .insert(validRules)
+          .select();
+
+        if (!rulesError) {
+          rulesInserted = insertedRules?.length || 0;
+          console.log(`Successfully inserted ${rulesInserted} compliance rules`);
+        } else {
+          console.error("Rules insert error:", JSON.stringify(rulesError));
         }
       }
+    }
+    } catch (rulesErr: any) {
+      console.error("Rules discovery failed (non-fatal):", rulesErr.message);
+      // Continue without rules - forms still work
     }
 
     return new Response(

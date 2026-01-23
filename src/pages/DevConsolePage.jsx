@@ -1240,12 +1240,13 @@ export default function DevConsolePage() {
               </div>
             </div>
 
-            {/* Tab Navigation */}
+            {/* Tab Navigation - Staging -> Library -> Rules */}
+            {/* Rules = Library forms with deadlines/cadences (forms that need compliance tracking) */}
             <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', borderBottom: '1px solid #3f3f46', paddingBottom: '4px' }}>
               {[
-                { id: 'rules', label: 'Rules', count: complianceRules.length, color: '#ef4444' },
-                { id: 'staging', label: 'Staging', count: formStaging.filter(f => f.status === 'pending').length, color: '#eab308' },
+                { id: 'staging', label: 'Staging', count: formStaging.filter(f => f.status !== 'approved').length, color: '#eab308' },
                 { id: 'library', label: 'Library', count: formLibrary.length, color: '#22c55e' },
+                { id: 'rules', label: 'Rules', count: formLibrary.filter(f => f.has_deadline || f.cadence).length, color: '#ef4444', desc: 'Forms with deadlines' },
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1269,19 +1270,33 @@ export default function DevConsolePage() {
             </div>
 
             {/* === RULES TAB === */}
-            {formLibraryTab === 'rules' && (
+            {/* Rules = Library forms that have deadlines or cadences (compliance-tracked docs) */}
+            {formLibraryTab === 'rules' && (() => {
+              const rulesFromLibrary = formLibrary.filter(f => f.has_deadline || f.cadence);
+              const docTypeColors = { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' };
+              const cadenceLabels = { per_transaction: 'Per Sale', monthly: 'Monthly', quarterly: 'Quarterly', annually: 'Annual' };
+              return (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>State compliance rules with deadlines, penalties, and required forms</p>
-                  <button onClick={() => setRuleModal({ state: dealer?.state || 'UT', rule_name: '', category: 'title', deadline_days: 30, late_fee: 0, agency: '', required_forms: '', description: '', is_verified: false })} style={btnSuccess}>+ Add Rule</button>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Forms with compliance deadlines or filing cadences. These docs require tracking.</p>
                 </div>
 
                 {/* Rules Stats */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Rules</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{complianceRules.length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Verified</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{complianceRules.filter(r => r.is_verified).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{[...new Set(complianceRules.map(r => r.state))].length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Avg Deadline</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#f97316' }}>{Math.round(complianceRules.reduce((s, r) => s + (r.deadline_days || 0), 0) / (complianceRules.length || 1))}d</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Rules</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{rulesFromLibrary.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Per Sale</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{rulesFromLibrary.filter(r => r.cadence === 'per_transaction').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Periodic</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{rulesFromLibrary.filter(r => r.cadence && r.cadence !== 'per_transaction').length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#f97316' }}>{[...new Set(rulesFromLibrary.map(r => r.state))].length}</div></div>
+                </div>
+
+                {/* Rules by Doc Type */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px', marginBottom: '20px' }}>
+                  {['deal', 'finance', 'licensing', 'tax', 'reporting'].map(dt => (
+                    <div key={dt} style={{ ...cardStyle, padding: '12px', textAlign: 'center' }}>
+                      <div style={{ color: docTypeColors[dt], fontSize: '20px', fontWeight: '700' }}>{rulesFromLibrary.filter(r => r.doc_type === dt).length}</div>
+                      <div style={{ color: '#a1a1aa', fontSize: '11px', textTransform: 'uppercase' }}>{dt}</div>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Rules Table */}
@@ -1289,38 +1304,42 @@ export default function DevConsolePage() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid #3f3f46' }}>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Rule Name</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Doc Type</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Cadence</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Deadline</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Late Fee</th>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Agency</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Description</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {complianceRules.map(r => (
+                      {rulesFromLibrary.map(r => (
                         <tr key={r.id} style={{ borderBottom: '1px solid #3f3f46' }}>
-                          <td style={{ padding: '10px 8px', fontWeight: '500' }}>{r.rule_name}</td>
+                          <td style={{ padding: '10px 8px' }}>
+                            <div style={{ fontWeight: '600' }}>{r.form_number}</div>
+                            <div style={{ fontSize: '11px', color: '#a1a1aa' }}>{r.form_name}</div>
+                          </td>
                           <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{r.state}</span></td>
-                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[r.category] || '#71717a', textTransform: 'uppercase' }}>{r.category}</span></td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center', fontFamily: 'monospace' }}>{r.deadline_days}d</td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center', color: r.late_fee > 0 ? '#ef4444' : '#71717a' }}>${r.late_fee || 0}</td>
-                          <td style={{ padding: '10px 8px', color: '#a1a1aa', fontSize: '12px' }}>{r.agency || '-'}</td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>{r.is_verified ? <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#22c55e' }}>VERIFIED</span> : <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#eab308' }}>UNVERIFIED</span>}</td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <button onClick={() => setRuleModal(r)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
-                            <button onClick={() => deleteRule(r.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Del</button>
+                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: docTypeColors[r.doc_type] || '#71717a', textTransform: 'uppercase' }}>{r.doc_type || 'deal'}</span>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: r.cadence === 'per_transaction' ? '#22c55e' : '#3b82f6' }}>{cadenceLabels[r.cadence] || r.cadence || '-'}</span>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center', fontFamily: 'monospace', color: r.deadline_days ? '#ef4444' : '#71717a' }}>
+                            {r.deadline_days ? `${r.deadline_days}d` : '-'}
+                          </td>
+                          <td style={{ padding: '10px 8px', color: '#a1a1aa', fontSize: '12px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {r.deadline_description || '-'}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {complianceRules.length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No compliance rules yet. Add rules manually or use AI Discover.</p>}
+                  {rulesFromLibrary.length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No rules found. Promote forms with deadlines from Library, or run AI Discover to find forms with compliance requirements.</p>}
                 </div>
               </div>
-            )}
+            );})()}
 
             {/* === STAGING TAB === */}
             {formLibraryTab === 'staging' && (
@@ -1433,9 +1452,13 @@ export default function DevConsolePage() {
                               </div>
                             </td>
                             <td style={{ padding: '10px 8px' }}>
-                              <div>{f.form_name}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span>{f.form_name}</span>
+                                {f.doc_type && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' }[f.doc_type] || '#3f3f46', textTransform: 'uppercase' }}>{f.doc_type}</span>}
+                                {f.has_deadline && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#ef4444', color: '#fff' }}>{f.deadline_days}d</span>}
+                                {f.cadence && f.cadence !== 'per_transaction' && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#3b82f6' }}>{f.cadence}</span>}
+                              </div>
                               {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#71717a', fontSize: '11px' }}>View Source</a>}
-                              {f.form_type && <span style={{ marginLeft: '8px', padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#3f3f46', textTransform: 'uppercase' }}>{f.form_type}</span>}
                             </td>
                             <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
