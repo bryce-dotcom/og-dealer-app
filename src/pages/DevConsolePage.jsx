@@ -36,6 +36,8 @@ export default function DevConsolePage() {
   const [uploadFormModal, setUploadFormModal] = useState(null);
   const [libraryStateFilter, setLibraryStateFilter] = useState('all');
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(null);
+  const [discoverState, setDiscoverState] = useState('all');
+  const [discoverProgress, setDiscoverProgress] = useState('');
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -691,28 +693,66 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
+  // Key states for "All States" discovery
+  const keyStates = ['UT', 'ID', 'NV', 'AZ', 'CO', 'WY', 'MT', 'NM', 'CA', 'TX', 'OR', 'WA', 'FL', 'GA', 'NC', 'OH', 'PA', 'NY', 'IL', 'MI'];
+  const allStatesOptions = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+
   const runAIResearch = async () => {
-    if (!dealer?.state) {
-      showToast('Dealer state not set', 'error');
-      return;
-    }
     setAiResearching(true);
+    setDiscoverProgress('');
+
     try {
-      const response = await supabase.functions.invoke('discover-state-forms', {
-        body: { state: dealer.state, county: dealer.county, dealer_id: dealerId }
-      });
+      let totalFormsAdded = 0;
+      let statesProcessed = 0;
 
-      if (response.error) {
-        throw new Error(response.error.message || 'Edge function failed');
+      if (discoverState === 'all') {
+        // Discover for all key states
+        const statesToProcess = keyStates;
+        for (let i = 0; i < statesToProcess.length; i++) {
+          const state = statesToProcess[i];
+          setDiscoverProgress(`Discovering ${state}... (${i + 1}/${statesToProcess.length})`);
+
+          try {
+            const response = await supabase.functions.invoke('discover-state-forms', {
+              body: { state, dealer_id: dealerId }
+            });
+
+            if (response.data?.forms_added) {
+              totalFormsAdded += response.data.forms_added;
+            }
+            statesProcessed++;
+          } catch (err) {
+            console.error(`Failed to discover forms for ${state}:`, err);
+            // Continue with other states even if one fails
+          }
+        }
+
+        setDiscoverProgress('');
+        showToast(`Found ${totalFormsAdded} forms across ${statesProcessed} states`);
+      } else {
+        // Discover for single state
+        setDiscoverProgress(`Discovering ${discoverState}...`);
+
+        const response = await supabase.functions.invoke('discover-state-forms', {
+          body: { state: discoverState, dealer_id: dealerId }
+        });
+
+        if (response.error) {
+          throw new Error(response.error.message || 'Edge function failed');
+        }
+
+        if (response.data?.error) {
+          throw new Error(response.data.error);
+        }
+
+        totalFormsAdded = response.data?.forms_added || 0;
+        setDiscoverProgress('');
+        showToast(`Found ${totalFormsAdded} forms for ${discoverState}`);
       }
 
-      if (response.data?.error) {
-        throw new Error(response.data.error);
-      }
-
-      showToast(`AI discovered ${response.data?.forms_added || 0} new forms in staging`);
       loadAllData();
     } catch (err) {
+      setDiscoverProgress('');
       showToast('AI Research failed: ' + err.message, 'error');
     }
     setAiResearching(false);
@@ -1169,9 +1209,40 @@ export default function DevConsolePage() {
         {/* FORM LIBRARY - 3 Tab System */}
         {activeSection === 'forms' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
               <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Form Library</h2>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {/* AI Discovery Progress */}
+                {discoverProgress && (
+                  <span style={{ color: '#3b82f6', fontSize: '13px', fontWeight: '500' }}>{discoverProgress}</span>
+                )}
+                {/* State Dropdown */}
+                <select
+                  value={discoverState}
+                  onChange={(e) => setDiscoverState(e.target.value)}
+                  disabled={aiResearching}
+                  style={{
+                    backgroundColor: '#3f3f46',
+                    color: '#fff',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    fontSize: '13px',
+                    opacity: aiResearching ? 0.6 : 1
+                  }}
+                >
+                  <option value="all">All Key States ({keyStates.length})</option>
+                  <optgroup label="Key States">
+                    {keyStates.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="All States">
+                    {allStatesOptions.filter(s => !keyStates.includes(s)).map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </optgroup>
+                </select>
                 <button onClick={runAIResearch} disabled={aiResearching} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
                   {aiResearching ? 'Discovering...' : 'AI Discover Forms'}
                 </button>
