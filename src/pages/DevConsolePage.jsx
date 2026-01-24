@@ -38,6 +38,7 @@ export default function DevConsolePage() {
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(null);
   const [discoverState, setDiscoverState] = useState('all');
   const [discoverProgress, setDiscoverProgress] = useState('');
+  const [promoteModal, setPromoteModal] = useState(null); // { form, selectedLibrary }
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -582,7 +583,7 @@ export default function DevConsolePage() {
     }));
   };
 
-  const promoteToLibrary = async (form) => {
+  const promoteToLibrary = async (form, selectedLibrary) => {
     // Only allow promotion if mapping_confidence >= 99
     const confidence = form.mapping_confidence || 0;
     if (confidence < 99) {
@@ -598,14 +599,20 @@ export default function DevConsolePage() {
 
     setLoading(true);
     try {
-      // Simply update staging status to 'approved' - Library is a filtered view of staging
+      // Update staging status to 'approved' and set the doc_type (library category)
       const { error } = await supabase.from('form_staging')
-        .update({ status: 'approved', promoted_at: new Date().toISOString() })
+        .update({
+          status: 'approved',
+          promoted_at: new Date().toISOString(),
+          doc_type: selectedLibrary
+        })
         .eq('id', form.id);
       if (error) throw error;
 
-      await logAudit('PROMOTE', 'form_staging', form.id, { status: 'pending' }, { status: 'approved' });
-      showToast('Form promoted to library');
+      const libraryLabels = { deal: 'Deal Docs', finance: 'Finance Docs', licensing: 'Licensing Docs', tax: 'Tax Docs', reporting: 'Reporting Docs' };
+      await logAudit('PROMOTE', 'form_staging', form.id, { status: 'pending' }, { status: 'approved', doc_type: selectedLibrary });
+      showToast(`Form promoted to ${libraryLabels[selectedLibrary] || selectedLibrary} library`);
+      setPromoteModal(null);
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -1423,7 +1430,8 @@ export default function DevConsolePage() {
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form Name</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping Score</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa', minWidth: '200px' }}>Rules / Compliance</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
                       </tr>
@@ -1461,6 +1469,24 @@ export default function DevConsolePage() {
                               {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#71717a', fontSize: '11px' }}>View Source</a>}
                             </td>
                             <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
+                            <td style={{ padding: '10px 8px', fontSize: '11px' }}>
+                              {/* Rules/Compliance blurb */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {f.doc_type && (
+                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' }[f.doc_type] || '#3f3f46', color: '#fff', alignSelf: 'flex-start', textTransform: 'uppercase' }}>{f.doc_type} DOC</span>
+                                )}
+                                {f.deadline_description ? (
+                                  <div style={{ color: '#ef4444', fontWeight: '500' }}>⏰ {f.deadline_description}</div>
+                                ) : f.has_deadline && f.deadline_days ? (
+                                  <div style={{ color: '#ef4444', fontWeight: '500' }}>⏰ Due within {f.deadline_days} days</div>
+                                ) : null}
+                                {f.cadence && (
+                                  <div style={{ color: '#3b82f6' }}>📅 {f.cadence === 'per_transaction' ? 'Required per sale' : f.cadence === 'monthly' ? 'Monthly filing' : f.cadence === 'quarterly' ? 'Quarterly filing' : f.cadence === 'annually' ? 'Annual filing' : f.cadence}</div>
+                                )}
+                                {f.compliance_notes && <div style={{ color: '#a1a1aa', fontSize: '10px' }}>{f.compliance_notes}</div>}
+                                {!f.doc_type && !f.has_deadline && !f.cadence && <span style={{ color: '#71717a' }}>Run Analyze to detect</span>}
+                              </div>
+                            </td>
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                               {hasMapping ? (
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -1489,7 +1515,7 @@ export default function DevConsolePage() {
                                   <button onClick={() => openStagingMapper(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}>View Mapping</button>
                                 )}
                                 {isReadyToPromote && (
-                                  <button onClick={() => promoteToLibrary(f)} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Promote</button>
+                                  <button onClick={() => setPromoteModal({ form: f, selectedLibrary: f.doc_type || 'deal' })} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Promote</button>
                                 )}
                                 <button onClick={() => setDeleteStagedModal(f)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Delete</button>
                               </div>
@@ -2214,6 +2240,62 @@ export default function DevConsolePage() {
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmBulkDelete(null)} style={btnSecondary}>Cancel</button>
               <button onClick={() => bulkDeleteStagingState(confirmBulkDelete)} style={btnDanger}>Delete All {confirmBulkDelete}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PROMOTE FORM MODAL - Ask which library */}
+      {promoteModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '90%' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '12px', color: '#22c55e' }}>Promote to Library</h3>
+            <p style={{ color: '#a1a1aa', marginBottom: '8px' }}>
+              Promoting <strong style={{ color: '#fff' }}>{promoteModal.form?.form_name}</strong> ({promoteModal.form?.form_number})
+            </p>
+
+            {/* Show compliance info if available */}
+            {(promoteModal.form?.has_deadline || promoteModal.form?.cadence) && (
+              <div style={{ backgroundColor: '#3f3f46', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '12px', color: '#a1a1aa', marginBottom: '8px' }}>Compliance Info:</div>
+                {promoteModal.form?.deadline_description && <div style={{ color: '#ef4444', fontSize: '13px' }}>⏰ {promoteModal.form.deadline_description}</div>}
+                {promoteModal.form?.has_deadline && !promoteModal.form?.deadline_description && <div style={{ color: '#ef4444', fontSize: '13px' }}>⏰ Due within {promoteModal.form.deadline_days} days</div>}
+                {promoteModal.form?.cadence && <div style={{ color: '#3b82f6', fontSize: '13px' }}>📅 {promoteModal.form.cadence === 'per_transaction' ? 'Required per sale' : promoteModal.form.cadence}</div>}
+              </div>
+            )}
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '8px' }}>Select Library Category:</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {[
+                  { id: 'deal', label: 'Deal Docs', desc: 'Per-sale: title, registration, bill of sale', color: '#22c55e' },
+                  { id: 'finance', label: 'Finance Docs', desc: 'BHPH, retail installment, disclosures', color: '#3b82f6' },
+                  { id: 'licensing', label: 'Licensing Docs', desc: 'Dealer license, bonds, permits', color: '#f97316' },
+                  { id: 'tax', label: 'Tax Docs', desc: 'Sales tax returns, use tax filings', color: '#ef4444' },
+                  { id: 'reporting', label: 'Reporting Docs', desc: 'DMV reports, inventory reports', color: '#8b5cf6' },
+                ].map(lib => (
+                  <button
+                    key={lib.id}
+                    onClick={() => setPromoteModal({ ...promoteModal, selectedLibrary: lib.id })}
+                    style={{
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: promoteModal.selectedLibrary === lib.id ? `2px solid ${lib.color}` : '2px solid #3f3f46',
+                      backgroundColor: promoteModal.selectedLibrary === lib.id ? `${lib.color}22` : '#18181b',
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
+                  >
+                    <div style={{ fontWeight: '600', color: lib.color, fontSize: '13px' }}>{lib.label}</div>
+                    <div style={{ color: '#71717a', fontSize: '10px', marginTop: '4px' }}>{lib.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setPromoteModal(null)} style={btnSecondary}>Cancel</button>
+              <button onClick={() => promoteToLibrary(promoteModal.form, promoteModal.selectedLibrary)} style={btnSuccess}>Promote to {promoteModal.selectedLibrary?.charAt(0).toUpperCase() + promoteModal.selectedLibrary?.slice(1)} Library</button>
             </div>
           </div>
         </div>

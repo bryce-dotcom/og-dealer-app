@@ -99,7 +99,7 @@ serve(async (req) => {
 
     const existingFormNumbers = new Set(existingForms?.map((f) => f.form_number) || []);
 
-    // AI prompt with doc_type and deadline tracking
+    // AI prompt with doc_type, deadline tracking, and compliance notes
     const systemPrompt = `You are an expert on US state DMV forms and dealer compliance requirements.
 
 Your task: Return a JSON array of official DMV/state forms required for auto dealers in the given state.
@@ -109,6 +109,7 @@ CRITICAL REQUIREMENTS:
 2. If you don't know the exact URL, use the state's main forms page: ${fallbackUrl}
 3. Form numbers must be accurate and real
 4. Categorize each form by doc_type and identify deadlines
+5. Include detailed compliance_notes explaining the form's purpose and requirements
 
 Response format - return ONLY valid JSON, no markdown:
 [
@@ -117,22 +118,22 @@ Response format - return ONLY valid JSON, no markdown:
     "form_name": "Application for Utah Title",
     "doc_type": "deal",
     "source_url": "https://dmv.utah.gov/forms/tc-69.pdf",
-    "description": "Required for all vehicle title transfers",
     "has_deadline": true,
     "deadline_days": 30,
     "deadline_description": "Within 30 days of sale",
-    "cadence": "per_transaction"
+    "cadence": "per_transaction",
+    "compliance_notes": "Required for every vehicle sale. Dealer must submit within 30 days or face $25 late fee. Used for: all cash sales, financed sales, trade-ins. Requires odometer disclosure, VIN verification, and lienholder info if financed."
   },
   {
     "form_number": "TC-62M",
     "form_name": "Monthly Sales Tax Return",
     "doc_type": "tax",
     "source_url": "https://tax.utah.gov/forms/tc-62m.pdf",
-    "description": "Monthly sales tax filing for vehicle sales",
     "has_deadline": true,
     "deadline_days": 25,
     "deadline_description": "Due by 25th of following month",
-    "cadence": "monthly"
+    "cadence": "monthly",
+    "compliance_notes": "Monthly sales tax filing. Report all vehicle sales from previous month. Include sales tax collected on each transaction. Penalty: 10% of tax due + interest if late. Required even if no sales (file zero return)."
   }
 ]
 
@@ -149,26 +150,29 @@ cadence values:
 - quarterly: Quarterly filing requirement
 - annually: Annual renewal/filing
 
-has_deadline: true if there's a compliance deadline, false if informational only
+compliance_notes should include:
+- What the form is used for
+- When it's required (cash sale, BHPH, financed, trade-in, all sales)
+- Penalties for non-compliance
+- Any special requirements or conditions
 
 Only include forms you're confident exist. Every form MUST have source_url.`;
 
     const userPrompt = `List ALL required forms for auto dealers in ${stateUpper}${county ? `, ${county} County` : ""}.
 
-For EACH form, specify:
-- doc_type (deal, finance, licensing, tax, reporting)
-- has_deadline (true/false)
-- deadline_days (if applicable)
-- cadence (per_transaction, monthly, quarterly, annually)
+For EACH form, provide detailed compliance_notes explaining:
+- Purpose and when to use (cash sale, BHPH, financed, all sales)
+- Compliance deadline and penalties
+- Any special requirements
 
-Include:
-1. DEAL DOCS (per sale): Title transfer, registration, bill of sale, odometer disclosure
-2. FINANCE DOCS: BHPH disclosures, retail installment contracts, truth in lending
+Categories to include:
+1. DEAL DOCS (per sale): Title transfer, registration, bill of sale, odometer disclosure, buyer's guide
+2. FINANCE DOCS: BHPH/in-house financing disclosures, retail installment contracts, truth in lending
 3. LICENSING DOCS: Dealer license renewal, surety bond, business license
 4. TAX DOCS: Sales tax returns (monthly/quarterly), use tax filings
 5. REPORTING DOCS: DMV reports, inventory reports
 
-Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the base URL if needed.`;
+Remember: Every form MUST have source_url and detailed compliance_notes.`;
 
     console.log(`Discovering forms for ${stateUpper}...`);
 
@@ -281,6 +285,7 @@ Remember: Every form MUST have a valid source_url. Use ${fallbackUrl} as the bas
         deadline_days: form.deadline_days ? parseInt(form.deadline_days) : null,
         deadline_description: form.deadline_description || null,
         cadence: form.cadence || (form.has_deadline ? "per_transaction" : null),
+        compliance_notes: form.compliance_notes || null,
       });
     }
 
