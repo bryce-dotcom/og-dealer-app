@@ -308,10 +308,10 @@ export default function ResearchPage() {
     }
   };
 
-  // Find Comparables function
+  // Find Comparables function - uses find-vehicles Edge Function
   const handleComparablesSearch = async () => {
-    if (!compMake && !compModel) {
-      setCompError('Enter at least make or model');
+    if (!compMake) {
+      setCompError('Make is required');
       return;
     }
 
@@ -320,12 +320,11 @@ export default function ResearchPage() {
     setCompResults(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('vehicle-research', {
+      const { data, error: fnError } = await supabase.functions.invoke('find-vehicles', {
         body: {
-          search_comparables: true,
           year_min: compYearMin ? parseInt(compYearMin) : null,
           year_max: compYearMax ? parseInt(compYearMax) : null,
-          make: compMake || null,
+          make: compMake,
           model: compModel || null,
           max_price: compMaxPrice ? parseInt(compMaxPrice) : null,
           max_miles: compMaxMiles ? parseInt(compMaxMiles) : null,
@@ -343,6 +342,18 @@ export default function ResearchPage() {
     } finally {
       setCompLoading(false);
     }
+  };
+
+  // Get deal score color
+  const getDealScoreStyle = (score) => {
+    const styles = {
+      'GREAT DEAL': { bg: 'rgba(34,197,94,0.2)', color: '#22c55e', border: '#22c55e' },
+      'GOOD DEAL': { bg: 'rgba(34,197,94,0.1)', color: '#4ade80', border: '#4ade80' },
+      'FAIR PRICE': { bg: 'rgba(234,179,8,0.15)', color: '#eab308', border: '#eab308' },
+      'OVERPRICED': { bg: 'rgba(249,115,22,0.15)', color: '#f97316', border: '#f97316' },
+      'BAD DEAL': { bg: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '#ef4444' },
+    };
+    return styles[score] || { bg: 'rgba(107,114,128,0.15)', color: '#6b7280', border: '#6b7280' };
   };
 
   // Search function
@@ -1247,36 +1258,216 @@ export default function ResearchPage() {
 
           {compResults && (
             <div style={{ marginTop: '16px' }}>
+              {/* Market Summary */}
+              {compResults.market_summary && (compResults.market_summary.avg_price || compResults.market_summary.total_available > 0) && (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
+                  gap: '12px',
+                  marginBottom: '20px',
+                  padding: '16px',
+                  backgroundColor: isDark ? theme.bg : '#f8fafc',
+                  borderRadius: '10px',
+                  border: `1px solid ${theme.border}`
+                }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Avg Price</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{formatCurrency(compResults.market_summary.avg_price)}</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Median</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{formatCurrency(compResults.market_summary.median_price)}</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Range</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text }}>
+                      {compResults.market_summary.price_range ? `${formatCurrency(compResults.market_summary.price_range.low)} - ${formatCurrency(compResults.market_summary.price_range.high)}` : 'N/A'}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Available</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: '#22c55e' }}>{compResults.market_summary.total_available || 0}</div>
+                  </div>
+                  {compResults.market_summary.avg_days_on_market && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Avg DOM</div>
+                      <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{compResults.market_summary.avg_days_on_market}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AI Guidance if no listings */}
+              {compResults.ai_guidance && (
+                <div style={{
+                  padding: '16px',
+                  backgroundColor: 'rgba(59,130,246,0.1)',
+                  border: '1px solid #3b82f6',
+                  borderRadius: '10px',
+                  marginBottom: '20px'
+                }}>
+                  <div style={{ fontSize: '12px', color: '#3b82f6', fontWeight: '600', marginBottom: '8px' }}>AI Market Insights</div>
+                  <div style={{ fontSize: '13px', color: theme.text, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>{compResults.ai_guidance}</div>
+                </div>
+              )}
+
+              {/* Results Count */}
               <div style={{ fontSize: '13px', color: theme.textMuted, marginBottom: '12px' }}>
-                {compResults.comparables?.length || 0} vehicles found
+                {compResults.total_found || 0} vehicles found
+                {compResults.dealer_listings?.length > 0 && ` (${compResults.dealer_listings.length} dealer`}
+                {compResults.private_listings?.length > 0 && `, ${compResults.private_listings.length} private)`}
+                {compResults.dealer_listings?.length > 0 && !compResults.private_listings?.length && ')'}
               </div>
 
-              {compResults.comparables?.length > 0 ? (
-                <div style={{ display: 'grid', gap: '10px' }}>
-                  {compResults.comparables.map((c, i) => (
-                    <div key={i} style={{ backgroundColor: isDark ? theme.bg : '#f8fafc', padding: '14px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                      <div style={{ flex: 1, minWidth: '200px' }}>
-                        <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
-                          {c.year} {c.make} {c.model} {c.trim || ''}
+              {/* Dealer Listings */}
+              {compResults.dealer_listings?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ padding: '3px 8px', backgroundColor: 'rgba(59,130,246,0.15)', color: '#3b82f6', borderRadius: '4px', fontSize: '11px' }}>DEALER</span>
+                    {compResults.dealer_listings.length} listings
+                  </div>
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {compResults.dealer_listings.map((c, i) => {
+                      const dealStyle = getDealScoreStyle(c.deal_score);
+                      return (
+                        <div key={i} style={{
+                          backgroundColor: isDark ? theme.bg : '#f8fafc',
+                          padding: '14px',
+                          borderRadius: '10px',
+                          border: c.deal_score === 'GREAT DEAL' ? `2px solid ${dealStyle.border}` : `1px solid ${theme.border}`,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: '12px'
+                        }}>
+                          <div style={{ flex: 1, minWidth: '200px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                              <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                                {c.year} {c.make} {c.model} {c.trim || ''}
+                              </span>
+                              {c.deal_score && c.deal_score !== 'UNKNOWN' && (
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: '700',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: dealStyle.bg,
+                                  color: dealStyle.color
+                                }}>
+                                  {c.deal_score}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+                              {c.miles && <span>{formatNumber(c.miles)} mi</span>}
+                              {c.miles && c.location && <span> • </span>}
+                              {c.location && <span>{c.location}</span>}
+                              {c.days_listed > 0 && <span> • {c.days_listed} days listed</span>}
+                            </div>
+                            {c.dealer_name && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '2px' }}>{c.dealer_name}</div>}
+                            {c.savings !== 0 && c.savings !== undefined && (
+                              <div style={{ fontSize: '11px', marginTop: '4px', color: c.savings > 0 ? '#22c55e' : '#ef4444' }}>
+                                {c.savings > 0 ? `$${formatNumber(c.savings)} under market` : `$${formatNumber(Math.abs(c.savings))} over market`}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ color: dealStyle.color, fontWeight: '700', fontSize: '20px' }}>{formatCurrency(c.price)}</div>
+                              {c.market_value && (
+                                <div style={{ fontSize: '11px', color: theme.textMuted }}>Market: {formatCurrency(c.market_value)}</div>
+                              )}
+                            </div>
+                            {c.url && (
+                              <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 12px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontSize: '12px', fontWeight: '600' }}>
+                                View
+                              </a>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '4px' }}>
-                          {c.miles && <span>{formatNumber(c.miles)} mi</span>}
-                          {c.miles && c.location && <span> • </span>}
-                          {c.location && <span>{c.location}</span>}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ color: '#22c55e', fontWeight: '700', fontSize: '20px' }}>{formatCurrency(c.price)}</div>
-                        {c.url && (
-                          <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 12px', backgroundColor: '#22c55e', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontSize: '12px', fontWeight: '600' }}>
-                            View
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                      );
+                    })}
+                  </div>
                 </div>
-              ) : (
+              )}
+
+              {/* Private Listings */}
+              {compResults.private_listings?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ padding: '3px 8px', backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e', borderRadius: '4px', fontSize: '11px' }}>PRIVATE</span>
+                    {compResults.private_listings.length} listings
+                  </div>
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {compResults.private_listings.map((c, i) => {
+                      const dealStyle = getDealScoreStyle(c.estimated_deal_score);
+                      return (
+                        <div key={i} style={{
+                          backgroundColor: isDark ? theme.bg : '#f8fafc',
+                          padding: '14px',
+                          borderRadius: '10px',
+                          border: `1px solid ${theme.border}`,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: '12px'
+                        }}>
+                          <div style={{ flex: 1, minWidth: '200px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                              <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                                {c.title || `${c.year || ''} ${c.make} ${c.model}`}
+                              </span>
+                              <span style={{
+                                fontSize: '9px',
+                                fontWeight: '600',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                backgroundColor: c.source === 'FB Marketplace' ? 'rgba(59,130,246,0.15)' : c.source === 'Craigslist' ? 'rgba(139,92,246,0.15)' : 'rgba(249,115,22,0.15)',
+                                color: c.source === 'FB Marketplace' ? '#3b82f6' : c.source === 'Craigslist' ? '#8b5cf6' : '#f97316'
+                              }}>
+                                {c.source}
+                              </span>
+                              {c.estimated_deal_score && (
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: '700',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: dealStyle.bg,
+                                  color: dealStyle.color
+                                }}>
+                                  {c.estimated_deal_score}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+                              {c.miles && <span>{formatNumber(c.miles)} mi</span>}
+                              {c.miles && c.location && <span> • </span>}
+                              {c.location && <span>{c.location}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {c.thumbnail && (
+                              <img src={c.thumbnail} alt="" style={{ width: '60px', height: '45px', objectFit: 'cover', borderRadius: '4px' }} />
+                            )}
+                            <div style={{ color: '#22c55e', fontWeight: '700', fontSize: '20px' }}>{c.price ? formatCurrency(c.price) : 'Contact'}</div>
+                            {c.url && (
+                              <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 12px', backgroundColor: '#22c55e', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontSize: '12px', fontWeight: '600' }}>
+                                View
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* No results */}
+              {compResults.total_found === 0 && !compResults.ai_guidance && (
                 <div style={{ color: theme.textMuted, padding: '24px', textAlign: 'center', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px' }}>
                   No vehicles found matching your criteria
                 </div>
