@@ -104,7 +104,7 @@ serve(async (req) => {
     log(`Input: ${JSON.stringify({ year_min, year_max, make, model, trim, max_price, max_miles, color, zip_code, radius_miles })}`);
 
     const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
-    const SERPAPI_API_KEY = Deno.env.get("SERPAPI_API_KEY");
+    const SERPAPI_API_KEY = Deno.env.get("SERP_API_KEY"); // Note: secret is SERP_API_KEY
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 
     log(`API Keys: MC=${!!MARKETCHECK_API_KEY}, SERP=${!!SERPAPI_API_KEY}, ANTHROPIC=${!!ANTHROPIC_API_KEY}`);
@@ -138,6 +138,7 @@ serve(async (req) => {
           rows: '50',
           sort_by: 'price',
           sort_order: 'asc',
+          stats: 'price,miles,dom', // Request stats for market summary
         });
 
         if (yearRange) {
@@ -160,7 +161,8 @@ serve(async (req) => {
 
         if (zip_code) {
           params.set('zip', zip_code);
-          params.set('radius', String(radius_miles));
+          // MarketCheck has 100 mile limit on some plans
+          params.set('radius', String(Math.min(radius_miles, 100)));
         }
 
         if (trim) {
@@ -205,6 +207,7 @@ serve(async (req) => {
               }
 
               // Calculate market summary from stats
+              log(`MarketCheck stats: ${JSON.stringify(mcData.stats || {}).slice(0, 300)}`);
               if (mcData.stats?.price) {
                 marketSummary = {
                   avg_price: Math.round(mcData.stats.price.mean || 0),
@@ -216,6 +219,7 @@ serve(async (req) => {
                   total_available: mcData.num_found,
                   avg_days_on_market: mcData.stats.dom?.mean ? Math.round(mcData.stats.dom.mean) : null,
                 };
+                log(`Market summary: avg=${marketSummary.avg_price}, median=${marketSummary.median_price}`);
               }
 
               log(`Extracted ${dealerListings.length} dealer listings`);
@@ -244,14 +248,17 @@ serve(async (req) => {
         }
       }
 
-      log(`Fetching predictions for ${uniqueVehicles.size} unique vehicle configurations`);
+      // Limit predictions to avoid rate limits - just get a few samples
+      const samplesToPredict = Array.from(uniqueVehicles.entries()).slice(0, 5);
+      log(`Fetching predictions for ${samplesToPredict.length} of ${uniqueVehicles.size} unique configs`);
 
-      for (const [key, sample] of uniqueVehicles) {
+      for (const [key, sample] of samplesToPredict) {
         if (priceCache.has(key)) continue;
 
         try {
           const predParams = new URLSearchParams({
             api_key: MARKETCHECK_API_KEY,
+            car_type: 'used', // Required parameter
           });
 
           if (sample.vin) {
@@ -272,11 +279,14 @@ serve(async (req) => {
 
           if (predRes.ok) {
             const predData = await predRes.json();
-            const marketValue = predData.predicted_price || predData.price || predData.adjusted_price;
+            const marketValue = predData.predicted_price || predData.price || predData.adjusted_price || predData.retail_price;
             if (marketValue) {
               priceCache.set(key, marketValue);
-              log(`Cached market value for ${key}: $${marketValue}`);
+              log(`Cached value for ${key}: $${marketValue}`);
             }
+          } else if (predRes.status === 429) {
+            log(`Rate limited, stopping predictions`);
+            break;
           }
         } catch (predError) {
           log(`Prediction error for ${key}: ${predError.message}`);
@@ -333,11 +343,15 @@ serve(async (req) => {
           api_key: SERPAPI_API_KEY,
           engine: 'facebook_marketplace',
           query: searchQuery,
-          location: zip_code,
+          location: 'Salt Lake City, Utah, United States', // FB needs city name format
+          category: 'vehicles',
         });
 
         if (max_price) {
           fbParams.set('max_price', String(max_price));
+        }
+        if (max_miles) {
+          fbParams.set('max_mileage', String(max_miles));
         }
 
         const fbUrl = `https://serpapi.com/search?${fbParams.toString()}`;
