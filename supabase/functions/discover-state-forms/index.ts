@@ -160,19 +160,60 @@ Only include forms you're confident exist. Every form MUST have source_url.`;
 
     const userPrompt = `List ALL required forms for auto dealers in ${stateUpper}${county ? `, ${county} County` : ""}.
 
-For EACH form, provide detailed compliance_notes explaining:
-- Purpose and when to use (cash sale, BHPH, financed, all sales)
-- Compliance deadline and penalties
-- Any special requirements
+Be COMPREHENSIVE - include EVERY form a dealer might need. For EACH form provide detailed compliance_notes.
 
-Categories to include:
-1. DEAL DOCS (per sale): Title transfer, registration, bill of sale, odometer disclosure, buyer's guide
-2. FINANCE DOCS: BHPH/in-house financing disclosures, retail installment contracts, truth in lending
-3. LICENSING DOCS: Dealer license renewal, surety bond, business license
-4. TAX DOCS: Sales tax returns (monthly/quarterly), use tax filings
-5. REPORTING DOCS: DMV reports, inventory reports
+=== DEAL DOCS (per sale) ===
+- Title application/transfer forms
+- Registration forms
+- Bill of Sale
+- Odometer Disclosure Statement (federal requirement)
+- Buyer's Guide (FTC requirement - AS-IS or warranty)
+- Damage Disclosure (if required by state)
+- Lemon Law Disclosure (if applicable)
+- Power of Attorney forms
+- Lien release forms
 
-Remember: Every form MUST have source_url and detailed compliance_notes.`;
+=== BHPH / IN-HOUSE FINANCING DOCS ===
+THIS IS CRITICAL - Include ALL forms for Buy Here Pay Here dealers:
+- Retail Installment Sales Contract (RISC)
+- Truth in Lending Disclosure (TILA - Regulation Z)
+- Right to Cancel Notice (if applicable)
+- Payment Schedule/Amortization
+- Insurance Disclosure
+- GAP Insurance forms
+- Repossession notices
+- Default/Late payment notices
+- Privacy Notice (GLBA requirement)
+- Risk-Based Pricing Notice
+- Adverse Action Notice
+- Credit Application
+- BHPH-specific state disclosures
+
+=== OUTSIDE/BANK FINANCING DOCS ===
+- Lender Assignment forms
+- Finance disclosure forms
+- Credit application authorization
+
+=== LICENSING & COMPLIANCE DOCS ===
+- Dealer License Application/Renewal
+- Surety Bond forms
+- Business License
+- Sales Tax License/Permit
+- Continuing Education certificates
+- Dealer Plate applications
+
+=== TAX DOCS ===
+- Sales Tax Return (monthly/quarterly)
+- Use Tax Return
+- Inventory Tax (if applicable)
+
+=== REPORTING DOCS ===
+- DMV sales reports
+- Title status reports
+- Inventory reports
+
+Include federal forms that apply (FTC Buyer's Guide, TILA disclosures, odometer statement).
+Every form MUST have source_url and detailed compliance_notes explaining when and why it's needed.`;
 
     console.log(`Discovering forms for ${stateUpper}...`);
 
@@ -185,7 +226,7 @@ Remember: Every form MUST have source_url and detailed compliance_notes.`;
       },
       body: JSON.stringify({
         model: "claude-3-haiku-20240307",
-        max_tokens: 4000,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       }),

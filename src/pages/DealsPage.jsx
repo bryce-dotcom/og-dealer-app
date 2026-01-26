@@ -137,31 +137,58 @@ export default function DealsPage() {
   const draggedDealRef = useRef(null);
 
   // ============ LOAD DOC PACKAGES FROM DATABASE ============
+  // State for library forms (approved forms from staging)
+  const [libraryForms, setLibraryForms] = useState([]);
+
   useEffect(() => {
     const loadDocPackages = async () => {
       if (!dealerId) return;
       try {
-        const { data, error } = await supabase
+        // Load document packages (has form_ids array)
+        const { data: pkgData, error: pkgError } = await supabase
           .from('document_packages')
-          .select('deal_type, docs')
+          .select('deal_type, form_ids')
           .eq('dealer_id', dealerId);
-        
-        if (error) throw error;
-        
+
+        if (pkgError) throw pkgError;
+
+        // Load approved forms from staging (the library)
+        const state = dealer?.state || 'UT';
+        const { data: formsData, error: formsError } = await supabase
+          .from('form_staging')
+          .select('id, form_number, form_name')
+          .eq('state', state)
+          .eq('status', 'approved');
+
+        if (formsError) throw formsError;
+
+        setLibraryForms(formsData || []);
+
+        // Map form_ids to form names for each package
         const packages = {};
-        data?.forEach(pkg => {
-          if (pkg.deal_type && pkg.docs) {
-            packages[pkg.deal_type] = pkg.docs;
+        pkgData?.forEach(pkg => {
+          if (pkg.deal_type && pkg.form_ids && Array.isArray(pkg.form_ids)) {
+            // Convert form IDs to form names
+            const formNames = pkg.form_ids.map(formId => {
+              const form = formsData?.find(f => f.id === formId);
+              return form ? form.form_name : null;
+            }).filter(Boolean);
+
+            if (formNames.length > 0) {
+              packages[pkg.deal_type] = formNames;
+            }
           }
         });
+
         console.log('Loaded doc packages from DB:', packages);
+        console.log('Library forms loaded:', formsData?.length || 0);
         setDocPackages(packages);
       } catch (err) {
         console.error('Failed to load doc packages:', err);
       }
     };
     loadDocPackages();
-  }, [dealerId]);
+  }, [dealerId, dealer?.state]);
 
   // ============ EFFECTS ============
   useEffect(() => {
@@ -966,15 +993,28 @@ export default function DealsPage() {
             {/* MIDDLE: DOCUMENTS */}
             <div style={{ ...cardStyle, width: '300px', alignSelf: 'flex-start' }}>
               <h3 style={{ color: theme.text, margin: '0 0 16px', fontSize: '15px' }}>Documents</h3>
-              
+
               {/* Package info */}
-              <div style={{ color: theme.textMuted, fontSize: '11px', marginBottom: '4px' }}>
-                {dealForm.deal_type} Package
-              </div>
-              <div style={{ color: docPackages[dealForm.deal_type] ? '#22c55e' : '#f59e0b', fontSize: '10px', marginBottom: '12px' }}>
-                {docPackages[dealForm.deal_type] 
-                  ? `${getDocsForDealType(dealForm.deal_type).length} docs from Doc Rules` 
-                  : `${getDocsForDealType(dealForm.deal_type).length} docs (defaults)`}
+              <div style={{
+                padding: '10px',
+                backgroundColor: docPackages[dealForm.deal_type] ? '#22c55e15' : '#f59e0b15',
+                border: `1px solid ${docPackages[dealForm.deal_type] ? '#22c55e40' : '#f59e0b40'}`,
+                borderRadius: '8px',
+                marginBottom: '12px'
+              }}>
+                <div style={{ color: theme.text, fontSize: '13px', fontWeight: '600', marginBottom: '2px' }}>
+                  {dealForm.deal_type} Package
+                </div>
+                <div style={{ color: docPackages[dealForm.deal_type] ? '#22c55e' : '#f59e0b', fontSize: '11px' }}>
+                  {docPackages[dealForm.deal_type]
+                    ? `${getDocsForDealType(dealForm.deal_type).length} docs from Document Rules`
+                    : `${getDocsForDealType(dealForm.deal_type).length} docs (using defaults)`}
+                </div>
+                {!docPackages[dealForm.deal_type] && (
+                  <div style={{ color: theme.textMuted, fontSize: '10px', marginTop: '4px' }}>
+                    Configure packages in Document Rules
+                  </div>
+                )}
               </div>
               
               {/* Document list */}

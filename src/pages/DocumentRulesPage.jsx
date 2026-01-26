@@ -54,13 +54,13 @@ export default function DocumentRulesPage() {
     const county = dealer?.county || null;
 
     try {
-      // Build forms query - filter by state, optionally by county
+      // Library = approved forms from form_staging (new simplified architecture)
       let formsQuery = supabase
-        .from('form_library')
+        .from('form_staging')
         .select('*')
         .eq('state', state)
-        .eq('is_active', true)
-        .order('category, form_number');
+        .eq('status', 'approved')
+        .order('doc_type, form_number');
 
       const [formsRes, rulesRes, pkgsRes, autoRes] = await Promise.all([
         formsQuery,
@@ -180,24 +180,40 @@ export default function DocumentRulesPage() {
   };
 
   // === HELPERS ===
-  const formsByCategory = libraryForms.reduce((acc, form) => {
-    const cat = form.category || 'other';
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(form);
+  // Group forms by doc_type (new architecture uses doc_type not category)
+  const formsByDocType = libraryForms.reduce((acc, form) => {
+    const docType = form.doc_type || 'deal';
+    if (!acc[docType]) acc[docType] = [];
+    acc[docType].push(form);
     return acc;
   }, {});
 
-  const categoryOrder = ['title', 'deal', 'tax', 'disclosure', 'financing', 'compliance', 'registration', 'other'];
-  const sortedCategories = categoryOrder.filter(c => formsByCategory[c]);
+  const docTypeOrder = ['deal', 'finance', 'licensing', 'tax', 'reporting', 'other'];
+  const sortedDocTypes = docTypeOrder.filter(t => formsByDocType[t]);
+
+  const docTypeColors = { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6', other: '#71717a' };
+  const docTypeLabels = { deal: 'Deal Docs', finance: 'Finance Docs', licensing: 'Licensing', tax: 'Tax Docs', reporting: 'Reporting', other: 'Other' };
+
+  // Legacy - keep for backward compat
+  const formsByCategory = formsByDocType;
+  const categoryOrder = docTypeOrder;
+  const sortedCategories = sortedDocTypes;
 
   const getFormById = (id) => libraryForms.find(f => f.id === id);
   const getFormByNumber = (num) => libraryForms.find(f => f.form_number === num);
 
   const getFilteredForms = () => {
     if (formFilter === 'all') return libraryForms;
-    if (formFilter === 'mapped') return libraryForms.filter(f => (f.mapping_confidence || 0) >= 99);
-    if (formFilter === 'unmapped') return libraryForms.filter(f => (f.mapping_confidence || 0) < 99);
-    return libraryForms.filter(f => f.category === formFilter);
+    // mapping_confidence is stored as decimal (0.0-1.0) now
+    if (formFilter === 'mapped') return libraryForms.filter(f => {
+      const conf = f.mapping_confidence || 0;
+      return conf >= 0.90 || conf >= 90; // handle both formats
+    });
+    if (formFilter === 'unmapped') return libraryForms.filter(f => {
+      const conf = f.mapping_confidence || 0;
+      return conf < 0.90 && conf < 90; // handle both formats
+    });
+    return libraryForms.filter(f => f.doc_type === formFilter);
   };
 
   const getAutomationDescription = (rule) => {
@@ -247,16 +263,16 @@ export default function DocumentRulesPage() {
         {/* Stats Row */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', marginBottom: '24px' }}>
           <div style={cardStyle}>
-            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Forms Available</div>
+            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Forms in Library</div>
             <div style={{ fontSize: '28px', fontWeight: '700' }}>{libraryForms.length}</div>
           </div>
           <div style={cardStyle}>
             <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready to Use</div>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{libraryForms.filter(f => (f.mapping_confidence || 0) >= 99).length}</div>
+            <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{libraryForms.filter(f => (f.mapping_confidence || 0) >= 0.90).length}</div>
           </div>
           <div style={cardStyle}>
-            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Compliance Rules</div>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#ef4444' }}>{complianceRules.length}</div>
+            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>With Deadlines</div>
+            <div style={{ fontSize: '28px', fontWeight: '700', color: '#ef4444' }}>{libraryForms.filter(f => f.has_deadline || f.cadence).length}</div>
           </div>
           <div style={cardStyle}>
             <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Automations</div>
@@ -269,7 +285,7 @@ export default function DocumentRulesPage() {
           {[
             { id: 'packages', label: 'Doc Packages', count: packages.length },
             { id: 'forms', label: 'Form Library', count: libraryForms.length },
-            { id: 'deadlines', label: 'Deadlines', count: complianceRules.length },
+            { id: 'deadlines', label: 'Rules & Deadlines', count: libraryForms.filter(f => f.has_deadline || f.cadence).length },
             { id: 'automation', label: 'Automation', count: automationRules.length },
           ].map(tab => (
             <button
@@ -350,7 +366,7 @@ export default function DocumentRulesPage() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <p style={{ color: '#71717a', margin: 0 }}>
-                Forms available for {dealer?.state || 'UT'}. Green checkmark = ready for auto-fill.
+                Forms in your library for {dealer?.state || 'UT'}. Green checkmark = ready for auto-fill.
               </p>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {['all', 'mapped', 'unmapped'].map(filter => (
@@ -372,9 +388,9 @@ export default function DocumentRulesPage() {
             {libraryForms.length === 0 ? (
               <div style={{ ...cardStyle, textAlign: 'center', padding: '60px' }}>
                 <div style={{ fontSize: '48px', marginBottom: '16px' }}>📄</div>
-                <h3 style={{ margin: '0 0 8px 0' }}>No Forms Available</h3>
+                <h3 style={{ margin: '0 0 8px 0' }}>No Forms in Library</h3>
                 <p style={{ color: '#71717a', margin: 0 }}>
-                  No forms have been added to the library for {dealer?.state || 'UT'} yet.
+                  Promote forms from the Dev Console to add them to your library for {dealer?.state || 'UT'}.
                 </p>
               </div>
             ) : (
@@ -384,15 +400,18 @@ export default function DocumentRulesPage() {
                     <tr style={{ borderBottom: '1px solid #3f3f46' }}>
                       <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Form #</th>
                       <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Name</th>
-                      <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Category</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Type</th>
                       <th style={{ textAlign: 'center', padding: '10px 8px', color: '#71717a' }}>Mapping</th>
+                      <th style={{ textAlign: 'center', padding: '10px 8px', color: '#71717a' }}>Deadline</th>
                       <th style={{ textAlign: 'center', padding: '10px 8px', color: '#71717a' }}>In Packages</th>
                     </tr>
                   </thead>
                   <tbody>
                     {getFilteredForms().map(form => {
                       const inPackages = packages.filter(p => p.form_ids?.includes(form.id)).map(p => p.deal_type);
+                      // mapping_confidence is stored as decimal (0.0-1.0) now
                       const confidence = form.mapping_confidence || 0;
+                      const confidencePercent = confidence > 1 ? confidence : Math.round(confidence * 100);
                       return (
                         <tr key={form.id} style={{ borderBottom: '1px solid #3f3f46' }}>
                           <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600', color: '#22c55e' }}>
@@ -400,20 +419,38 @@ export default function DocumentRulesPage() {
                           </td>
                           <td style={{ padding: '10px 8px' }}>
                             <div>{form.form_name}</div>
-                            {form.description && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{form.description.substring(0, 60)}...</div>}
+                            {form.compliance_notes && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{form.compliance_notes.substring(0, 60)}...</div>}
                           </td>
                           <td style={{ padding: '10px 8px' }}>
-                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[form.category] || '#3f3f46', textTransform: 'uppercase' }}>
-                              {form.category || 'other'}
+                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: docTypeColors[form.doc_type] || '#3f3f46', color: '#fff', textTransform: 'uppercase' }}>
+                              {form.doc_type || 'deal'}
                             </span>
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                               <div style={{ width: '50px', height: '6px', backgroundColor: '#3f3f46', borderRadius: '3px', overflow: 'hidden' }}>
-                                <div style={{ width: `${confidence}%`, height: '100%', backgroundColor: confidence >= 99 ? '#22c55e' : confidence >= 50 ? '#eab308' : '#ef4444' }} />
+                                <div style={{ width: `${confidencePercent}%`, height: '100%', backgroundColor: confidencePercent >= 90 ? '#22c55e' : confidencePercent >= 50 ? '#eab308' : '#ef4444' }} />
                               </div>
-                              <span style={{ fontSize: '11px', color: confidence >= 99 ? '#22c55e' : '#a1a1aa' }}>{confidence}%</span>
+                              <span style={{ fontSize: '11px', color: confidencePercent >= 90 ? '#22c55e' : '#a1a1aa' }}>{confidencePercent}%</span>
                             </div>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            {form.has_deadline || form.cadence ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                                {form.deadline_days && (
+                                  <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: '500' }}>
+                                    {form.deadline_days}d
+                                  </span>
+                                )}
+                                {form.cadence && (
+                                  <span style={{ fontSize: '9px', color: '#3b82f6', textTransform: 'uppercase' }}>
+                                    {form.cadence === 'per_transaction' ? 'Per Sale' : form.cadence}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#52525b' }}>—</span>
+                            )}
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                             {inPackages.length > 0 ? (
@@ -445,17 +482,118 @@ export default function DocumentRulesPage() {
         )}
 
         {/* === DEADLINES TAB === */}
-        {activeTab === 'deadlines' && (
+        {activeTab === 'deadlines' && (() => {
+          // Forms with deadlines or cadences from the library
+          const formsWithDeadlines = libraryForms.filter(f => f.has_deadline || f.cadence);
+          const docTypeColors = { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' };
+
+          return (
           <div>
             <p style={{ color: '#71717a', marginBottom: '20px' }}>
-              Compliance deadlines for {dealer?.state || 'UT'}. Missing these can result in fines and penalties.
+              Compliance deadlines for {dealer?.state || 'UT'}. Forms with deadlines and filing cadences that require tracking.
             </p>
+
+            {/* Forms with Deadlines Section */}
+            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ color: '#ef4444' }}>⏰</span> Forms with Deadlines ({formsWithDeadlines.length})
+            </h3>
+
+            {formsWithDeadlines.length === 0 ? (
+              <div style={{ ...cardStyle, textAlign: 'center', padding: '40px', marginBottom: '24px' }}>
+                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
+                <h4 style={{ margin: '0 0 8px 0' }}>No Forms with Deadlines</h4>
+                <p style={{ color: '#71717a', margin: 0, fontSize: '13px' }}>
+                  Promote forms from the Dev Console that have deadlines or cadences to see them here.
+                </p>
+              </div>
+            ) : (
+              <div style={{ ...cardStyle, marginBottom: '24px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Form #</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Form Name</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Type</th>
+                      <th style={{ textAlign: 'center', padding: '10px 8px', color: '#71717a' }}>Deadline</th>
+                      <th style={{ textAlign: 'center', padding: '10px 8px', color: '#71717a' }}>Cadence</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: '#71717a' }}>Compliance Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {formsWithDeadlines.map(form => (
+                      <tr key={form.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                        <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600', color: '#22c55e' }}>
+                          {form.form_number}
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <div style={{ fontWeight: '500' }}>{form.form_name}</div>
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>
+                          {form.doc_type && (
+                            <span style={{
+                              padding: '2px 8px', borderRadius: '4px', fontSize: '10px',
+                              backgroundColor: docTypeColors[form.doc_type] || '#3f3f46',
+                              color: '#fff', textTransform: 'uppercase'
+                            }}>
+                              {form.doc_type}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          {form.deadline_description ? (
+                            <span style={{ color: '#ef4444', fontWeight: '500', fontSize: '12px' }}>
+                              {form.deadline_description}
+                            </span>
+                          ) : form.deadline_days ? (
+                            <span style={{
+                              padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: '600',
+                              backgroundColor: form.deadline_days <= 10 ? '#ef444420' : form.deadline_days <= 30 ? '#eab30820' : '#3f3f46',
+                              color: form.deadline_days <= 10 ? '#ef4444' : form.deadline_days <= 30 ? '#eab308' : '#a1a1aa'
+                            }}>
+                              {form.deadline_days} days
+                            </span>
+                          ) : (
+                            <span style={{ color: '#52525b' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          {form.cadence ? (
+                            <span style={{
+                              padding: '3px 8px', borderRadius: '4px', fontSize: '11px',
+                              backgroundColor: '#3b82f620', color: '#3b82f6', fontWeight: '500'
+                            }}>
+                              {form.cadence === 'per_transaction' ? 'Per Sale' :
+                               form.cadence === 'monthly' ? 'Monthly' :
+                               form.cadence === 'quarterly' ? 'Quarterly' :
+                               form.cadence === 'annually' ? 'Annually' : form.cadence}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#52525b' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '10px 8px', color: '#a1a1aa', fontSize: '12px', maxWidth: '300px' }}>
+                          {form.compliance_notes ? (
+                            <div style={{ lineHeight: '1.4' }}>{form.compliance_notes.substring(0, 120)}{form.compliance_notes.length > 120 ? '...' : ''}</div>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Legacy Compliance Rules Section */}
+            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ color: '#eab308' }}>📋</span> Compliance Rules ({complianceRules.length})
+            </h3>
+
             {complianceRules.length === 0 ? (
-              <div style={{ ...cardStyle, textAlign: 'center', padding: '60px' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏰</div>
-                <h3 style={{ margin: '0 0 8px 0' }}>No Deadlines Configured</h3>
-                <p style={{ color: '#71717a', margin: 0 }}>
-                  No compliance rules have been added for {dealer?.state || 'UT'} yet.
+              <div style={{ ...cardStyle, textAlign: 'center', padding: '40px' }}>
+                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📋</div>
+                <h4 style={{ margin: '0 0 8px 0' }}>No Compliance Rules</h4>
+                <p style={{ color: '#71717a', margin: 0, fontSize: '13px' }}>
+                  No additional compliance rules have been added for {dealer?.state || 'UT'}.
                 </p>
               </div>
             ) : (
@@ -475,6 +613,10 @@ export default function DocumentRulesPage() {
                   <tbody>
                     {complianceRules.map(rule => {
                       const hasAutomation = automationRules.some(a => a.config?.compliance_rule_id === rule.id && a.is_enabled);
+                      // Try to find matching forms from library
+                      const matchingForms = libraryForms.filter(f =>
+                        rule.required_forms && rule.required_forms.toLowerCase().includes(f.form_number?.toLowerCase())
+                      );
                       return (
                         <tr key={rule.id} style={{ borderBottom: '1px solid #3f3f46' }}>
                           <td style={{ padding: '10px 8px' }}>
@@ -502,11 +644,23 @@ export default function DocumentRulesPage() {
                           <td style={{ padding: '10px 8px' }}>
                             {rule.required_forms ? (
                               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                {rule.required_forms.split(',').slice(0, 3).map((f, i) => (
-                                  <span key={i} style={{ padding: '2px 6px', backgroundColor: '#3f3f46', borderRadius: '4px', fontSize: '10px', fontFamily: 'monospace' }}>
-                                    {f.trim()}
-                                  </span>
-                                ))}
+                                {rule.required_forms.split(',').slice(0, 3).map((f, i) => {
+                                  const formMatch = libraryForms.find(lf => lf.form_number?.toLowerCase() === f.trim().toLowerCase());
+                                  return (
+                                    <span key={i} style={{
+                                      padding: '2px 6px',
+                                      backgroundColor: formMatch ? '#22c55e20' : '#3f3f46',
+                                      borderRadius: '4px', fontSize: '10px', fontFamily: 'monospace',
+                                      color: formMatch ? '#22c55e' : '#a1a1aa',
+                                      border: formMatch ? '1px solid #22c55e40' : 'none'
+                                    }}
+                                    title={formMatch ? `${formMatch.form_name} - In Library` : 'Not in Library'}
+                                    >
+                                      {f.trim()}
+                                      {formMatch && ' ✓'}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             ) : '—'}
                           </td>
@@ -538,7 +692,8 @@ export default function DocumentRulesPage() {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* === AUTOMATION TAB === */}
         {activeTab === 'automation' && (
@@ -696,15 +851,16 @@ export default function DocumentRulesPage() {
 
             {/* Form List */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              {sortedCategories.map(category => (
-                <div key={category} style={{ marginBottom: '20px' }}>
+              {sortedDocTypes.map(docType => (
+                <div key={docType} style={{ marginBottom: '20px' }}>
                   <h4 style={{ fontSize: '12px', fontWeight: '600', color: '#71717a', textTransform: 'uppercase', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: categoryColors[category] || '#3f3f46' }} />
-                    {category} ({formsByCategory[category].length})
+                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: docTypeColors[docType] || '#3f3f46' }} />
+                    {docTypeLabels[docType] || docType} ({formsByDocType[docType].length})
                   </h4>
-                  {formsByCategory[category].map(form => {
+                  {formsByDocType[docType].map(form => {
                     const isSelected = selectedForms.includes(form.id);
                     const confidence = form.mapping_confidence || 0;
+                    const confidencePercent = confidence > 1 ? confidence : Math.round(confidence * 100);
                     return (
                       <div
                         key={form.id}
@@ -727,12 +883,13 @@ export default function DocumentRulesPage() {
                           <div style={{ fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ color: '#22c55e', fontFamily: 'monospace' }}>{form.form_number}</span>
                             {form.form_name}
-                            {confidence >= 99 && <span style={{ fontSize: '10px', color: '#22c55e', padding: '1px 4px', backgroundColor: '#22c55e20', borderRadius: '3px' }}>Ready</span>}
+                            {confidencePercent >= 90 && <span style={{ fontSize: '10px', color: '#22c55e', padding: '1px 4px', backgroundColor: '#22c55e20', borderRadius: '3px' }}>Ready</span>}
+                            {(form.has_deadline || form.cadence) && <span style={{ fontSize: '10px', color: '#ef4444', padding: '1px 4px', backgroundColor: '#ef444420', borderRadius: '3px' }}>Deadline</span>}
                           </div>
-                          {form.description && <div style={{ color: '#71717a', fontSize: '12px', marginTop: '2px' }}>{form.description.substring(0, 60)}...</div>}
+                          {form.compliance_notes && <div style={{ color: '#71717a', fontSize: '12px', marginTop: '2px' }}>{form.compliance_notes.substring(0, 60)}...</div>}
                         </div>
                         <div style={{ width: '40px', height: '4px', backgroundColor: '#3f3f46', borderRadius: '2px', overflow: 'hidden' }}>
-                          <div style={{ width: `${confidence}%`, height: '100%', backgroundColor: confidence >= 99 ? '#22c55e' : '#eab308' }} />
+                          <div style={{ width: `${confidencePercent}%`, height: '100%', backgroundColor: confidencePercent >= 90 ? '#22c55e' : '#eab308' }} />
                         </div>
                       </div>
                     );
@@ -741,7 +898,7 @@ export default function DocumentRulesPage() {
               ))}
               {libraryForms.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
-                  No forms available. Contact administrator to add forms.
+                  No forms available. Promote forms from the Dev Console.
                 </div>
               )}
             </div>
