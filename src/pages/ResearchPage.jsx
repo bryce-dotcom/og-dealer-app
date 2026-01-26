@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
@@ -119,6 +120,7 @@ function SourceBadge({ source }) {
 
 export default function ResearchPage() {
   const { dealer } = useStore();
+  const [searchParams] = useSearchParams();
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
     bg: '#09090b', bgCard: '#18181b', bgCardHover: '#27272a', border: '#27272a',
@@ -139,6 +141,23 @@ export default function ResearchPage() {
   const [radius, setRadius] = useState('100');
   const [fuelType, setFuelType] = useState('');
 
+  // General Search state
+  const [generalQuery, setGeneralQuery] = useState('');
+  const [generalLoading, setGeneralLoading] = useState(false);
+  const [generalResults, setGeneralResults] = useState(null);
+  const [generalError, setGeneralError] = useState(null);
+
+  // Find Comparables state
+  const [compYearMin, setCompYearMin] = useState('');
+  const [compYearMax, setCompYearMax] = useState('');
+  const [compMake, setCompMake] = useState('');
+  const [compModel, setCompModel] = useState('');
+  const [compMaxPrice, setCompMaxPrice] = useState('');
+  const [compMaxMiles, setCompMaxMiles] = useState('');
+  const [compLoading, setCompLoading] = useState(false);
+  const [compResults, setCompResults] = useState(null);
+  const [compError, setCompError] = useState(null);
+
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -148,11 +167,13 @@ export default function ResearchPage() {
   const [scannerError, setScannerError] = useState(null);
   const scannerRef = useRef(null);
   const html5QrCodeRef = useRef(null);
+  const ymmSectionRef = useRef(null);
 
   // Generate years
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: currentYear - 1999 + 1 }, (_, i) => currentYear + 1 - i);
   const models = make ? (VEHICLE_DATA[make] || []) : [];
+  const compModels = compMake ? (VEHICLE_DATA[compMake] || []) : [];
 
   useEffect(() => {
     if (make && !VEHICLE_DATA[make]?.includes(model)) {
@@ -160,19 +181,56 @@ export default function ResearchPage() {
     }
   }, [make]);
 
-  // URL params on load
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlVin = params.get('vin');
-    const urlYear = params.get('year');
-    const urlMake = params.get('make');
-    const urlModel = params.get('model');
-    const urlMiles = params.get('miles');
+    if (compMake && !VEHICLE_DATA[compMake]?.includes(compModel)) {
+      setCompModel('');
+    }
+  }, [compMake]);
+
+  // URL params on load - handle both VIN and Year/Make/Model params from CustomersPage
+  useEffect(() => {
+    const urlVin = searchParams.get('vin');
+    const urlYear = searchParams.get('year');
+    const urlYearMin = searchParams.get('year_min');
+    const urlYearMax = searchParams.get('year_max');
+    const urlMake = searchParams.get('make');
+    const urlModel = searchParams.get('model');
+    const urlMiles = searchParams.get('miles');
+    const urlMaxPrice = searchParams.get('max_price');
+    const urlMaxMiles = searchParams.get('max_miles');
+    const urlQuery = searchParams.get('query');
+
+    // Populate General Search from query param (from CustomersPage "Research" button)
+    if (urlQuery) {
+      setGeneralQuery(urlQuery);
+    }
 
     if (urlVin && urlVin.length === 17) {
       setVin(urlVin);
       setSearchMode('vin');
       if (urlMiles) setMiles(urlMiles);
+    } else if (urlYearMin || urlYearMax || urlMake || urlModel || urlMaxPrice || urlMaxMiles) {
+      // From CustomersPage - populate YMM fields
+      if (urlYearMin || urlYearMax) {
+        setYear(urlYearMax || urlYearMin || '');
+      }
+      if (urlMake) setMake(urlMake);
+      if (urlModel) setModel(urlModel);
+      if (urlMaxMiles) setMiles(urlMaxMiles);
+      setSearchMode('ymm');
+
+      // Also populate Find Comparables section
+      if (urlYearMin) setCompYearMin(urlYearMin);
+      if (urlYearMax) setCompYearMax(urlYearMax);
+      if (urlMake) setCompMake(urlMake);
+      if (urlModel) setCompModel(urlModel);
+      if (urlMaxPrice) setCompMaxPrice(urlMaxPrice);
+      if (urlMaxMiles) setCompMaxMiles(urlMaxMiles);
+
+      // Scroll to top to show General Search with the query
+      setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 100);
     } else if (urlYear && urlMake && urlModel) {
       setYear(urlYear);
       setMake(urlMake);
@@ -180,7 +238,7 @@ export default function ResearchPage() {
       if (urlMiles) setMiles(urlMiles);
       setSearchMode('ymm');
     }
-  }, []);
+  }, [searchParams]);
 
   // Scanner functions
   const startScanner = async () => {
@@ -221,6 +279,70 @@ export default function ResearchPage() {
       } catch (err) {}
     }
     setShowScanner(false);
+  };
+
+  // General Search function
+  const handleGeneralSearch = async () => {
+    if (!generalQuery.trim()) {
+      setGeneralError('Enter a search query');
+      return;
+    }
+
+    setGeneralLoading(true);
+    setGeneralError(null);
+    setGeneralResults(null);
+
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('vehicle-research', {
+        body: { general_query: generalQuery.trim() }
+      });
+
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      setGeneralResults(data);
+    } catch (err) {
+      setGeneralError(err.message || 'Search failed');
+    } finally {
+      setGeneralLoading(false);
+    }
+  };
+
+  // Find Comparables function
+  const handleComparablesSearch = async () => {
+    if (!compMake && !compModel) {
+      setCompError('Enter at least make or model');
+      return;
+    }
+
+    setCompLoading(true);
+    setCompError(null);
+    setCompResults(null);
+
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('vehicle-research', {
+        body: {
+          search_comparables: true,
+          year_min: compYearMin ? parseInt(compYearMin) : null,
+          year_max: compYearMax ? parseInt(compYearMax) : null,
+          make: compMake || null,
+          model: compModel || null,
+          max_price: compMaxPrice ? parseInt(compMaxPrice) : null,
+          max_miles: compMaxMiles ? parseInt(compMaxMiles) : null,
+          radius_miles: 250,
+          zip_code: dealer?.zip || '84065'
+        }
+      });
+
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      setCompResults(data);
+    } catch (err) {
+      setCompError(err.message || 'Search failed');
+    } finally {
+      setCompLoading(false);
+    }
   };
 
   // Search function
@@ -351,8 +473,59 @@ export default function ResearchPage() {
           <p style={{ color: theme.textMuted, margin: '8px 0 0', fontSize: '14px' }}>Get instant valuations and market analysis</p>
         </div>
 
+        {/* GENERAL SEARCH SECTION - NEW */}
+        <div style={{ ...cardStyle, marginBottom: '24px', border: '2px solid #3b82f6' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <h3 style={{ margin: 0, color: '#3b82f6', fontSize: '16px', fontWeight: '600' }}>General Search</h3>
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'end' }}>
+            <div style={{ flex: 1 }}>
+              <input
+                value={generalQuery}
+                onChange={(e) => setGeneralQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleGeneralSearch()}
+                placeholder="Search anything: best trucks under 30k, diesel vs gas F250..."
+                style={inputStyle}
+              />
+            </div>
+            <button
+              onClick={handleGeneralSearch}
+              disabled={generalLoading}
+              style={{ ...btnStyle(true), backgroundColor: '#3b82f6', padding: '12px 24px', opacity: generalLoading ? 0.6 : 1 }}
+            >
+              {generalLoading ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+
+          {generalError && (
+            <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontSize: '14px' }}>
+              {generalError}
+            </div>
+          )}
+
+          {generalResults && (
+            <div style={{ marginTop: '16px', padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '8px' }}>
+              {generalResults.response ? (
+                <div style={{ color: theme.text, fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                  {generalResults.response}
+                </div>
+              ) : generalResults.message ? (
+                <div style={{ color: theme.text, fontSize: '14px', lineHeight: '1.6' }}>
+                  {generalResults.message}
+                </div>
+              ) : (
+                <div style={{ color: theme.textMuted, fontSize: '14px' }}>No results found</div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Search Form */}
-        <div style={{ ...cardStyle, marginBottom: '24px' }}>
+        <div ref={ymmSectionRef} style={{ ...cardStyle, marginBottom: '24px' }}>
           {/* Mode Toggle */}
           <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
             <button onClick={() => setSearchMode('vin')} style={btnStyle(searchMode === 'vin')}>Search by VIN</button>
@@ -1013,6 +1186,105 @@ export default function ResearchPage() {
             </div>
           </>
         )}
+
+        {/* FIND COMPARABLES SECTION - NEW */}
+        <div style={{ ...cardStyle, marginTop: '24px', border: '2px solid #22c55e' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            <h3 style={{ margin: 0, color: '#22c55e', fontSize: '16px', fontWeight: '600' }}>Find Comparables</h3>
+            <span style={{ fontSize: '11px', color: theme.textMuted }}>(250 mile radius)</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Year Min</label>
+              <input type="number" value={compYearMin} onChange={(e) => setCompYearMin(e.target.value)} placeholder="2018" style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Year Max</label>
+              <input type="number" value={compYearMax} onChange={(e) => setCompYearMax(e.target.value)} placeholder="2024" style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Make</label>
+              <select value={compMake} onChange={(e) => setCompMake(e.target.value)} style={selectStyle}>
+                <option value="">Any Make</option>
+                {MAKES.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Model</label>
+              <select value={compModel} onChange={(e) => setCompModel(e.target.value)} style={selectStyle} disabled={!compMake}>
+                <option value="">Any Model</option>
+                {compModels.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Max Price</label>
+              <input type="number" value={compMaxPrice} onChange={(e) => setCompMaxPrice(e.target.value)} placeholder="30000" style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Max Miles</label>
+              <input type="number" value={compMaxMiles} onChange={(e) => setCompMaxMiles(e.target.value)} placeholder="100000" style={inputStyle} />
+            </div>
+          </div>
+
+          <button
+            onClick={handleComparablesSearch}
+            disabled={compLoading}
+            style={{ ...btnStyle(true), backgroundColor: '#22c55e', padding: '12px 32px', opacity: compLoading ? 0.6 : 1 }}
+          >
+            {compLoading ? 'Searching...' : 'Search Comparables'}
+          </button>
+
+          {compError && (
+            <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontSize: '14px' }}>
+              {compError}
+            </div>
+          )}
+
+          {compResults && (
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ fontSize: '13px', color: theme.textMuted, marginBottom: '12px' }}>
+                {compResults.comparables?.length || 0} vehicles found
+              </div>
+
+              {compResults.comparables?.length > 0 ? (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {compResults.comparables.map((c, i) => (
+                    <div key={i} style={{ backgroundColor: isDark ? theme.bg : '#f8fafc', padding: '14px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                      <div style={{ flex: 1, minWidth: '200px' }}>
+                        <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                          {c.year} {c.make} {c.model} {c.trim || ''}
+                        </div>
+                        <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '4px' }}>
+                          {c.miles && <span>{formatNumber(c.miles)} mi</span>}
+                          {c.miles && c.location && <span> • </span>}
+                          {c.location && <span>{c.location}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ color: '#22c55e', fontWeight: '700', fontSize: '20px' }}>{formatCurrency(c.price)}</div>
+                        {c.url && (
+                          <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 12px', backgroundColor: '#22c55e', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontSize: '12px', fontWeight: '600' }}>
+                            View
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: theme.textMuted, padding: '24px', textAlign: 'center', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px' }}>
+                  No vehicles found matching your criteria
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
   );
