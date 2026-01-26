@@ -146,6 +146,7 @@ export default function ResearchPage() {
   const [generalLoading, setGeneralLoading] = useState(false);
   const [generalResults, setGeneralResults] = useState(null);
   const [generalError, setGeneralError] = useState(null);
+  const [generalRadius, setGeneralRadius] = useState('100');
 
   // Find Comparables state
   const [compYearMin, setCompYearMin] = useState('');
@@ -154,6 +155,7 @@ export default function ResearchPage() {
   const [compModel, setCompModel] = useState('');
   const [compMaxPrice, setCompMaxPrice] = useState('');
   const [compMaxMiles, setCompMaxMiles] = useState('');
+  const [compRadius, setCompRadius] = useState('100');
   const [compLoading, setCompLoading] = useState(false);
   const [compResults, setCompResults] = useState(null);
   const [compError, setCompError] = useState(null);
@@ -281,7 +283,75 @@ export default function ResearchPage() {
     setShowScanner(false);
   };
 
-  // General Search function
+  // Parse general query into structured search params
+  const parseGeneralQuery = (query) => {
+    const q = query.toLowerCase();
+    const params = {};
+
+    // Extract year range (2018-2024, 2020 or newer, etc)
+    const yearRangeMatch = q.match(/(\d{4})\s*[-–to]+\s*(\d{4})/);
+    const yearNewerMatch = q.match(/(\d{4})\s*(or\s*newer|\+)/);
+    const yearOlderMatch = q.match(/(\d{4})\s*or\s*older/);
+    const singleYearMatch = q.match(/\b(19\d{2}|20\d{2})\b/);
+
+    if (yearRangeMatch) {
+      params.year_min = parseInt(yearRangeMatch[1]);
+      params.year_max = parseInt(yearRangeMatch[2]);
+    } else if (yearNewerMatch) {
+      params.year_min = parseInt(yearNewerMatch[1]);
+    } else if (yearOlderMatch) {
+      params.year_max = parseInt(yearOlderMatch[1]);
+    } else if (singleYearMatch) {
+      params.year_min = parseInt(singleYearMatch[1]);
+      params.year_max = parseInt(singleYearMatch[1]);
+    }
+
+    // Extract price (under 30k, under $30,000, max 25000)
+    const priceMatch = q.match(/(?:under|max|below|less than)\s*\$?(\d+[,.]?\d*)\s*k?/i);
+    if (priceMatch) {
+      let price = parseFloat(priceMatch[1].replace(/,/g, ''));
+      if (price < 1000) price *= 1000; // Convert 30k to 30000
+      params.max_price = Math.round(price);
+    }
+
+    // Extract miles (under 100k miles, max 50000 miles)
+    const milesMatch = q.match(/(?:under|max|below|less than)\s*(\d+[,.]?\d*)\s*k?\s*(?:miles|mi)/i);
+    if (milesMatch) {
+      let miles = parseFloat(milesMatch[1].replace(/,/g, ''));
+      if (miles < 1000) miles *= 1000;
+      params.max_miles = Math.round(miles);
+    }
+
+    // Extract make
+    const makes = Object.keys(VEHICLE_DATA);
+    for (const make of makes) {
+      if (make !== 'Other' && q.includes(make.toLowerCase())) {
+        params.make = make;
+        // Look for model
+        const models = VEHICLE_DATA[make] || [];
+        for (const model of models) {
+          // Handle model variations (F-150, F150, F 150)
+          const modelVariations = [
+            model.toLowerCase(),
+            model.toLowerCase().replace(/-/g, ''),
+            model.toLowerCase().replace(/-/g, ' ')
+          ];
+          for (const variant of modelVariations) {
+            if (q.includes(variant)) {
+              params.model = model;
+              break;
+            }
+          }
+          if (params.model) break;
+        }
+        break;
+      }
+    }
+
+    return params;
+  };
+
+  // General Search function - uses find-vehicles
   const handleGeneralSearch = async () => {
     if (!generalQuery.trim()) {
       setGeneralError('Enter a search query');
@@ -293,8 +363,26 @@ export default function ResearchPage() {
     setGeneralResults(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('vehicle-research', {
-        body: { general_query: generalQuery.trim() }
+      // Parse the query into structured params
+      const params = parseGeneralQuery(generalQuery);
+
+      if (!params.make) {
+        setGeneralError('Could not detect make from query. Try: "2020-2024 Ford F-150 under 30k"');
+        setGeneralLoading(false);
+        return;
+      }
+
+      const { data, error: fnError } = await supabase.functions.invoke('find-vehicles', {
+        body: {
+          year_min: params.year_min || null,
+          year_max: params.year_max || null,
+          make: params.make,
+          model: params.model || null,
+          max_price: params.max_price || null,
+          max_miles: params.max_miles || null,
+          radius_miles: parseInt(generalRadius) || 100,
+          zip_code: dealer?.zip || '84065'
+        }
       });
 
       if (fnError) throw fnError;
@@ -328,7 +416,7 @@ export default function ResearchPage() {
           model: compModel || null,
           max_price: compMaxPrice ? parseInt(compMaxPrice) : null,
           max_miles: compMaxMiles ? parseInt(compMaxMiles) : null,
-          radius_miles: 250,
+          radius_miles: parseInt(compRadius) || 100,
           zip_code: dealer?.zip || '84065'
         }
       });
@@ -493,15 +581,22 @@ export default function ResearchPage() {
             <h3 style={{ margin: 0, color: '#3b82f6', fontSize: '16px', fontWeight: '600' }}>General Search</h3>
           </div>
 
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'end' }}>
-            <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '250px' }}>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Search Query</label>
               <input
                 value={generalQuery}
                 onChange={(e) => setGeneralQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleGeneralSearch()}
-                placeholder="Search anything: best trucks under 30k, diesel vs gas F250..."
+                placeholder="2020-2024 Ford F-150 under 30k"
                 style={inputStyle}
               />
+            </div>
+            <div style={{ minWidth: '120px' }}>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Radius</label>
+              <select value={generalRadius} onChange={(e) => setGeneralRadius(e.target.value)} style={selectStyle}>
+                {RADIUS_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
             </div>
             <button
               onClick={handleGeneralSearch}
@@ -511,6 +606,9 @@ export default function ResearchPage() {
               {generalLoading ? 'Searching...' : 'Search'}
             </button>
           </div>
+          <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '8px' }}>
+            Example: "2020-2024 Ford F-150 under 30k" or "Toyota Tacoma under 100k miles"
+          </div>
 
           {generalError && (
             <div style={{ marginTop: '12px', padding: '12px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontSize: '14px' }}>
@@ -519,17 +617,205 @@ export default function ResearchPage() {
           )}
 
           {generalResults && (
-            <div style={{ marginTop: '16px', padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '8px' }}>
-              {generalResults.response ? (
-                <div style={{ color: theme.text, fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-                  {generalResults.response}
+            <div style={{ marginTop: '16px' }}>
+              {/* Market Summary */}
+              {generalResults.market_summary && (generalResults.market_summary.avg_price || generalResults.market_summary.total_available > 0) && (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
+                  gap: '12px',
+                  marginBottom: '20px',
+                  padding: '16px',
+                  backgroundColor: isDark ? theme.bg : '#f8fafc',
+                  borderRadius: '10px',
+                  border: `1px solid ${theme.border}`
+                }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Avg Price</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{formatCurrency(generalResults.market_summary.avg_price)}</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Median</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{formatCurrency(generalResults.market_summary.median_price)}</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Range</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text }}>
+                      {generalResults.market_summary.price_range ? `${formatCurrency(generalResults.market_summary.price_range.low)} - ${formatCurrency(generalResults.market_summary.price_range.high)}` : 'N/A'}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Available</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: '#3b82f6' }}>{generalResults.market_summary.total_available || 0}</div>
+                  </div>
+                  {generalResults.market_summary.avg_days_on_market && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', marginBottom: '4px' }}>Avg DOM</div>
+                      <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{generalResults.market_summary.avg_days_on_market}</div>
+                    </div>
+                  )}
                 </div>
-              ) : generalResults.message ? (
-                <div style={{ color: theme.text, fontSize: '14px', lineHeight: '1.6' }}>
-                  {generalResults.message}
+              )}
+
+              {/* AI Guidance if no listings */}
+              {generalResults.ai_guidance && (
+                <div style={{
+                  padding: '16px',
+                  backgroundColor: 'rgba(59,130,246,0.1)',
+                  border: '1px solid #3b82f6',
+                  borderRadius: '10px',
+                  marginBottom: '20px'
+                }}>
+                  <div style={{ fontSize: '12px', color: '#3b82f6', fontWeight: '600', marginBottom: '8px' }}>AI Market Insights</div>
+                  <div style={{ fontSize: '13px', color: theme.text, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>{generalResults.ai_guidance}</div>
                 </div>
-              ) : (
-                <div style={{ color: theme.textMuted, fontSize: '14px' }}>No results found</div>
+              )}
+
+              {/* Results Count */}
+              <div style={{ fontSize: '13px', color: theme.textMuted, marginBottom: '12px' }}>
+                {generalResults.total_found || 0} vehicles found
+                {generalResults.dealer_listings?.length > 0 && ` (${generalResults.dealer_listings.length} dealer`}
+                {generalResults.private_listings?.length > 0 && `, ${generalResults.private_listings.length} private)`}
+                {generalResults.dealer_listings?.length > 0 && !generalResults.private_listings?.length && ')'}
+              </div>
+
+              {/* Dealer Listings */}
+              {generalResults.dealer_listings?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ padding: '3px 8px', backgroundColor: 'rgba(59,130,246,0.15)', color: '#3b82f6', borderRadius: '4px', fontSize: '11px' }}>DEALER</span>
+                    {generalResults.dealer_listings.length} listings
+                  </div>
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {generalResults.dealer_listings.slice(0, 20).map((c, i) => {
+                      const dealStyle = getDealScoreStyle(c.deal_score);
+                      return (
+                        <div key={i} style={{
+                          backgroundColor: isDark ? theme.bg : '#f8fafc',
+                          padding: '14px',
+                          borderRadius: '10px',
+                          border: c.deal_score === 'GREAT DEAL' ? `2px solid ${dealStyle.border}` : `1px solid ${theme.border}`,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: '12px'
+                        }}>
+                          <div style={{ flex: 1, minWidth: '200px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                              <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                                {c.year} {c.make} {c.model} {c.trim || ''}
+                              </span>
+                              {c.deal_score && c.deal_score !== 'UNKNOWN' && (
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: '700',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: dealStyle.bg,
+                                  color: dealStyle.color
+                                }}>
+                                  {c.deal_score}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+                              {c.miles && <span>{formatNumber(c.miles)} mi</span>}
+                              {c.miles && c.location && <span> • </span>}
+                              {c.location && <span>{c.location}</span>}
+                              {c.days_listed > 0 && <span> • {c.days_listed} days listed</span>}
+                            </div>
+                            {c.dealer_name && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '2px' }}>{c.dealer_name}</div>}
+                            {c.savings !== 0 && c.savings !== undefined && (
+                              <div style={{ fontSize: '11px', marginTop: '4px', color: c.savings > 0 ? '#22c55e' : '#ef4444' }}>
+                                {c.savings > 0 ? `$${formatNumber(c.savings)} under market` : `$${formatNumber(Math.abs(c.savings))} over market`}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ color: dealStyle.color, fontWeight: '700', fontSize: '20px' }}>{formatCurrency(c.price)}</div>
+                              {c.market_value && (
+                                <div style={{ fontSize: '11px', color: theme.textMuted }}>Market: {formatCurrency(c.market_value)}</div>
+                              )}
+                            </div>
+                            {c.url && (
+                              <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 12px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontSize: '12px', fontWeight: '600' }}>
+                                View
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Private Listings */}
+              {generalResults.private_listings?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ padding: '3px 8px', backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e', borderRadius: '4px', fontSize: '11px' }}>PRIVATE</span>
+                    {generalResults.private_listings.length} listings
+                  </div>
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {generalResults.private_listings.slice(0, 10).map((c, i) => {
+                      const dealStyle = getDealScoreStyle(c.estimated_deal_score);
+                      return (
+                        <div key={i} style={{
+                          backgroundColor: isDark ? theme.bg : '#f8fafc',
+                          padding: '14px',
+                          borderRadius: '10px',
+                          border: `1px solid ${theme.border}`,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: '12px'
+                        }}>
+                          <div style={{ flex: 1, minWidth: '200px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                              <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                                {c.title || `${c.year || ''} ${c.make} ${c.model}`}
+                              </span>
+                              <span style={{
+                                fontSize: '9px',
+                                fontWeight: '600',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                backgroundColor: c.source === 'FB Marketplace' ? 'rgba(59,130,246,0.15)' : c.source === 'Craigslist' ? 'rgba(139,92,246,0.15)' : 'rgba(249,115,22,0.15)',
+                                color: c.source === 'FB Marketplace' ? '#3b82f6' : c.source === 'Craigslist' ? '#8b5cf6' : '#f97316'
+                              }}>
+                                {c.source}
+                              </span>
+                            </div>
+                            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+                              {c.miles && <span>{formatNumber(c.miles)} mi</span>}
+                              {c.miles && c.location && <span> • </span>}
+                              {c.location && <span>{c.location}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ color: '#22c55e', fontWeight: '700', fontSize: '20px' }}>{c.price ? formatCurrency(c.price) : 'Contact'}</div>
+                            {c.url && (
+                              <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 12px', backgroundColor: '#22c55e', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontSize: '12px', fontWeight: '600' }}>
+                                View
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* No results */}
+              {generalResults.total_found === 0 && !generalResults.ai_guidance && (
+                <div style={{ color: theme.textMuted, padding: '24px', textAlign: 'center', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px' }}>
+                  No vehicles found matching your criteria
+                </div>
               )}
             </div>
           )}
@@ -1206,7 +1492,6 @@ export default function ResearchPage() {
               <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
             </svg>
             <h3 style={{ margin: 0, color: '#22c55e', fontSize: '16px', fontWeight: '600' }}>Find Comparables</h3>
-            <span style={{ fontSize: '11px', color: theme.textMuted }}>(250 mile radius)</span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px', marginBottom: '16px' }}>
@@ -1239,6 +1524,12 @@ export default function ResearchPage() {
             <div>
               <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Max Miles</label>
               <input type="number" value={compMaxMiles} onChange={(e) => setCompMaxMiles(e.target.value)} placeholder="100000" style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Radius</label>
+              <select value={compRadius} onChange={(e) => setCompRadius(e.target.value)} style={selectStyle}>
+                {RADIUS_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
             </div>
           </div>
 
