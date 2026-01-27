@@ -6,30 +6,8 @@ const corsHeaders = {
 };
 
 // =============================================================================
-// ARCHITECTURE: MarketCheck baseline + SerpAPI private party + AI gap-fill
+// SIMPLIFIED ARCHITECTURE: Values from MarketCheck, Comparables from find-vehicles
 // =============================================================================
-
-// Trim tier definitions - CRITICAL for accurate comparisons
-const TRIM_TIERS = {
-  premium: [
-    'platinum', 'king ranch', 'limited', 'denali', 'high country',
-    'tungsten', 'longhorn', 'limited longhorn', 'laramie longhorn',
-    'raptor', 'tremor', 'power wagon', 'rebel', 'trx',
-    'at4x', 'at4', 'sierra ultimate', 'avenir',
-    'premier', 'reserve', 'black label', 'pinnacle'
-  ],
-  mid: [
-    'lariat', 'lt', 'xlt', 'slt', 'laramie', 'big horn', 'lone star',
-    'z71', 'trail boss', 'rst', 'elevation',
-    'sport', 'fx4', 'black appearance', 'texas edition',
-    'sr5', 'trd sport', 'trd off-road', 'trd pro',
-    'sle', 'custom', 'express', 'tradesman'
-  ],
-  base: [
-    'xl', 'wt', 'w/t', 'work truck', 'base', 'fleet',
-    'chassis cab', 'pro', 's', 'sr', 'st', 'se', 'ls', 'stx'
-  ]
-};
 
 // Condition multipliers for value adjustments
 const CONDITION_MULTIPLIERS: Record<string, number> = {
@@ -43,89 +21,18 @@ const CONDITION_MULTIPLIERS: Record<string, number> = {
 // UTILITY FUNCTIONS
 // =============================================================================
 
+const logs: string[] = [];
+
 function log(category: string, message: string, data?: any) {
   const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] [${category}] ${message}`);
+  const logMsg = `[${timestamp}] [${category}] ${message}`;
+  console.log(logMsg);
+  logs.push(logMsg);
   if (data !== undefined) {
-    console.log(JSON.stringify(data, null, 2));
+    const dataStr = JSON.stringify(data, null, 2);
+    console.log(dataStr);
+    logs.push(dataStr);
   }
-}
-
-// FIXED: detectTrimTier now properly returns 'unknown' when no match found
-// It checks both trim and series fields, and never defaults to 'base'
-function detectTrimTier(trim: string, series?: string): 'premium' | 'mid' | 'base' | 'unknown' {
-  // Combine trim and series for checking
-  const fieldsToCheck = [trim, series].filter(Boolean).join(' ');
-
-  if (!fieldsToCheck) {
-    log('TRIM', 'No trim or series provided, returning unknown');
-    return 'unknown';
-  }
-
-  const combined = fieldsToCheck.toLowerCase();
-  log('TRIM', `Detecting tier from: "${combined}"`);
-
-  // Check premium first (most valuable)
-  for (const t of TRIM_TIERS.premium) {
-    if (combined.includes(t)) {
-      log('TRIM', `Matched PREMIUM tier: "${t}"`);
-      return 'premium';
-    }
-  }
-
-  // Check mid tier
-  for (const t of TRIM_TIERS.mid) {
-    if (combined.includes(t)) {
-      log('TRIM', `Matched MID tier: "${t}"`);
-      return 'mid';
-    }
-  }
-
-  // Check base tier
-  for (const t of TRIM_TIERS.base) {
-    if (combined.includes(t)) {
-      log('TRIM', `Matched BASE tier: "${t}"`);
-      return 'base';
-    }
-  }
-
-  // IMPORTANT: Return 'unknown' NOT 'base' when no match
-  // This ensures we don't incorrectly filter out premium trucks
-  log('TRIM', `No tier match found for "${combined}", returning UNKNOWN`);
-  return 'unknown';
-}
-
-// FIXED: trimTiersMatch returns TRUE when either tier is 'unknown'
-// This prevents filtering out all results when trim is not detected
-function trimTiersMatch(tier1: string, tier2: string): boolean {
-  // If EITHER tier is unknown, allow the match (don't filter)
-  if (tier1 === 'unknown' || tier2 === 'unknown') {
-    return true;
-  }
-  return tier1 === tier2;
-}
-
-function normalizeMake(make: string): string {
-  if (!make) return '';
-  return make.charAt(0).toUpperCase() + make.slice(1).toLowerCase();
-}
-
-function normalizeModel(model: string, make: string): string {
-  if (!model) return '';
-  let normalized = model;
-  // Ford: strip "Super Duty"
-  if (make?.toLowerCase() === 'ford') {
-    normalized = normalized.replace(/\s*super\s*duty/i, '').trim();
-  }
-  return normalized;
-}
-
-// Calculate median from array of numbers
-function calculateMedian(numbers: number[]): number {
-  if (!numbers.length) return 0;
-  const sorted = [...numbers].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
 // =============================================================================
@@ -137,7 +44,7 @@ interface VINDecodeResult {
   make: string;
   model: string;
   trim: string;
-  series: string;  // Added series field
+  series: string;
   fuel_type: string;
   engine: string;
   drivetrain: string;
@@ -149,7 +56,7 @@ async function decodeVIN(vin: string): Promise<VINDecodeResult | null> {
   if (!vin || vin.length !== 17) return null;
 
   const url = `https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin}?format=json`;
-  log('NHTSA', `Decoding VIN: ${vin}`, { url });
+  log('NHTSA', `Decoding VIN: ${vin}`);
 
   try {
     const res = await fetch(url);
@@ -163,18 +70,12 @@ async function decodeVIN(vin: string): Promise<VINDecodeResult | null> {
       return item.Value.trim();
     };
 
-    // Get both Trim and Series fields - NHTSA sometimes puts trim info in Series
-    const trimField = getValue('Trim');
-    const seriesField = getValue('Series');
-
-    log('NHTSA', `Raw NHTSA fields - Trim: "${trimField}", Series: "${seriesField}"`);
-
     const result: VINDecodeResult = {
       year: parseInt(getValue('Model Year')) || null,
       make: getValue('Make'),
       model: getValue('Model'),
-      trim: trimField,
-      series: seriesField,
+      trim: getValue('Trim'),
+      series: getValue('Series'),
       fuel_type: getValue('Fuel Type - Primary'),
       engine: `${getValue('Engine Number of Cylinders')}cyl ${getValue('Displacement (L)')}L`,
       drivetrain: getValue('Drive Type'),
@@ -185,7 +86,9 @@ async function decodeVIN(vin: string): Promise<VINDecodeResult | null> {
     log('NHTSA', `Decoded: ${result.year} ${result.make} ${result.model}`, {
       trim: result.trim,
       series: result.series,
-      fuel_type: result.fuel_type
+      fuel_type: result.fuel_type,
+      engine: result.engine,
+      drivetrain: result.drivetrain
     });
 
     return result;
@@ -196,574 +99,306 @@ async function decodeVIN(vin: string): Promise<VINDecodeResult | null> {
 }
 
 // =============================================================================
-// STEP 2: MARKETCHECK API - THE BASELINE (non-negotiable)
+// STEP 2: MARKETCHECK PRICE PREDICTION API
 // =============================================================================
 
-interface MarketCheckStats {
-  price_mean: number | null;
-  price_median: number | null;
-  price_min: number | null;
-  price_max: number | null;
-  miles_mean: number | null;
-  dom_mean: number | null;
-  dom_median: number | null;
-  listing_count: number;
-}
-
-interface MarketCheckListing {
-  id: string;
-  vin: string;
-  year: number;
-  make: string;
-  model: string;
-  trim: string;
-  price: number;
-  miles: number;
-  fuel_type: string;
-  exterior_color: string;
-  dealer_name: string;
-  city: string;
-  state: string;
-  dom: number;
-  vdp_url: string;
-  trim_tier: string;
-}
-
-interface MarketCheckResult {
-  success: boolean;
-  stats: MarketCheckStats | null;
-  listings: MarketCheckListing[];
-  api_url: string;
+interface PricePrediction {
+  mmr: number | null;
+  retail: number | null;
+  wholesale: number | null;
+  trade_in: number | null;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   raw_response: any;
-  error?: string;
 }
 
-async function searchMarketCheck(
+async function getMarketCheckPricePrediction(
   apiKey: string,
   params: {
+    vin?: string;
     year: number;
     make: string;
     model: string;
     trim?: string;
-    fuel_type?: string;
-    zip: string;
-    radius: number;
+    miles: number;
+    condition: string;
   }
-): Promise<MarketCheckResult> {
-  const { year, make, model, trim, fuel_type, zip, radius } = params;
+): Promise<PricePrediction> {
+  const { vin, year, make, model, trim, miles, condition } = params;
 
-  const yearRange = `${year - 1},${year},${year + 1}`;
-  const effectiveRadius = Math.min(radius, 100); // API limit
+  log('MARKETCHECK', 'Getting price prediction', { vin, year, make, model, trim, miles, condition });
 
-  const searchParams = new URLSearchParams();
-  searchParams.append('api_key', apiKey);
-  searchParams.append('year', yearRange);
-  searchParams.append('make', normalizeMake(make));
-  searchParams.append('model', normalizeModel(model, make));
-  searchParams.append('car_type', 'used');
-  searchParams.append('radius', effectiveRadius.toString());
-  searchParams.append('zip', zip);
-  searchParams.append('rows', '50');
-  searchParams.append('stats', 'price,miles,dom');
+  // Build prediction API params
+  const predParams = new URLSearchParams({
+    api_key: apiKey,
+    car_type: 'used',
+  });
 
-  if (fuel_type) {
-    const fuelMap: Record<string, string> = {
-      'diesel': 'Diesel',
-      'gasoline': 'Gasoline',
-      'electric': 'Electric',
-      'hybrid': 'Hybrid'
-    };
-    searchParams.append('fuel_type', fuelMap[fuel_type.toLowerCase()] || fuel_type);
+  if (vin && vin.length === 17) {
+    predParams.set('vin', vin);
+    predParams.set('miles', String(miles));
+  } else {
+    predParams.set('year', String(year));
+    predParams.set('make', make.toLowerCase());
+    predParams.set('model', model);
+    if (trim) predParams.set('trim', trim);
+    predParams.set('miles', String(miles));
   }
 
-  const url = `https://api.marketcheck.com/v2/search/car/active?${searchParams.toString()}`;
-  log('MARKETCHECK', `Search URL: ${url.replace(apiKey, 'REDACTED')}`);
+  const predUrl = `https://mc-api.marketcheck.com/v2/predict/car/price?${predParams.toString()}`;
+  log('MARKETCHECK', `Prediction URL: ${predUrl.replace(apiKey, 'KEY_HIDDEN')}`);
 
   try {
-    const res = await fetch(url);
-    const data = await res.json();
+    const predRes = await fetch(predUrl);
+    log('MARKETCHECK', `Prediction status: ${predRes.status}`);
 
-    log('MARKETCHECK', `Response status: ${res.status}, num_found: ${data.num_found || 0}`);
-
-    if (!res.ok) {
+    if (!predRes.ok) {
+      const errText = await predRes.text();
+      log('MARKETCHECK', `Prediction error: ${errText.slice(0, 200)}`);
       return {
-        success: false,
-        stats: null,
-        listings: [],
-        api_url: url.replace(apiKey, 'REDACTED'),
-        raw_response: data,
-        error: data.message || `HTTP ${res.status}`
+        mmr: null,
+        retail: null,
+        wholesale: null,
+        trade_in: null,
+        confidence: 'LOW',
+        raw_response: { error: errText }
       };
     }
 
-    // Parse listings first so we can calculate median if API stats are missing
-    const listings: MarketCheckListing[] = (data.listings || []).map((l: any) => {
-      const listingTrim = l.build?.trim || l.trim || '';
+    const predData = await predRes.json();
+    log('MARKETCHECK', 'Prediction response', predData);
+
+    // Extract prices from response
+    const retailPrice = predData.predicted_price || predData.price || predData.retail_price || predData.adjusted_price;
+
+    if (!retailPrice) {
+      log('MARKETCHECK', 'No price in prediction response');
       return {
-        id: l.id,
-        vin: l.vin,
-        year: l.build?.year || l.year,
-        make: l.build?.make || l.make,
-        model: l.build?.model || l.model,
-        trim: listingTrim,
-        price: l.price || 0,
-        miles: l.miles || 0,
-        fuel_type: l.build?.fuel_type || l.fuel_type || '',
-        exterior_color: l.exterior_color || '',
-        dealer_name: l.dealer?.name || '',
-        city: l.dealer?.city || '',
-        state: l.dealer?.state || '',
-        dom: l.dom || 0,
-        vdp_url: l.vdp_url || '',
-        trim_tier: detectTrimTier(listingTrim)
+        mmr: null,
+        retail: null,
+        wholesale: null,
+        trade_in: null,
+        confidence: 'LOW',
+        raw_response: predData
       };
-    });
-
-    // Get prices from listings for manual median calculation
-    const listingPrices = listings.map(l => l.price).filter(p => p > 0);
-
-    // Parse stats from API
-    let priceMedian = data.stats?.price?.median ? Math.round(data.stats.price.median) : null;
-    let priceMean = data.stats?.price?.mean ? Math.round(data.stats.price.mean) : null;
-
-    // FIXED: If API stats are 0/null but we have listings, calculate manually
-    if ((!priceMedian || priceMedian === 0) && listingPrices.length > 0) {
-      priceMedian = calculateMedian(listingPrices);
-      log('MARKETCHECK', `API median was ${data.stats?.price?.median}, calculated manually from ${listingPrices.length} listings: $${priceMedian}`);
     }
 
-    if ((!priceMean || priceMean === 0) && listingPrices.length > 0) {
-      priceMean = Math.round(listingPrices.reduce((a, b) => a + b, 0) / listingPrices.length);
-      log('MARKETCHECK', `API mean was ${data.stats?.price?.mean}, calculated manually: $${priceMean}`);
-    }
+    // Apply condition adjustment
+    const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
+    const adjustedRetail = Math.round(retailPrice * conditionMult);
 
-    const stats: MarketCheckStats = {
-      price_mean: priceMean,
-      price_median: priceMedian,
-      price_min: data.stats?.price?.min || (listingPrices.length ? Math.min(...listingPrices) : null),
-      price_max: data.stats?.price?.max || (listingPrices.length ? Math.max(...listingPrices) : null),
-      miles_mean: data.stats?.miles?.mean ? Math.round(data.stats.miles.mean) : null,
-      dom_mean: data.stats?.dom?.mean ? Math.round(data.stats.dom.mean) : null,
-      dom_median: data.stats?.dom?.median ? Math.round(data.stats.dom.median) : null,
-      listing_count: data.num_found || listings.length
-    };
+    // Calculate other values from retail
+    const mmr = Math.round(adjustedRetail * 0.80);
+    const wholesale = Math.round(adjustedRetail * 0.82);
+    const tradeIn = Math.round(adjustedRetail * 0.73);
 
-    log('MARKETCHECK', `Stats after processing`, {
-      api_median: data.stats?.price?.median,
-      api_mean: data.stats?.price?.mean,
-      final_median: stats.price_median,
-      final_mean: stats.price_mean,
-      listing_count: listings.length,
-      prices_found: listingPrices.length
+    log('MARKETCHECK', 'Calculated values', {
+      raw_retail: retailPrice,
+      condition_mult: conditionMult,
+      adjusted_retail: adjustedRetail,
+      mmr,
+      wholesale,
+      trade_in: tradeIn
     });
 
     return {
-      success: true,
-      stats,
-      listings,
-      api_url: url.replace(apiKey, 'REDACTED'),
-      raw_response: { num_found: data.num_found, stats: data.stats }
+      mmr,
+      retail: adjustedRetail,
+      wholesale,
+      trade_in: tradeIn,
+      confidence: 'HIGH',
+      raw_response: predData
     };
   } catch (err) {
-    log('MARKETCHECK', `Error: ${err.message}`);
+    log('MARKETCHECK', `Prediction exception: ${err.message}`);
     return {
-      success: false,
-      stats: null,
-      listings: [],
-      api_url: url.replace(apiKey, 'REDACTED'),
-      raw_response: null,
-      error: err.message
+      mmr: null,
+      retail: null,
+      wholesale: null,
+      trade_in: null,
+      confidence: 'LOW',
+      raw_response: { error: err.message }
     };
   }
 }
 
-// Filter MarketCheck listings by trim tier and exact criteria
-function filterDealerComparables(
-  listings: MarketCheckListing[],
-  targetYear: number,
-  targetModel: string,
-  targetTrimTier: string,
-  targetFuelType?: string
-): MarketCheckListing[] {
-  const modelLower = targetModel.toLowerCase();
-
-  log('FILTER', `Starting filter - ${listings.length} listings, target tier: ${targetTrimTier}, target fuel: ${targetFuelType || 'any'}`);
-
-  const filtered = listings.filter(listing => {
-    // Year must be within +/-1
-    if (listing.year < targetYear - 1 || listing.year > targetYear + 1) {
-      return false;
-    }
-
-    // Model must match (F-250 should not match F-150)
-    const listingModel = listing.model.toLowerCase();
-    if (!listingModel.includes(modelLower) && !modelLower.includes(listingModel)) {
-      // Check for number matches (250 vs 150)
-      const targetNum = modelLower.match(/\d+/)?.[0];
-      const listingNum = listingModel.match(/\d+/)?.[0];
-      if (targetNum && listingNum && targetNum !== listingNum) {
-        return false;
-      }
-    }
-
-    // Trim tier matching - FIXED: unknown tiers match anything
-    if (!trimTiersMatch(targetTrimTier, listing.trim_tier)) {
-      log('FILTER', `Excluding "${listing.trim}" (${listing.trim_tier}) - target is ${targetTrimTier}`);
-      return false;
-    }
-
-    // Fuel type must match if specified
-    if (targetFuelType) {
-      const listingFuel = listing.fuel_type.toLowerCase();
-      const targetFuel = targetFuelType.toLowerCase();
-      if (!listingFuel.includes(targetFuel) && !targetFuel.includes(listingFuel)) {
-        return false;
-      }
-    }
-
-    // Must have a price
-    if (!listing.price || listing.price < 1000) {
-      return false;
-    }
-
-    return true;
-  });
-
-  log('FILTER', `Filter complete: ${listings.length} -> ${filtered.length} listings`);
-
-  // Log trim tier distribution
-  const tierCounts: Record<string, number> = {};
-  listings.forEach(l => {
-    tierCounts[l.trim_tier] = (tierCounts[l.trim_tier] || 0) + 1;
-  });
-  log('FILTER', 'Trim tier distribution in all listings:', tierCounts);
-
-  return filtered;
-}
-
 // =============================================================================
-// STEP 3: SERPAPI - Private Party Listings
+// STEP 3: MARKETCHECK MARKET STATS
 // =============================================================================
 
-interface PrivateListing {
-  title: string;
-  price: number;
-  url: string;
-  source: 'facebook' | 'craigslist' | 'offerup' | 'cargurus' | 'other';
-  location: string;
-  snippet: string;
-  trim_tier: string;
+interface MarketStats {
+  avg_days_on_market: number | null;
+  price_trend: 'up' | 'down' | 'stable';
+  supply_level: 'low' | 'medium' | 'high';
+  active_listings: number;
+  price_range: { low: number; high: number } | null;
 }
 
-async function searchPrivateParty(
+async function getMarketStats(
   apiKey: string,
   params: {
     year: number;
     make: string;
     model: string;
-    trim: string;
-    fuel_type?: string;
+    zip_code: string;
   }
-): Promise<PrivateListing[]> {
-  if (!apiKey) {
-    log('SERPAPI', 'No API key configured, skipping private party search');
-    return [];
-  }
+): Promise<MarketStats> {
+  const { year, make, model, zip_code } = params;
 
-  const { year, make, model, trim, fuel_type } = params;
-  const listings: PrivateListing[] = [];
+  log('MARKETCHECK', 'Getting market stats', { year, make, model, zip_code });
 
-  // Build search query with trim
-  const fuelPart = fuel_type?.toLowerCase() === 'diesel' ? ' diesel' : '';
-  const trimPart = trim ? ` ${trim}` : '';
-  const baseQuery = `${year} ${make} ${model}${trimPart}${fuelPart}`;
-
-  // Search multiple platforms
-  const searches = [
-    { query: `${baseQuery} site:facebook.com/marketplace`, source: 'facebook' as const },
-    { query: `${baseQuery} site:craigslist.org`, source: 'craigslist' as const },
-    { query: `${baseQuery} site:offerup.com`, source: 'offerup' as const },
-    { query: `${baseQuery} site:cargurus.com private seller`, source: 'cargurus' as const }
-  ];
-
-  for (const search of searches) {
-    try {
-      const serpParams = new URLSearchParams({
-        engine: 'google',
-        q: search.query,
-        api_key: apiKey,
-        num: '10'
-      });
-
-      const url = `https://serpapi.com/search?${serpParams.toString()}`;
-      log('SERPAPI', `Searching ${search.source}: ${search.query}`);
-
-      const res = await fetch(url);
-      const data = await res.json();
-
-      if (data.organic_results) {
-        for (const result of data.organic_results) {
-          const listing = parsePrivateListing(result, search.source);
-          if (listing && listing.price > 0) {
-            listings.push(listing);
-          }
-        }
-        log('SERPAPI', `Found ${data.organic_results.length} results from ${search.source}`);
-      }
-    } catch (err) {
-      log('SERPAPI', `Error searching ${search.source}: ${err.message}`);
-    }
-  }
-
-  return listings;
-}
-
-function parsePrivateListing(result: any, source: PrivateListing['source']): PrivateListing | null {
-  const title = result.title || '';
-  const snippet = result.snippet || '';
-  const link = result.link || '';
-
-  // Extract price from title or snippet
-  const text = `${title} ${snippet}`;
-  const priceMatches = text.match(/\$[\d,]+/g) || [];
-  let price = 0;
-
-  for (const match of priceMatches) {
-    const parsed = parseInt(match.replace(/[$,]/g, ''));
-    if (parsed >= 5000 && parsed <= 200000) {
-      price = parsed;
-      break;
-    }
-  }
-
-  // Extract location
-  const locationMatch = snippet.match(/(?:in|near|at)\s+([A-Za-z\s]+,\s*[A-Z]{2})/i);
-  const location = locationMatch ? locationMatch[1] : '';
-
-  // Detect trim tier from title
-  const trimTier = detectTrimTier(title);
-
-  return {
-    title: title.substring(0, 120),
-    price,
-    url: link,
-    source,
-    location,
-    snippet: snippet.substring(0, 200),
-    trim_tier: trimTier
-  };
-}
-
-// Filter private listings by trim tier
-function filterPrivateComparables(
-  listings: PrivateListing[],
-  targetTrimTier: string
-): PrivateListing[] {
-  return listings.filter(listing => {
-    if (!trimTiersMatch(targetTrimTier, listing.trim_tier)) {
-      return false;
-    }
-    return listing.price > 0;
+  const searchParams = new URLSearchParams({
+    api_key: apiKey,
+    year: `${year - 1}-${year + 1}`,
+    make: make,
+    model: model,
+    car_type: 'used',
+    zip: zip_code,
+    radius: '100',
+    rows: '1',
+    stats: 'price,miles,dom',
   });
-}
 
-// =============================================================================
-// STEP 4: CALCULATE VALUES
-// =============================================================================
+  const url = `https://mc-api.marketcheck.com/v2/search/car/active?${searchParams.toString()}`;
+  log('MARKETCHECK', `Stats URL: ${url.replace(apiKey, 'KEY_HIDDEN')}`);
 
-interface Valuations {
-  mmr: number | null;
-  marketcheck_price: number | null;
-  retail_price: number | null;
-  wholesale_low: number | null;
-  wholesale_avg: number | null;
-  wholesale_high: number | null;
-  trade_in: number | null;
-  kbb_estimate: number | null;
-  nada_estimate: number | null;
-  is_estimated: boolean;
-  sample_size: number;
-  trim_tier: string;
-  adjustments: {
-    base_price: number;
-    mileage_adj: number;
-    condition_adj: number;
-    condition: string;
-    mileage_note: string;
-  };
-}
+  try {
+    const res = await fetch(url);
 
-function calculateValues(
-  stats: MarketCheckStats | null,
-  filteredListings: MarketCheckListing[],
-  miles: number,
-  condition: string,
-  trimTier: string
-): Valuations {
-  // Try to get median from filtered listings first
-  let basePrice = 0;
-  let sampleSize = 0;
-  let isEstimated = true;
+    if (!res.ok) {
+      log('MARKETCHECK', `Stats request failed: ${res.status}`);
+      return {
+        avg_days_on_market: null,
+        price_trend: 'stable',
+        supply_level: 'medium',
+        active_listings: 0,
+        price_range: null
+      };
+    }
 
-  // Get prices from filtered listings
-  const filteredPrices = filteredListings.map(l => l.price).filter(p => p > 0);
+    const data = await res.json();
+    log('MARKETCHECK', 'Stats response', { num_found: data.num_found, stats: data.stats });
 
-  log('VALUES', `Calculating values - ${filteredListings.length} filtered listings, ${filteredPrices.length} with prices`);
+    const stats = data.stats || {};
+    const numFound = data.num_found || 0;
 
-  if (filteredPrices.length >= 3) {
-    // Calculate median from trim-filtered listings
-    basePrice = calculateMedian(filteredPrices);
-    sampleSize = filteredPrices.length;
-    isEstimated = false;
-    log('VALUES', `Using median from ${sampleSize} filtered listings: $${basePrice}`);
-  } else if (filteredPrices.length > 0) {
-    // Use what we have even if < 3
-    basePrice = calculateMedian(filteredPrices);
-    sampleSize = filteredPrices.length;
-    isEstimated = true;
-    log('VALUES', `Using median from ${sampleSize} listings (low confidence): $${basePrice}`);
-  }
+    // Determine supply level
+    let supplyLevel: 'low' | 'medium' | 'high' = 'medium';
+    if (numFound > 100) supplyLevel = 'high';
+    else if (numFound < 20) supplyLevel = 'low';
 
-  // Fallback to MarketCheck stats if no filtered listings
-  if (!basePrice && stats) {
-    basePrice = stats.price_median || stats.price_mean || 0;
-    sampleSize = stats.listing_count;
-    isEstimated = sampleSize < 3;
-    log('VALUES', `Fallback to MarketCheck stats median: $${basePrice}`);
-  }
+    // Determine price trend from mean vs median
+    let priceTrend: 'up' | 'down' | 'stable' = 'stable';
+    if (stats.price?.mean && stats.price?.median) {
+      const diff = (stats.price.mean - stats.price.median) / stats.price.median;
+      if (diff > 0.05) priceTrend = 'up';
+      else if (diff < -0.05) priceTrend = 'down';
+    }
 
-  if (!basePrice) {
-    log('VALUES', 'No price data available');
     return {
-      mmr: null,
-      marketcheck_price: null,
-      retail_price: null,
-      wholesale_low: null,
-      wholesale_avg: null,
-      wholesale_high: null,
-      trade_in: null,
-      kbb_estimate: null,
-      nada_estimate: null,
-      is_estimated: true,
-      sample_size: 0,
-      trim_tier: trimTier,
-      adjustments: {
-        base_price: 0,
-        mileage_adj: 0,
-        condition_adj: 0,
-        condition,
-        mileage_note: 'No market data'
-      }
+      avg_days_on_market: stats.dom?.mean ? Math.round(stats.dom.mean) : null,
+      price_trend: priceTrend,
+      supply_level: supplyLevel,
+      active_listings: numFound,
+      price_range: stats.price?.min && stats.price?.max
+        ? { low: stats.price.min, high: stats.price.max }
+        : null
     };
-  }
-
-  // Mileage adjustment
-  const avgMiles = stats?.miles_mean || 60000;
-  const milesDiff = miles - avgMiles;
-  const mileageAdj = Math.round(milesDiff * -0.05); // $0.05 per mile
-
-  // Condition adjustment
-  const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
-  const conditionAdj = Math.round(basePrice * (conditionMult - 1));
-
-  // Calculate adjusted retail
-  const adjustedRetail = basePrice + mileageAdj + conditionAdj;
-
-  log('VALUES', `Final calculation`, {
-    base_price: basePrice,
-    mileage_adj: mileageAdj,
-    condition_adj: conditionAdj,
-    adjusted_retail: adjustedRetail
-  });
-
-  // Calculate other values
-  const mmr = Math.round(adjustedRetail * 0.80);
-  const wholesaleLow = Math.round(adjustedRetail * 0.75);
-  const wholesaleAvg = Math.round(adjustedRetail * 0.80);
-  const wholesaleHigh = Math.round(adjustedRetail * 0.85);
-  const tradeIn = Math.round(adjustedRetail * 0.73);
-
-  // AI estimates based on real baseline (not overriding)
-  const kbbEstimate = Math.round(adjustedRetail * 1.02);
-  const nadaEstimate = Math.round(adjustedRetail * 0.98);
-
-  return {
-    mmr,
-    marketcheck_price: basePrice,
-    retail_price: adjustedRetail,
-    wholesale_low: wholesaleLow,
-    wholesale_avg: wholesaleAvg,
-    wholesale_high: wholesaleHigh,
-    trade_in: tradeIn,
-    kbb_estimate: kbbEstimate,
-    nada_estimate: nadaEstimate,
-    is_estimated: isEstimated,
-    sample_size: sampleSize,
-    trim_tier: trimTier,
-    adjustments: {
-      base_price: basePrice,
-      mileage_adj: mileageAdj,
-      condition_adj: conditionAdj,
-      condition,
-      mileage_note: `${miles.toLocaleString()} mi vs ${avgMiles.toLocaleString()} avg`
-    }
-  };
-}
-
-// =============================================================================
-// STEP 5: BUILD MARKET ANALYSIS
-// =============================================================================
-
-interface MarketAnalysis {
-  days_to_sell: number | null;
-  demand_level: 'Hot' | 'Medium' | 'Cold' | 'Unknown';
-  price_trend: 'Rising' | 'Stable' | 'Falling' | 'Unknown';
-  supply_level: 'High' | 'Medium' | 'Low' | 'Unknown';
-  listing_count: number;
-  price_range: { min: number; max: number } | null;
-}
-
-function buildMarketAnalysis(stats: MarketCheckStats | null): MarketAnalysis {
-  if (!stats) {
+  } catch (err) {
+    log('MARKETCHECK', `Stats exception: ${err.message}`);
     return {
-      days_to_sell: null,
-      demand_level: 'Unknown',
-      price_trend: 'Unknown',
-      supply_level: 'Unknown',
-      listing_count: 0,
+      avg_days_on_market: null,
+      price_trend: 'stable',
+      supply_level: 'medium',
+      active_listings: 0,
       price_range: null
     };
   }
+}
 
-  const daysToSell = stats.dom_median || stats.dom_mean;
+// =============================================================================
+// STEP 4: CALL FIND-VEHICLES FOR COMPARABLES
+// =============================================================================
 
-  let demandLevel: MarketAnalysis['demand_level'] = 'Medium';
-  if (daysToSell !== null) {
-    if (daysToSell < 30) demandLevel = 'Hot';
-    else if (daysToSell > 60) demandLevel = 'Cold';
+interface ComparablesResult {
+  dealer_listings: any[];
+  private_listings: any[];
+  market_summary: any;
+}
+
+async function getComparables(
+  vehicle: {
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+  },
+  miles: number,
+  zip_code: string
+): Promise<ComparablesResult> {
+  log('COMPARABLES', 'Calling find-vehicles', { vehicle, miles, zip_code });
+
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+  const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    log('COMPARABLES', 'Missing SUPABASE_URL or SUPABASE_ANON_KEY');
+    return {
+      dealer_listings: [],
+      private_listings: [],
+      market_summary: null
+    };
   }
 
-  let priceTrend: MarketAnalysis['price_trend'] = 'Stable';
-  if (stats.price_mean && stats.price_median) {
-    const diff = (stats.price_mean - stats.price_median) / stats.price_median;
-    if (diff > 0.05) priceTrend = 'Rising';
-    else if (diff < -0.05) priceTrend = 'Falling';
+  try {
+    const comparablesRes = await fetch(
+      SUPABASE_URL + '/functions/v1/find-vehicles',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          year_min: vehicle.year - 1,
+          year_max: vehicle.year + 1,
+          make: vehicle.make,
+          model: vehicle.model,
+          trim: vehicle.trim,
+          max_miles: (miles || 60000) + 30000,
+          zip_code: zip_code || '84065',
+          radius_miles: 250,
+        }),
+      }
+    );
+
+    log('COMPARABLES', `find-vehicles status: ${comparablesRes.status}`);
+
+    if (!comparablesRes.ok) {
+      const errText = await comparablesRes.text();
+      log('COMPARABLES', `find-vehicles error: ${errText.slice(0, 200)}`);
+      return {
+        dealer_listings: [],
+        private_listings: [],
+        market_summary: null
+      };
+    }
+
+    const comparablesData = await comparablesRes.json();
+    log('COMPARABLES', `find-vehicles returned ${comparablesData.dealer_listings?.length || 0} dealer, ${comparablesData.private_listings?.length || 0} private`);
+
+    return {
+      dealer_listings: comparablesData.dealer_listings || [],
+      private_listings: comparablesData.private_listings || [],
+      market_summary: comparablesData.market_summary || null
+    };
+  } catch (err) {
+    log('COMPARABLES', `find-vehicles exception: ${err.message}`);
+    return {
+      dealer_listings: [],
+      private_listings: [],
+      market_summary: null
+    };
   }
-
-  let supplyLevel: MarketAnalysis['supply_level'] = 'Medium';
-  if (stats.listing_count > 100) supplyLevel = 'High';
-  else if (stats.listing_count < 20) supplyLevel = 'Low';
-
-  return {
-    days_to_sell: daysToSell,
-    demand_level: demandLevel,
-    price_trend: priceTrend,
-    supply_level: supplyLevel,
-    listing_count: stats.listing_count,
-    price_range: stats.price_min && stats.price_max
-      ? { min: stats.price_min, max: stats.price_max }
-      : null
-  };
 }
 
 // =============================================================================
@@ -771,6 +406,9 @@ function buildMarketAnalysis(stats: MarketCheckStats | null): MarketAnalysis {
 // =============================================================================
 
 serve(async (req) => {
+  // Reset logs for each request
+  logs.length = 0;
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -783,60 +421,44 @@ serve(async (req) => {
       make,
       model,
       trim,
-      miles,
-      condition = 'Good',
+      miles = 60000,
+      condition = 'good',
       zip_code = '84065',
-      radius_miles = 100,
-      fuel_type
     } = body;
 
     log('MAIN', '========== NEW REQUEST ==========');
-    log('MAIN', 'Request params', { vin, year, make, model, trim, miles, condition, zip_code, radius_miles, fuel_type });
+    log('MAIN', 'Request params', { vin, year, make, model, trim, miles, condition, zip_code });
 
     const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
-    const SERP_API_KEY = Deno.env.get("SERP_API_KEY");
 
     if (!MARKETCHECK_API_KEY) {
       throw new Error("MARKETCHECK_API_KEY not configured");
     }
 
-    // Track data sources
-    const dataSources = {
-      vin_decode: null as string | null,
-      market_data: null as string | null,
-      dealer_comparables: null as string | null,
-      private_comparables: null as string | null,
-      valuations: null as string | null
-    };
-
     // =======================================================================
-    // STEP 1: Decode VIN
+    // STEP 1: Decode VIN (if provided)
     // =======================================================================
-    let vehicleInfo: any = { year, make, model, trim, fuel_type, miles: miles || 60000 };
-    let vinTrim = '';
-    let vinSeries = '';
+    let vehicleInfo: any = { year, make, model, trim, miles };
 
     if (vin && vin.length === 17) {
+      log('MAIN', 'Decoding VIN...');
       const vinData = await decodeVIN(vin);
-      if (vinData?.make && vinData?.model) {
-        vinTrim = vinData.trim;
-        vinSeries = vinData.series;
 
+      if (vinData?.make && vinData?.model) {
         vehicleInfo = {
           vin,
           year: vinData.year || year,
           make: vinData.make || make,
           model: vinData.model || model,
           trim: vinData.trim || trim,
-          series: vinData.series,
-          fuel_type: vinData.fuel_type || fuel_type,
           engine: vinData.engine,
+          fuel_type: vinData.fuel_type,
           drivetrain: vinData.drivetrain,
           body_type: vinData.body_type,
           transmission: vinData.transmission,
-          miles: miles || 60000
+          miles
         };
-        dataSources.vin_decode = 'nhtsa';
+        log('MAIN', 'VIN decoded successfully', vehicleInfo);
       }
     }
 
@@ -844,205 +466,105 @@ serve(async (req) => {
     const searchMake = vehicleInfo.make || make;
     const searchModel = vehicleInfo.model || model;
     const searchTrim = vehicleInfo.trim || trim || '';
-    const searchSeries = vehicleInfo.series || '';
-    const searchFuelType = vehicleInfo.fuel_type || fuel_type;
-    const searchMiles = miles || vehicleInfo.miles || 60000;
-
-    // FIXED: Detect trim tier from both trim and series fields
-    const trimTier = detectTrimTier(searchTrim, searchSeries);
-
-    // Also try to detect from user-provided trim if NHTSA didn't help
-    const userProvidedTrimTier = trim ? detectTrimTier(trim) : 'unknown';
-    const finalTrimTier = trimTier !== 'unknown' ? trimTier : userProvidedTrimTier;
-
-    vehicleInfo.trim_tier = finalTrimTier;
-
-    log('MAIN', `Trim tier detection summary`, {
-      nhtsa_trim: searchTrim,
-      nhtsa_series: searchSeries,
-      user_trim: trim,
-      detected_tier: trimTier,
-      user_tier: userProvidedTrimTier,
-      final_tier: finalTrimTier
-    });
-
-    log('MAIN', `Searching: ${searchYear} ${searchMake} ${searchModel} ${searchTrim} (${finalTrimTier} tier, ${searchFuelType || 'any fuel'})`);
 
     if (!searchYear || !searchMake || !searchModel) {
-      throw new Error("Year, Make, and Model are required");
+      throw new Error("Year, Make, and Model are required (provide VIN or manual entry)");
     }
 
+    log('MAIN', `Researching: ${searchYear} ${searchMake} ${searchModel} ${searchTrim}`);
+
     // =======================================================================
-    // STEP 2: MarketCheck Search
+    // STEP 2: Get Price Prediction from MarketCheck
     // =======================================================================
-    const mcResult = await searchMarketCheck(MARKETCHECK_API_KEY, {
+    log('MAIN', 'Getting price prediction...');
+    const pricePrediction = await getMarketCheckPricePrediction(MARKETCHECK_API_KEY, {
+      vin: vin,
       year: parseInt(searchYear.toString()),
       make: searchMake,
       model: searchModel,
-      fuel_type: searchFuelType,
-      zip: zip_code,
-      radius: radius_miles
+      trim: searchTrim,
+      miles: miles,
+      condition: condition
     });
 
-    if (mcResult.success) {
-      dataSources.market_data = 'marketcheck';
-      dataSources.dealer_comparables = 'marketcheck';
-    }
-
-    log('MAIN', `MarketCheck returned ${mcResult.listings.length} listings`);
-
-    // Filter dealer listings by trim tier
-    const filteredDealerListings = filterDealerComparables(
-      mcResult.listings,
-      parseInt(searchYear.toString()),
-      searchModel,
-      finalTrimTier,
-      searchFuelType
-    );
-
-    log('MAIN', `After filtering: ${filteredDealerListings.length} dealer comparables (${finalTrimTier} tier)`);
-
-    // Format dealer comparables for response
-    const dealerComparables = filteredDealerListings.slice(0, 10).map(l => ({
-      title: `${l.year} ${l.make} ${l.model} ${l.trim}`.trim(),
-      year: l.year,
-      make: l.make,
-      model: l.model,
-      trim: l.trim,
-      trim_tier: l.trim_tier,
-      price: l.price,
-      miles: l.miles,
-      fuel_type: l.fuel_type,
-      location: `${l.city}, ${l.state}`.replace(/^,\s*/, ''),
-      dealer: l.dealer_name,
-      dom: l.dom,
-      url: l.vdp_url,
-      source: 'dealer' as const
-    }));
+    // =======================================================================
+    // STEP 3: Get Market Stats from MarketCheck
+    // =======================================================================
+    log('MAIN', 'Getting market stats...');
+    const marketStats = await getMarketStats(MARKETCHECK_API_KEY, {
+      year: parseInt(searchYear.toString()),
+      make: searchMake,
+      model: searchModel,
+      zip_code: zip_code
+    });
 
     // =======================================================================
-    // STEP 3: SerpAPI Private Party Search
+    // STEP 4: Get Comparables from find-vehicles
     // =======================================================================
-    let privateListings: PrivateListing[] = [];
-
-    if (SERP_API_KEY) {
-      // Use the best available trim for search query
-      const searchQueryTrim = trim || searchTrim || '';
-
-      privateListings = await searchPrivateParty(SERP_API_KEY, {
+    log('MAIN', 'Getting comparables from find-vehicles...');
+    const comparables = await getComparables(
+      {
         year: parseInt(searchYear.toString()),
         make: searchMake,
         model: searchModel,
-        trim: searchQueryTrim,
-        fuel_type: searchFuelType
-      });
-
-      // Filter by trim tier
-      privateListings = filterPrivateComparables(privateListings, finalTrimTier);
-
-      if (privateListings.length > 0) {
-        dataSources.private_comparables = 'serpapi';
-      }
-
-      log('MAIN', `Found ${privateListings.length} filtered private party listings`);
-    }
-
-    // Format private comparables for response
-    const privateComparables = privateListings.slice(0, 10).map(l => ({
-      title: l.title,
-      price: l.price,
-      location: l.location,
-      url: l.url,
-      source: l.source,
-      trim_tier: l.trim_tier,
-      snippet: l.snippet
-    }));
-
-    // =======================================================================
-    // STEP 4: Calculate Values
-    // =======================================================================
-    const valuations = calculateValues(
-      mcResult.stats,
-      filteredDealerListings,
-      searchMiles,
-      condition,
-      finalTrimTier
+        trim: searchTrim
+      },
+      miles,
+      zip_code
     );
 
-    dataSources.valuations = valuations.is_estimated ? 'estimated' : 'marketcheck';
-
     // =======================================================================
-    // STEP 5: Build Market Analysis
+    // STEP 5: Build Response
     // =======================================================================
-    const marketAnalysis = buildMarketAnalysis(mcResult.stats);
-
-    // =======================================================================
-    // STEP 6: Build Response
-    // =======================================================================
-    const confidence = valuations.sample_size >= 10 ? 'HIGH' :
-                       valuations.sample_size >= 5 ? 'MEDIUM' :
-                       valuations.sample_size > 0 ? 'LOW' : 'ESTIMATED';
-
-    log('MAIN', `Final response - confidence: ${confidence}, mmr: $${valuations.mmr}, sample_size: ${valuations.sample_size}`);
-
     const response = {
       success: true,
-      vehicle: vehicleInfo,
 
-      // Real MarketCheck values
-      mmr: valuations.mmr,
-      marketcheck_price: valuations.marketcheck_price,
+      vehicle: {
+        vin: vehicleInfo.vin || null,
+        year: searchYear,
+        make: searchMake,
+        model: searchModel,
+        trim: searchTrim,
+        engine: vehicleInfo.engine || null,
+        fuel_type: vehicleInfo.fuel_type || null,
+        drivetrain: vehicleInfo.drivetrain || null,
+        body_type: vehicleInfo.body_type || null,
+        transmission: vehicleInfo.transmission || null,
+        miles: miles,
+        condition: condition
+      },
 
-      // Market stats (REAL)
+      values: {
+        mmr: pricePrediction.mmr,
+        wholesale: pricePrediction.wholesale,
+        retail: pricePrediction.retail,
+        trade_in: pricePrediction.trade_in,
+        confidence: pricePrediction.confidence
+      },
+
       market_stats: {
-        avg_dom: marketAnalysis.days_to_sell,
-        price_trend: marketAnalysis.price_trend,
-        supply_level: marketAnalysis.supply_level,
-        demand_level: marketAnalysis.demand_level,
-        listing_count: marketAnalysis.listing_count,
-        price_range: marketAnalysis.price_range
+        avg_days_on_market: marketStats.avg_days_on_market,
+        price_trend: marketStats.price_trend,
+        supply_level: marketStats.supply_level,
+        active_listings: marketStats.active_listings,
+        price_range: marketStats.price_range
       },
 
-      // All valuations
-      valuations: {
-        mmr: valuations.mmr,
-        retail: valuations.retail_price,
-        wholesale_low: valuations.wholesale_low,
-        wholesale_avg: valuations.wholesale_avg,
-        wholesale_high: valuations.wholesale_high,
-        trade_in: valuations.trade_in,
-        kbb_estimate: valuations.kbb_estimate,
-        nada_estimate: valuations.nada_estimate,
-        is_estimated: valuations.is_estimated,
-        sample_size: valuations.sample_size,
-        adjustments: valuations.adjustments
+      comparables: {
+        dealer_listings: comparables.dealer_listings,
+        private_listings: comparables.private_listings,
+        market_summary: comparables.market_summary
       },
 
-      // Comparables
-      dealer_comparables: dealerComparables,
-      private_comparables: privateComparables,
-
-      // Metadata
-      confidence,
-      trim_tier: finalTrimTier,
-      data_sources: dataSources,
-
-      // Debug info
-      debug: {
-        marketcheck_url: mcResult.api_url,
-        marketcheck_raw: mcResult.raw_response,
-        nhtsa_trim: vinTrim,
-        nhtsa_series: vinSeries,
-        user_provided_trim: trim,
-        detected_trim_tier: trimTier,
-        final_trim_tier: finalTrimTier,
-        total_mc_listings: mcResult.listings.length,
-        filtered_dealer_count: filteredDealerListings.length,
-        private_count: privateListings.length,
-        serp_api_configured: !!SERP_API_KEY,
-        calculated_median: valuations.marketcheck_price
-      }
+      data_source: 'MarketCheck + find-vehicles',
+      logs: logs
     };
+
+    log('MAIN', 'Response built', {
+      values: response.values,
+      dealer_count: comparables.dealer_listings.length,
+      private_count: comparables.private_listings.length
+    });
 
     return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -1051,7 +573,11 @@ serve(async (req) => {
   } catch (error) {
     log('ERROR', error.message);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({
+        success: false,
+        error: error.message,
+        logs: logs
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
