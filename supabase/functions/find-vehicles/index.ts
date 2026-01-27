@@ -615,6 +615,97 @@ serve(async (req) => {
 
       log(`FB Marketplace added: ${fbCount} listings`);
 
+      // ===== APIFY FACEBOOK MARKETPLACE (Better results) =====
+      const APIFY_API_KEY = Deno.env.get('APIFY_API_KEY');
+
+      if (APIFY_API_KEY) {
+        log(`\n=== APIFY FACEBOOK MARKETPLACE ===`);
+
+        const fbSearchUrl = new URL('https://www.facebook.com/marketplace/saltlakecity/search');
+        fbSearchUrl.searchParams.set('query', (make + ' ' + (model || '')).trim());
+        if (max_price) fbSearchUrl.searchParams.set('maxPrice', String(max_price));
+        if (year_min) fbSearchUrl.searchParams.set('minYear', String(year_min));
+        if (year_max) fbSearchUrl.searchParams.set('maxYear', String(year_max));
+        if (max_miles) fbSearchUrl.searchParams.set('maxMileage', String(max_miles));
+
+        log(`Apify FB URL: ${fbSearchUrl.toString()}`);
+
+        try {
+          const apifyRes = await fetch(
+            'https://api.apify.com/v2/acts/datavoyantlab~facebook-marketplace-scraper/run-sync-get-dataset-items?token=' + APIFY_API_KEY,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                startUrls: [fbSearchUrl.toString()],
+                maxItems: 50,
+              }),
+            }
+          );
+
+          log(`Apify status: ${apifyRes.status}`);
+
+          if (apifyRes.ok) {
+            const apifyData = await apifyRes.json();
+            log(`Apify found: ${apifyData?.length || 0} listings`);
+            let apifyCount = 0;
+
+            for (const item of (apifyData || [])) {
+              if (item.is_sold || item.is_pending) continue;
+
+              const price = item.listing_price?.amount ? parseFloat(item.listing_price.amount) : null;
+
+              // Parse miles from subtitle
+              let miles: number | null = null;
+              const milesText = item.custom_sub_titles_with_rendering_flags?.[0]?.subtitle || '';
+              const milesMatch = milesText.match(/(\d+)K?\s*miles?/i);
+              if (milesMatch) {
+                miles = milesText.toLowerCase().includes('k') ? parseInt(milesMatch[1]) * 1000 : parseInt(milesMatch[1]);
+              }
+
+              // Parse year from title
+              const yearMatch = (item.marketplace_listing_title || item.custom_title || '').match(/\b(19|20)\d{2}\b/);
+              const year = yearMatch ? parseInt(yearMatch[0]) : null;
+
+              const listingUrl = item.id ? 'https://www.facebook.com/marketplace/item/' + item.id : null;
+
+              // Skip if URL already exists (dedup)
+              if (listingUrl && seenUrls.has(listingUrl)) continue;
+              if (listingUrl) seenUrls.add(listingUrl);
+
+              // Filter by year range
+              if (year_min && year && year < year_min) continue;
+              if (year_max && year && year > year_max) continue;
+
+              // Filter by price
+              if (max_price && price && price > max_price) continue;
+              if (price && (price < 1000 || price > 500000)) continue;
+
+              privateListings.push({
+                title: item.marketplace_listing_title || item.custom_title,
+                year: year,
+                make: make,
+                model: model,
+                price: price,
+                miles: miles,
+                location: item.location?.reverse_geocode ? (item.location.reverse_geocode.city + ', ' + item.location.reverse_geocode.state) : 'Utah',
+                url: listingUrl,
+                source: 'FB Marketplace',
+                thumbnail: item.primary_listing_photo?.image?.uri,
+              });
+              apifyCount++;
+            }
+            log(`Apify FB Marketplace added: ${apifyCount} listings`);
+            log(`Total FB listings after Apify: ${privateListings.filter(p => p.source === 'FB Marketplace').length}`);
+          } else {
+            const errText = await apifyRes.text();
+            log(`Apify error response: ${errText.slice(0, 200)}`);
+          }
+        } catch (apifyError) {
+          log(`Apify error: ${apifyError.message}`);
+        }
+      }
+
       // ----- GOOGLE SEARCH: OfferUp -----
       try {
         const ouQuery = `${vehicleQuery} for sale site:offerup.com`;
