@@ -599,19 +599,22 @@ export default function DevConsolePage() {
 
     setLoading(true);
     try {
-      // Update staging status to 'approved' and set the doc_type (library category)
-      const { error } = await supabase.from('form_staging')
-        .update({
-          status: 'approved',
-          promoted_at: new Date().toISOString(),
+      // Call edge function to download PDF and promote form
+      showToast('Downloading and storing PDF template...', 'info');
+
+      const { data, error } = await supabase.functions.invoke('promote-form', {
+        body: {
+          form_id: form.id,
           doc_type: selectedLibrary
-        })
-        .eq('id', form.id);
+        }
+      });
+
       if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Promotion failed');
 
       const libraryLabels = { deal: 'Deal Docs', finance: 'Finance Docs', licensing: 'Licensing Docs', tax: 'Tax Docs', reporting: 'Reporting Docs' };
-      await logAudit('PROMOTE', 'form_staging', form.id, { status: 'pending' }, { status: 'approved', doc_type: selectedLibrary });
-      showToast(`Form promoted to ${libraryLabels[selectedLibrary] || selectedLibrary} library`);
+      await logAudit('PROMOTE', 'form_staging', form.id, { status: 'pending' }, { status: 'approved', doc_type: selectedLibrary, storage_path: data.storage_path });
+      showToast(`Form promoted to ${libraryLabels[selectedLibrary] || selectedLibrary} library - PDF stored`);
       setPromoteModal(null);
       loadAllData();
     } catch (err) {
@@ -693,6 +696,52 @@ export default function DevConsolePage() {
   // Key states for "All States" discovery
   const keyStates = ['UT', 'ID', 'NV', 'AZ', 'CO', 'WY', 'MT', 'NM', 'CA', 'TX', 'OR', 'WA', 'FL', 'GA', 'NC', 'OH', 'PA', 'NY', 'IL', 'MI'];
   const allStatesOptions = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+
+  // Fix approved forms that are missing PDFs (storage_path is null)
+  const [fixingPDFs, setFixingPDFs] = useState(false);
+  const [fixProgress, setFixProgress] = useState('');
+
+  const fixMissingPDFs = async () => {
+    // Find approved forms missing storage_path
+    const formsToFix = formLibrary.filter(f => !f.storage_path && f.source_url);
+
+    if (formsToFix.length === 0) {
+      showToast('All approved forms already have PDFs stored', 'info');
+      return;
+    }
+
+    setFixingPDFs(true);
+    let fixed = 0;
+    let failed = 0;
+
+    for (let i = 0; i < formsToFix.length; i++) {
+      const form = formsToFix[i];
+      setFixProgress(`Downloading ${form.form_number} (${i + 1}/${formsToFix.length})...`);
+
+      try {
+        const { data, error } = await supabase.functions.invoke('promote-form', {
+          body: { form_id: form.id, doc_type: form.doc_type || 'deal' }
+        });
+
+        if (error || !data?.success) {
+          console.error(`Failed to fix ${form.form_number}:`, error || data?.error);
+          failed++;
+        } else {
+          fixed++;
+        }
+      } catch (err) {
+        console.error(`Error fixing ${form.form_number}:`, err);
+        failed++;
+      }
+    }
+
+    setFixProgress('');
+    setFixingPDFs(false);
+    showToast(`Fixed ${fixed} forms${failed > 0 ? `, ${failed} failed` : ''}`);
+    loadAllData();
+  };
+
+  const formsNeedingFix = formLibrary.filter(f => !f.storage_path && f.source_url).length;
 
   const runAIResearch = async () => {
     setAiResearching(true);
@@ -1243,6 +1292,19 @@ export default function DevConsolePage() {
                 <button onClick={runAIResearch} disabled={aiResearching} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
                   {aiResearching ? 'Discovering...' : 'AI Discover Forms'}
                 </button>
+                {formsNeedingFix > 0 && (
+                  <button
+                    onClick={fixMissingPDFs}
+                    disabled={fixingPDFs}
+                    style={{
+                      ...btnPrimary,
+                      backgroundColor: '#f59e0b',
+                      opacity: fixingPDFs ? 0.6 : 1
+                    }}
+                  >
+                    {fixingPDFs ? fixProgress || 'Fixing...' : `Fix ${formsNeedingFix} Missing PDFs`}
+                  </button>
+                )}
                 <HelpButton />
               </div>
             </div>
