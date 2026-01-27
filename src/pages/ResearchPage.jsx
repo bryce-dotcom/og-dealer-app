@@ -509,18 +509,7 @@ export default function ResearchPage() {
   };
 
   // Check if valuations are from real data
-  const hasRealData = (results) => results?.valuations?.sample_size > 0;
-
-  // Get adjustments from results
-  const getAdjustments = (results) => {
-    const adj = results?.valuations?.adjustments || {};
-    return {
-      mileage_adj: adj.mileage_adj ?? null,
-      mileage_per_mile: adj.mileage_per_mile ?? null,
-      miles_from_avg: adj.miles_from_avg ?? null,
-      avg_miles: adj.avg_miles ?? null
-    };
-  };
+  const hasRealData = (results) => results?.values?.confidence === 'HIGH';
 
   // Check if engine is diesel
   const isDiesel = (engine) => {
@@ -1018,21 +1007,29 @@ export default function ResearchPage() {
 
               {/* Values Tab */}
               {activeTab === 'values' && (() => {
-                const adj = getAdjustments(results);
-                const bookValues = results.book_values || {};
+                // Calculate mileage adjustment
+                const avgMiles = 60000;
+                const inputMiles = results.vehicle?.miles || parseInt(miles) || 60000;
+                const milesDiff = inputMiles - avgMiles;
+                // Over avg: -$0.15/mile, Under avg: +$0.10/mile
+                const mileageAdjustment = milesDiff > 0
+                  ? Math.round(milesDiff * -0.15)
+                  : Math.round(milesDiff * -0.10);
+                const adjustedMMR = (results.values?.mmr || 0) + mileageAdjustment;
+
                 return (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                     <h3 style={{ color: theme.text, margin: 0, fontSize: '18px' }}>Valuations</h3>
-                    {results.valuations?.is_estimated ? (
+                    {results.values?.confidence !== 'HIGH' ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', backgroundColor: 'rgba(234,179,8,0.15)', borderRadius: '6px' }}>
                         <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#eab308' }} />
-                        <span style={{ color: '#eab308', fontSize: '11px', fontWeight: '600' }}>Values are ESTIMATED</span>
+                        <span style={{ color: '#eab308', fontSize: '11px', fontWeight: '600' }}>Values are {results.values?.confidence || 'ESTIMATED'}</span>
                       </div>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', backgroundColor: 'rgba(34,197,94,0.15)', borderRadius: '6px' }}>
                         <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }} />
-                        <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: '600' }}>Real MarketCheck Data ({results.valuations?.sample_size || 0} vehicles)</span>
+                        <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: '600' }}>HIGH Confidence Data</span>
                       </div>
                     )}
                   </div>
@@ -1056,15 +1053,15 @@ export default function ResearchPage() {
                       marginBottom: '8px'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: theme.text, fontSize: '13px', fontWeight: '600' }}>Retail (MarketCheck)</span>
+                        <span style={{ color: theme.text, fontSize: '13px', fontWeight: '600' }}>Retail</span>
                         <DataIndicator isReal={hasRealData(results)} small />
                       </div>
                       <span style={{ color: theme.text, fontWeight: '700', fontSize: '16px' }}>
-                        {formatCurrency(results.valuations?.retail)}
+                        {formatCurrency(results.values?.retail)}
                       </span>
                     </div>
 
-                    {/* Wholesale (82%) */}
+                    {/* Wholesale */}
                     <div style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -1073,10 +1070,42 @@ export default function ResearchPage() {
                       marginBottom: '8px'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: theme.textMuted, fontSize: '13px' }}>Wholesale (82%)</span>
+                        <span style={{ color: theme.textMuted, fontSize: '13px' }}>Wholesale</span>
                       </div>
                       <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
-                        {formatCurrency(results.valuations?.wholesale)}
+                        {formatCurrency(results.values?.wholesale)}
+                      </span>
+                    </div>
+
+                    {/* MMR */}
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      marginBottom: '8px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: theme.textMuted, fontSize: '13px' }}>MMR (Auction)</span>
+                      </div>
+                      <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                        {formatCurrency(results.values?.mmr)}
+                      </span>
+                    </div>
+
+                    {/* Trade-In */}
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      marginBottom: '8px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: theme.textMuted, fontSize: '13px' }}>Trade-In</span>
+                      </div>
+                      <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
+                        {formatCurrency(results.values?.trade_in)}
                       </span>
                     </div>
 
@@ -1086,32 +1115,32 @@ export default function ResearchPage() {
                       justifyContent: 'space-between',
                       alignItems: 'center',
                       padding: '10px 12px',
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
+                      borderRadius: '6px',
                       marginBottom: '8px'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ color: theme.textMuted, fontSize: '13px' }}>Mileage Adjustment</span>
-                        {adj.miles_from_avg !== null && (
-                          <span style={{
-                            fontSize: '10px',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            backgroundColor: 'rgba(107,114,128,0.15)',
-                            color: theme.textSecondary
-                          }}>
-                            {formatNumber(Math.abs(adj.miles_from_avg))} mi {adj.miles_from_avg > 0 ? 'over' : 'under'} avg
-                          </span>
-                        )}
+                        <span style={{
+                          fontSize: '10px',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(107,114,128,0.15)',
+                          color: theme.textSecondary
+                        }}>
+                          {formatNumber(inputMiles)} mi ({formatNumber(Math.abs(milesDiff))} {milesDiff > 0 ? 'over' : 'under'} avg)
+                        </span>
                       </div>
                       <span style={{
-                        color: adj.mileage_adj === null || adj.mileage_adj === undefined ? theme.textMuted : (adj.mileage_adj >= 0 ? '#22c55e' : '#ef4444'),
+                        color: mileageAdjustment >= 0 ? '#22c55e' : '#ef4444',
                         fontWeight: '600',
                         fontSize: '14px'
                       }}>
-                        {formatAdjustment(adj.mileage_adj)}
+                        {formatAdjustment(mileageAdjustment)}
                       </span>
                     </div>
 
-                    {/* Adjusted Wholesale - THE ACQUISITION NUMBER */}
+                    {/* Mileage Adjusted MMR - THE ACQUISITION NUMBER */}
                     <div style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -1119,8 +1148,7 @@ export default function ResearchPage() {
                       padding: '12px 14px',
                       backgroundColor: 'rgba(34,197,94,0.1)',
                       borderRadius: '8px',
-                      border: '2px solid #22c55e',
-                      marginBottom: '8px'
+                      border: '2px solid #22c55e'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <span style={{
@@ -1134,116 +1162,11 @@ export default function ResearchPage() {
                         }}>
                           BUY AT
                         </span>
-                        <span style={{ color: theme.text, fontSize: '14px', fontWeight: '700' }}>Adjusted Wholesale</span>
+                        <span style={{ color: theme.text, fontSize: '14px', fontWeight: '700' }}>Mileage Adjusted MMR</span>
                       </div>
                       <span style={{ color: '#22c55e', fontWeight: '800', fontSize: '20px' }}>
-                        {formatCurrency(results.valuations?.adjusted_wholesale)}
+                        {formatCurrency(adjustedMMR)}
                       </span>
-                    </div>
-
-                    {/* Trade-In */}
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '10px 12px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: theme.textMuted, fontSize: '13px' }}>Trade-In (68%)</span>
-                      </div>
-                      <span style={{ color: theme.text, fontWeight: '600', fontSize: '14px' }}>
-                        {formatCurrency(results.valuations?.trade_in)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* MSRP if available */}
-                  {results.msrp && (
-                    <div style={{
-                      marginBottom: '20px',
-                      padding: '12px 16px',
-                      backgroundColor: isDark ? theme.bg : '#f8fafc',
-                      borderRadius: '10px',
-                      border: `1px solid ${theme.border}`,
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      <span style={{ color: theme.textMuted, fontSize: '13px' }}>Original MSRP</span>
-                      <span style={{ color: theme.textSecondary, fontWeight: '600', fontSize: '16px' }}>
-                        {formatCurrency(results.msrp)}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Book Values Section */}
-                  <div style={{
-                    padding: '16px',
-                    backgroundColor: isDark ? theme.bg : '#f8fafc',
-                    borderRadius: '10px',
-                    border: `1px solid ${theme.border}`
-                  }}>
-                    <div style={{ fontSize: '12px', color: theme.textMuted, fontWeight: '600', marginBottom: '12px', textTransform: 'uppercase' }}>
-                      Book Values
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-                      {/* KBB */}
-                      <div style={{
-                        padding: '12px',
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-                        borderRadius: '8px'
-                      }}>
-                        <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span>KBB</span>
-                          {bookValues.kbb?.source_url && (
-                            <a href={bookValues.kbb.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '10px', textDecoration: 'none' }}>
-                              View Source
-                            </a>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '18px', fontWeight: '700', color: bookValues.kbb?.value ? theme.text : theme.textMuted }}>
-                          {bookValues.kbb?.value ? formatCurrency(bookValues.kbb.value) : 'Not Found'}
-                        </div>
-                      </div>
-
-                      {/* NADA */}
-                      <div style={{
-                        padding: '12px',
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-                        borderRadius: '8px'
-                      }}>
-                        <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span>NADA</span>
-                          {bookValues.nada?.source_url && (
-                            <a href={bookValues.nada.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '10px', textDecoration: 'none' }}>
-                              View Source
-                            </a>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '18px', fontWeight: '700', color: bookValues.nada?.value ? theme.text : theme.textMuted }}>
-                          {bookValues.nada?.value ? formatCurrency(bookValues.nada.value) : 'Not Found'}
-                        </div>
-                      </div>
-
-                      {/* JD Power */}
-                      <div style={{
-                        padding: '12px',
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-                        borderRadius: '8px'
-                      }}>
-                        <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span>JD Power</span>
-                          {bookValues.jd_power?.source_url && (
-                            <a href={bookValues.jd_power.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '10px', textDecoration: 'none' }}>
-                              View Source
-                            </a>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '18px', fontWeight: '700', color: bookValues.jd_power?.value ? theme.text : theme.textMuted }}>
-                          {bookValues.jd_power?.value ? formatCurrency(bookValues.jd_power.value) : 'Not Found'}
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -1251,11 +1174,15 @@ export default function ResearchPage() {
               })()}
 
               {/* Market Tab */}
-              {activeTab === 'market' && (
+              {activeTab === 'market' && (() => {
+                // Derive demand from supply (low supply = high demand)
+                const supplyLevel = results.market_stats?.supply_level || 'medium';
+                const demandLevel = supplyLevel === 'low' ? 'Hot' : supplyLevel === 'high' ? 'Cold' : 'Normal';
+
+                return (
                 <div>
                   <h3 style={{ color: theme.text, margin: '0 0 20px', fontSize: '18px' }}>
                     Market Analysis
-                    <SourceIndicator source={results.data_sources?.market_data} />
                   </h3>
 
                   {results.market_stats ? (
@@ -1263,32 +1190,32 @@ export default function ResearchPage() {
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '24px' }}>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>DAYS TO SELL</div>
-                          <div style={{ fontSize: '32px', fontWeight: '700', color: results.market_stats.demand_level === 'Hot' ? '#ef4444' : results.market_stats.demand_level === 'Cold' ? '#3b82f6' : '#eab308' }}>
-                            {results.market_stats.avg_dom ?? 'N/A'}
+                          <div style={{ fontSize: '32px', fontWeight: '700', color: demandLevel === 'Hot' ? '#ef4444' : demandLevel === 'Cold' ? '#3b82f6' : '#eab308' }}>
+                            {results.market_stats.avg_days_on_market ?? 'N/A'}
                           </div>
                           <div style={{ fontSize: '12px', color: theme.textMuted }}>avg days</div>
                         </div>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>DEMAND</div>
                           <div style={{ fontSize: '24px', marginBottom: '4px' }}>
-                            {results.market_stats.demand_level === 'Hot' ? '🔥' : results.market_stats.demand_level === 'Cold' ? '❄️' : '⚡'}
+                            {demandLevel === 'Hot' ? '🔥' : demandLevel === 'Cold' ? '❄️' : '⚡'}
                           </div>
-                          <div style={{ fontSize: '18px', fontWeight: '700', color: results.market_stats.demand_level === 'Hot' ? '#ef4444' : results.market_stats.demand_level === 'Cold' ? '#3b82f6' : '#eab308' }}>
-                            {results.market_stats.demand_level}
+                          <div style={{ fontSize: '18px', fontWeight: '700', color: demandLevel === 'Hot' ? '#ef4444' : demandLevel === 'Cold' ? '#3b82f6' : '#eab308' }}>
+                            {demandLevel}
                           </div>
                         </div>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>PRICE TREND</div>
-                          <div style={{ fontSize: '32px', fontWeight: '700', color: results.market_stats.price_trend === 'Rising' ? '#22c55e' : results.market_stats.price_trend === 'Falling' ? '#ef4444' : '#eab308' }}>
-                            {results.market_stats.price_trend === 'Rising' ? '↑' : results.market_stats.price_trend === 'Falling' ? '↓' : '→'}
+                          <div style={{ fontSize: '32px', fontWeight: '700', color: results.market_stats.price_trend === 'up' ? '#22c55e' : results.market_stats.price_trend === 'down' ? '#ef4444' : '#eab308' }}>
+                            {results.market_stats.price_trend === 'up' ? '↑' : results.market_stats.price_trend === 'down' ? '↓' : '→'}
                           </div>
-                          <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text }}>{results.market_stats.price_trend}</div>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text }}>{results.market_stats.price_trend || 'stable'}</div>
                         </div>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>SUPPLY</div>
-                          <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>{results.market_stats.listing_count ?? 0}</div>
-                          <div style={{ fontSize: '14px', fontWeight: '600', color: results.market_stats.supply_level === 'High' ? '#22c55e' : results.market_stats.supply_level === 'Low' ? '#ef4444' : '#eab308' }}>
-                            {results.market_stats.supply_level}
+                          <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>{results.market_stats.active_listings ?? 0}</div>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: supplyLevel === 'high' ? '#22c55e' : supplyLevel === 'low' ? '#ef4444' : '#eab308' }}>
+                            {supplyLevel}
                           </div>
                         </div>
                       </div>
@@ -1299,14 +1226,14 @@ export default function ResearchPage() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                               <div style={{ fontSize: '11px', color: theme.textMuted }}>MIN</div>
-                              <div style={{ fontSize: '20px', fontWeight: '600', color: '#22c55e' }}>{formatCurrency(results.market_stats.price_range.min)}</div>
+                              <div style={{ fontSize: '20px', fontWeight: '600', color: '#22c55e' }}>{formatCurrency(results.market_stats.price_range.low)}</div>
                             </div>
                             <div style={{ flex: 1, height: '4px', backgroundColor: theme.border, margin: '0 16px', borderRadius: '2px' }}>
                               <div style={{ width: '50%', height: '100%', backgroundColor: theme.accent, borderRadius: '2px' }} />
                             </div>
                             <div>
                               <div style={{ fontSize: '11px', color: theme.textMuted }}>MAX</div>
-                              <div style={{ fontSize: '20px', fontWeight: '600', color: '#ef4444' }}>{formatCurrency(results.market_stats.price_range.max)}</div>
+                              <div style={{ fontSize: '20px', fontWeight: '600', color: '#ef4444' }}>{formatCurrency(results.market_stats.price_range.high)}</div>
                             </div>
                           </div>
                         </div>
@@ -1316,7 +1243,8 @@ export default function ResearchPage() {
                     <div style={{ color: theme.textMuted, textAlign: 'center', padding: '40px' }}>No market data available</div>
                   )}
                 </div>
-              )}
+              );
+              })()}
 
               {/* Comparables Tab */}
               {activeTab === 'comparables' && (
@@ -1326,15 +1254,15 @@ export default function ResearchPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                       <h3 style={{ color: theme.text, margin: 0, fontSize: '18px' }}>Dealer Listings</h3>
                       <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'rgba(59,130,246,0.15)', color: '#3b82f6' }}>
-                        {results.dealer_comparables?.length || 0} found
+                        {results.comparables?.dealer_listings?.length || 0} found
                       </span>
                       <TrimTierBadge tier={results.trim_tier} />
                       <SourceIndicator source="marketcheck" label="MarketCheck" />
                     </div>
 
-                    {results.dealer_comparables?.length > 0 ? (
+                    {results.comparables?.dealer_listings?.length > 0 ? (
                       <div style={{ display: 'grid', gap: '10px' }}>
-                        {results.dealer_comparables.map((c, i) => (
+                        {results.comparables.dealer_listings.map((c, i) => (
                           <div key={i} style={{ backgroundColor: isDark ? theme.bg : '#f8fafc', padding: '14px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                             <div style={{ flex: 1, minWidth: '200px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1387,14 +1315,14 @@ export default function ResearchPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                       <h3 style={{ color: theme.text, margin: 0, fontSize: '18px' }}>Private Party Listings</h3>
                       <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>
-                        {results.private_comparables?.length || 0} found
+                        {results.comparables?.private_listings?.length || 0} found
                       </span>
                       <SourceIndicator source={results.data_sources?.private_comparables} label="SerpAPI" />
                     </div>
 
-                    {results.private_comparables?.length > 0 ? (
+                    {results.comparables?.private_listings?.length > 0 ? (
                       <div style={{ display: 'grid', gap: '10px' }}>
-                        {results.private_comparables.map((c, i) => (
+                        {results.comparables.private_listings.map((c, i) => (
                           <div key={i} style={{ backgroundColor: isDark ? theme.bg : '#f8fafc', padding: '14px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                             <div style={{ flex: 1, minWidth: '200px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
