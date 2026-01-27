@@ -991,87 +991,150 @@ export default function DealsPage() {
             </div>
 
             {/* MIDDLE: DOCUMENTS */}
-            <div style={{ ...cardStyle, width: '300px', alignSelf: 'flex-start' }}>
-              <h3 style={{ color: theme.text, margin: '0 0 16px', fontSize: '15px' }}>Documents</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '320px' }}>
+              {/* Required Documents Package */}
+              <div style={{ ...cardStyle, alignSelf: 'flex-start', width: '100%' }}>
+                <h3 style={{ color: theme.text, margin: '0 0 16px', fontSize: '15px' }}>Required Documents</h3>
 
-              {/* Package info */}
-              <div style={{
-                padding: '10px',
-                backgroundColor: docPackages[dealForm.deal_type] ? '#22c55e15' : '#f59e0b15',
-                border: `1px solid ${docPackages[dealForm.deal_type] ? '#22c55e40' : '#f59e0b40'}`,
-                borderRadius: '8px',
-                marginBottom: '12px'
-              }}>
-                <div style={{ color: theme.text, fontSize: '13px', fontWeight: '600', marginBottom: '2px' }}>
-                  {dealForm.deal_type} Package
+                {/* Package info */}
+                <div style={{
+                  padding: '10px',
+                  backgroundColor: docPackages[dealForm.deal_type] ? '#22c55e15' : '#f59e0b15',
+                  border: `1px solid ${docPackages[dealForm.deal_type] ? '#22c55e40' : '#f59e0b40'}`,
+                  borderRadius: '8px',
+                  marginBottom: '12px'
+                }}>
+                  <div style={{ color: theme.text, fontSize: '13px', fontWeight: '600', marginBottom: '2px' }}>
+                    {dealForm.deal_type} Package
+                  </div>
+                  <div style={{ color: docPackages[dealForm.deal_type] ? '#22c55e' : '#f59e0b', fontSize: '11px' }}>
+                    {docPackages[dealForm.deal_type]
+                      ? `${getDocsForDealType(dealForm.deal_type).length} docs from Document Rules`
+                      : `${getDocsForDealType(dealForm.deal_type).length} docs (using defaults)`}
+                  </div>
+                  {!docPackages[dealForm.deal_type] && (
+                    <div style={{ color: theme.textMuted, fontSize: '10px', marginTop: '4px' }}>
+                      Configure packages in Document Rules
+                    </div>
+                  )}
                 </div>
-                <div style={{ color: docPackages[dealForm.deal_type] ? '#22c55e' : '#f59e0b', fontSize: '11px' }}>
-                  {docPackages[dealForm.deal_type]
-                    ? `${getDocsForDealType(dealForm.deal_type).length} docs from Document Rules`
-                    : `${getDocsForDealType(dealForm.deal_type).length} docs (using defaults)`}
+
+                {/* Document list - what will be generated */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto' }}>
+                  {getDocsForDealType(dealForm.deal_type).map((doc, i) => {
+                    const generatedDoc = getGeneratedDoc(doc);
+                    const isGenerated = !!generatedDoc;
+
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: theme.bg, borderRadius: '6px', border: `1px solid ${isGenerated ? '#22c55e' : theme.border}` }}>
+                        <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: isGenerated ? '#22c55e' : theme.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {isGenerated && <span style={{ color: '#fff', fontSize: '10px' }}>✓</span>}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ color: theme.text, fontSize: '12px' }}>{doc}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                {!docPackages[dealForm.deal_type] && (
-                  <div style={{ color: theme.textMuted, fontSize: '10px', marginTop: '4px' }}>
-                    Configure packages in Document Rules
+
+                {/* Create Documents Button */}
+                {editingDeal ? (
+                  <button onClick={executeDeal} disabled={generating}
+                    style={{ ...buttonStyle, width: '100%', backgroundColor: '#22c55e', opacity: generating ? 0.7 : 1 }}>
+                    {generating ? 'Generating Documents...' : 'Create Deal Documents'}
+                  </button>
+                ) : (
+                  <div style={{ color: theme.textMuted, fontSize: '11px', textAlign: 'center', padding: '10px' }}>
+                    Save deal first to generate documents
                   </div>
                 )}
               </div>
-              
-              {/* Document list */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px', maxHeight: '350px', overflowY: 'auto' }}>
-                {getDocsForDealType(dealForm.deal_type).map((doc, i) => {
-                  const generatedDoc = getGeneratedDoc(doc);
-                  const isGenerated = !!generatedDoc;
-                  
-                  return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', backgroundColor: theme.bg, borderRadius: '6px', border: `1px solid ${isGenerated ? '#22c55e' : theme.border}` }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ color: theme.text, fontSize: '12px' }}>{doc}</div>
-                        <div style={{ color: isGenerated ? '#22c55e' : theme.textMuted, fontSize: '10px', marginTop: '2px' }}>
-                          {isGenerated ? 'Generated' : 'Pending'}
+
+              {/* Generated Documents Section - Only show if docs exist */}
+              {currentDealDocs.length > 0 && (
+                <div style={{ ...cardStyle, width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h3 style={{ color: theme.text, margin: 0, fontSize: '15px' }}>Generated Documents</h3>
+                    <span style={{ fontSize: '10px', padding: '3px 8px', backgroundColor: '#22c55e20', color: '#22c55e', borderRadius: '4px' }}>
+                      {currentDealDocs.length} ready
+                    </span>
+                  </div>
+
+                  {/* Last generated timestamp */}
+                  <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '12px' }}>
+                    Generated: {new Date(currentDealDocs[0]?.generated_at).toLocaleString()}
+                  </div>
+
+                  {/* Document list with download/view */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto' }}>
+                    {currentDealDocs.map((doc, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: theme.bg, borderRadius: '6px', border: `1px solid #22c55e40` }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: theme.text, fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.form_name || doc.form_number}</div>
+                          <div style={{ color: theme.textMuted, fontSize: '9px' }}>{doc.form_number}</div>
                         </div>
+                        {doc.public_url && (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <a href={doc.public_url} target="_blank" rel="noopener noreferrer"
+                              style={{ padding: '4px 8px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
+                              View
+                            </a>
+                            <a href={doc.public_url} download={doc.file_name}
+                              style={{ padding: '4px 8px', backgroundColor: theme.bgCard, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
+                              ↓
+                            </a>
+                          </div>
+                        )}
                       </div>
-                      {isGenerated && generatedDoc.public_url && (
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <a href={generatedDoc.public_url} target="_blank" rel="noopener noreferrer" 
-                            style={{ padding: '4px 8px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
-                            View
-                          </a>
-                          <a href={generatedDoc.public_url} download 
-                            style={{ padding: '4px 8px', backgroundColor: theme.bgCard, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
-                            DL
-                          </a>
+                    ))}
+                  </div>
+
+                  {/* Signing & Delivery Options */}
+                  <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '12px' }}>
+                    <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>
+                      Send for Signature
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {/* Email Option */}
+                      <button onClick={sendForSignature}
+                        style={{ ...buttonStyle, width: '100%', backgroundColor: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span>📧</span> Email for E-Signature
+                      </button>
+
+                      {/* Print Option */}
+                      <button onClick={() => {
+                        currentDealDocs.forEach(doc => {
+                          if (doc.public_url) window.open(doc.public_url, '_blank');
+                        });
+                      }}
+                        style={{ ...buttonStyle, width: '100%', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span>🖨️</span> Open All for Print
+                      </button>
+
+                      {/* Download All */}
+                      <button onClick={() => {
+                        currentDealDocs.forEach(doc => {
+                          if (doc.public_url) {
+                            const link = document.createElement('a');
+                            link.href = doc.public_url;
+                            link.download = doc.file_name || `${doc.form_number}.pdf`;
+                            link.click();
+                          }
+                        });
+                      }}
+                        style={{ ...buttonStyle, width: '100%', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span>📥</span> Download All PDFs
+                      </button>
+
+                      {/* Customer email status */}
+                      {!dealForm.customer_email && (
+                        <div style={{ color: '#f59e0b', fontSize: '10px', textAlign: 'center', padding: '6px', backgroundColor: '#f59e0b15', borderRadius: '4px' }}>
+                          Add customer email to enable e-signature
                         </div>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-
-              {/* Action buttons */}
-              {editingDeal ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <button onClick={executeDeal} disabled={generating} 
-                    style={{ ...buttonStyle, width: '100%', backgroundColor: '#22c55e', opacity: generating ? 0.7 : 1 }}>
-                    {generating ? 'Generating...' : 'Execute Deal'}
-                  </button>
-                  
-                  {currentDealDocs.length > 0 && (
-                    <button onClick={sendForSignature} 
-                      style={{ ...buttonStyle, width: '100%', backgroundColor: '#8b5cf6' }}>
-                      Send for E-Signature
-                    </button>
-                  )}
-                  
-                  {currentDealDocs.length > 0 && (
-                    <div style={{ color: theme.textMuted, fontSize: '10px', textAlign: 'center', marginTop: '4px' }}>
-                      Last generated: {new Date(currentDealDocs[0]?.generated_at).toLocaleString()}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ color: theme.textMuted, fontSize: '11px', textAlign: 'center', padding: '10px' }}>
-                  Save deal first to generate documents
+                  </div>
                 </div>
               )}
             </div>
