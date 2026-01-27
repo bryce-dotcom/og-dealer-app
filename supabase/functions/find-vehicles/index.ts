@@ -24,6 +24,69 @@ const MODEL_VARIATIONS: Record<string, string[]> = {
   '4Runner': ['4Runner', '4-Runner', '4 Runner'],
 };
 
+// Zip code to city mapping for common Utah zips
+const ZIP_TO_CITY: Record<string, { city: string; state: string }> = {
+  '84065': { city: 'Riverton', state: 'Utah' },
+  '84095': { city: 'South Jordan', state: 'Utah' },
+  '84121': { city: 'Salt Lake City', state: 'Utah' },
+  '84101': { city: 'Salt Lake City', state: 'Utah' },
+  '84102': { city: 'Salt Lake City', state: 'Utah' },
+  '84103': { city: 'Salt Lake City', state: 'Utah' },
+  '84104': { city: 'Salt Lake City', state: 'Utah' },
+  '84105': { city: 'Salt Lake City', state: 'Utah' },
+  '84106': { city: 'Salt Lake City', state: 'Utah' },
+  '84107': { city: 'Murray', state: 'Utah' },
+  '84108': { city: 'Salt Lake City', state: 'Utah' },
+  '84109': { city: 'Salt Lake City', state: 'Utah' },
+  '84111': { city: 'Salt Lake City', state: 'Utah' },
+  '84115': { city: 'Salt Lake City', state: 'Utah' },
+  '84116': { city: 'Salt Lake City', state: 'Utah' },
+  '84117': { city: 'Holladay', state: 'Utah' },
+  '84118': { city: 'Taylorsville', state: 'Utah' },
+  '84119': { city: 'West Valley City', state: 'Utah' },
+  '84120': { city: 'West Valley City', state: 'Utah' },
+  '84123': { city: 'Taylorsville', state: 'Utah' },
+  '84124': { city: 'Holladay', state: 'Utah' },
+  '84128': { city: 'West Valley City', state: 'Utah' },
+  '84129': { city: 'Taylorsville', state: 'Utah' },
+  '84047': { city: 'Midvale', state: 'Utah' },
+  '84070': { city: 'Sandy', state: 'Utah' },
+  '84092': { city: 'Sandy', state: 'Utah' },
+  '84093': { city: 'Sandy', state: 'Utah' },
+  '84094': { city: 'Sandy', state: 'Utah' },
+  '84020': { city: 'Draper', state: 'Utah' },
+  '84043': { city: 'Lehi', state: 'Utah' },
+  '84003': { city: 'American Fork', state: 'Utah' },
+  '84057': { city: 'Orem', state: 'Utah' },
+  '84058': { city: 'Orem', state: 'Utah' },
+  '84601': { city: 'Provo', state: 'Utah' },
+  '84602': { city: 'Provo', state: 'Utah' },
+  '84604': { city: 'Provo', state: 'Utah' },
+  '84660': { city: 'Spanish Fork', state: 'Utah' },
+  '84401': { city: 'Ogden', state: 'Utah' },
+  '84403': { city: 'Ogden', state: 'Utah' },
+  '84404': { city: 'Ogden', state: 'Utah' },
+  '84414': { city: 'Ogden', state: 'Utah' },
+  '84301': { city: 'Logan', state: 'Utah' },
+  '84321': { city: 'Logan', state: 'Utah' },
+  '84341': { city: 'Logan', state: 'Utah' },
+  '84770': { city: 'St. George', state: 'Utah' },
+  '84790': { city: 'St. George', state: 'Utah' },
+};
+
+// Get city info from zip code
+function getCityFromZip(zip: string): { city: string; state: string; location: string } {
+  const info = ZIP_TO_CITY[zip];
+  if (info) {
+    return { ...info, location: `${info.city}, ${info.state}, United States` };
+  }
+  // Default to Salt Lake City area for unknown Utah zips
+  if (zip.startsWith('84')) {
+    return { city: 'Salt Lake City', state: 'Utah', location: 'Salt Lake City, Utah, United States' };
+  }
+  return { city: 'Salt Lake City', state: 'Utah', location: 'Utah, United States' };
+}
+
 // Get model variations to try
 function getModelVariations(model: string): string[] {
   const variations = MODEL_VARIATIONS[model];
@@ -42,7 +105,78 @@ function getModelVariations(model: string): string[] {
   return result;
 }
 
-// Calculate deal score
+// Parse vehicle listing details from title/snippet
+function parseVehicleListing(title: string, snippet: string = '', priceText: string = ''): {
+  year: number | null;
+  miles: number | null;
+  price: number | null;
+  cleanTitle: string;
+} {
+  const combined = `${title} ${snippet} ${priceText}`;
+
+  // Extract year (1980-2029)
+  const yearMatch = combined.match(/\b(19[89]\d|20[0-2]\d)\b/);
+  const year = yearMatch ? parseInt(yearMatch[1]) : null;
+
+  // Extract miles - handle various formats: "120k miles", "120,000 mi", "120000 miles", "120K"
+  let miles: number | null = null;
+  const milesPatterns = [
+    /(\d{1,3})[,.]?(\d{3})\s*(mi|miles|mile)/i,  // 120,000 miles
+    /(\d{2,3})k\s*(mi|miles|mile)?/i,             // 120k miles or just 120k
+    /(\d{1,3})[,.]?(\d{3})\s*(?:odometer|odo)/i,  // 120,000 odometer
+    /mileage[:\s]*(\d{1,3})[,.]?(\d{3})/i,        // mileage: 120,000
+  ];
+
+  for (const pattern of milesPatterns) {
+    const match = combined.match(pattern);
+    if (match) {
+      if (match[2] && /^\d{3}$/.test(match[2])) {
+        // Format: 120,000 or 120.000
+        miles = parseInt(match[1] + match[2]);
+      } else if (/k/i.test(combined.substring(match.index || 0, (match.index || 0) + match[0].length + 5))) {
+        // Format: 120k
+        miles = parseInt(match[1]) * 1000;
+      } else if (match[1] && match[2]) {
+        miles = parseInt(match[1] + match[2]);
+      } else {
+        miles = parseInt(match[1]) * 1000; // Assume k format
+      }
+      break;
+    }
+  }
+
+  // Extract price - handle various formats
+  let price: number | null = null;
+  const pricePatterns = [
+    /\$\s*([\d,]+)/,                              // $25,000
+    /(?:price|asking)[:\s]*\$?([\d,]+)/i,         // price: 25000
+    /\b([\d,]{4,6})\s*(?:obo|firm|cash|or best)/i, // 25000 obo
+  ];
+
+  for (const pattern of pricePatterns) {
+    const match = combined.match(pattern);
+    if (match) {
+      const parsed = parseInt(match[1].replace(/,/g, ''));
+      // Validate price is reasonable (1000 - 500000)
+      if (parsed >= 1000 && parsed <= 500000) {
+        price = parsed;
+        break;
+      }
+    }
+  }
+
+  // Clean title - remove price and miles info
+  let cleanTitle = title
+    .replace(/\$[\d,]+/g, '')
+    .replace(/\d{1,3}[,.]?\d{3}\s*(mi|miles|k\s*mi)/gi, '')
+    .replace(/\d{2,3}k\s*(mi|miles)?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return { year, miles, price, cleanTitle };
+}
+
+// Calculate deal score for dealer listings
 function calculateDealScore(askingPrice: number, marketValue: number): { score: string; savings: number; percentage: number } {
   const difference = marketValue - askingPrice;
   const percentage = (difference / marketValue) * 100;
@@ -58,6 +192,26 @@ function calculateDealScore(askingPrice: number, marketValue: number): { score: 
     score = 'OVERPRICED';
   } else {
     score = 'BAD DEAL';
+  }
+
+  return { score, savings: Math.round(difference), percentage: Math.round(percentage * 10) / 10 };
+}
+
+// Calculate deal score for private party listings (different thresholds)
+// Private party should be 10-20% below dealer prices
+function calculatePrivateDealScore(askingPrice: number, dealerMedianPrice: number): { score: string; savings: number; percentage: number } {
+  const difference = dealerMedianPrice - askingPrice;
+  const percentage = (difference / dealerMedianPrice) * 100;
+
+  let score: string;
+  if (percentage >= 20) {
+    score = 'GREAT DEAL';  // 20%+ below dealer = great for private
+  } else if (percentage >= 10) {
+    score = 'GOOD DEAL';   // 10-20% below dealer = good for private
+  } else if (percentage >= 0) {
+    score = 'FAIR PRICE';  // At or slightly below dealer = fair (could negotiate)
+  } else {
+    score = 'OVERPRICED';  // Above dealer median = why buy private?
   }
 
   return { score, savings: Math.round(difference), percentage: Math.round(percentage * 10) / 10 };
@@ -116,11 +270,13 @@ serve(async (req) => {
     const searchMake = make.toLowerCase();
     const searchModel = model || '';
     const yearRange = year_min && year_max ? `${year_min}-${year_max}` : year_min || year_max || '';
+    const cityInfo = getCityFromZip(zip_code);
 
     let dealerListings: any[] = [];
     let privateListings: any[] = [];
     let marketSummary: any = null;
     const priceCache: Map<string, number> = new Map();
+    const seenUrls: Set<string> = new Set(); // For deduplication
 
     // ===== PART 1: MARKETCHECK DEALER LISTINGS =====
     if (MARKETCHECK_API_KEY && searchModel) {
@@ -328,152 +484,285 @@ serve(async (req) => {
     }
 
     // ===== PART 3: SERPAPI PRIVATE PARTY LISTINGS =====
+    // Note: Using Google Search for all sources since dedicated FB/Craigslist engines require premium SerpAPI plan
     if (SERPAPI_API_KEY) {
       log(`\n=== SERPAPI PRIVATE PARTY SEARCH ===`);
+      log(`Location: ${cityInfo.location} (from zip ${zip_code})`);
 
-      const searchQuery = [
-        year_min && year_max ? `${year_min}-${year_max}` : year_min || year_max || '',
-        make,
-        model || ''
-      ].filter(Boolean).join(' ');
+      let fbCount = 0;
+      let clCount = 0;
+      let offerUpCount = 0;
+      let carGurusCount = 0;
 
-      // Facebook Marketplace search
+      const yearQuery = year_min && year_max ? `${year_min}-${year_max}` : (year_min ? `${year_min}` : (year_max ? `${year_max}` : ''));
+      const vehicleQuery = `${yearQuery} ${make} ${model || ''}`.trim();
+
+      // ----- GOOGLE SEARCH: Craigslist -----
       try {
-        const fbParams = new URLSearchParams({
-          api_key: SERPAPI_API_KEY,
-          engine: 'facebook_marketplace',
-          query: searchQuery,
-          location: 'Salt Lake City, Utah, United States', // FB needs city name format
-          category: 'vehicles',
-        });
-
-        if (max_price) {
-          fbParams.set('max_price', String(max_price));
-        }
-        if (max_miles) {
-          fbParams.set('max_mileage', String(max_miles));
-        }
-
-        const fbUrl = `https://serpapi.com/search?${fbParams.toString()}`;
-        log(`Facebook Marketplace URL: ${fbUrl.replace(SERPAPI_API_KEY, 'KEY_HIDDEN')}`);
-
-        const fbRes = await fetch(fbUrl);
-        log(`Facebook Marketplace Response Status: ${fbRes.status}`);
-
-        if (fbRes.ok) {
-          const fbData = await fbRes.json();
-          const listings = fbData.organic_results || fbData.marketplace_results || [];
-          log(`Facebook Marketplace found: ${listings.length} listings`);
-
-          for (const item of listings.slice(0, 20)) {
-            const priceMatch = (item.price || item.title || '').match(/\$?([\d,]+)/);
-            const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : null;
-
-            // Parse year from title
-            const yearMatch = (item.title || '').match(/\b(19|20)\d{2}\b/);
-            const parsedYear = yearMatch ? parseInt(yearMatch[0]) : null;
-
-            // Parse miles from title or description
-            const milesMatch = (item.title + ' ' + (item.snippet || '')).match(/(\d{1,3}[,.]?\d{3})\s*(mi|miles|k\s*mi)/i);
-            const parsedMiles = milesMatch ? parseInt(milesMatch[1].replace(/[,\.]/g, '')) : null;
-
-            privateListings.push({
-              title: item.title,
-              year: parsedYear,
-              make: make,
-              model: model,
-              price: price,
-              miles: parsedMiles,
-              location: item.location || `Near ${zip_code}`,
-              url: item.link || item.url,
-              source: 'FB Marketplace',
-              thumbnail: item.thumbnail,
-            });
-          }
-        }
-      } catch (fbError) {
-        log(`Facebook Marketplace Error: ${fbError.message}`);
-      }
-
-      // Google search for Craigslist/OfferUp
-      try {
-        const googleQuery = `${make} ${model || ''} for sale site:craigslist.org OR site:offerup.com`;
-        const googleParams = new URLSearchParams({
+        const clQuery = `${vehicleQuery} for sale site:craigslist.org`;
+        const clParams = new URLSearchParams({
           api_key: SERPAPI_API_KEY,
           engine: 'google',
-          q: googleQuery,
-          location: `United States`,
+          q: clQuery,
+          location: `${cityInfo.city}, ${cityInfo.state}`,
           num: '20',
         });
 
-        const googleUrl = `https://serpapi.com/search?${googleParams.toString()}`;
-        log(`Google Search URL: ${googleUrl.replace(SERPAPI_API_KEY, 'KEY_HIDDEN')}`);
+        const clUrl = `https://serpapi.com/search?${clParams.toString()}`;
+        log(`Craigslist (Google) URL: ${clUrl.replace(SERPAPI_API_KEY, 'KEY_HIDDEN')}`);
 
-        const googleRes = await fetch(googleUrl);
-        log(`Google Search Response Status: ${googleRes.status}`);
+        const clRes = await fetch(clUrl);
+        log(`Craigslist Response Status: ${clRes.status}`);
 
-        if (googleRes.ok) {
-          const googleData = await googleRes.json();
-          const results = googleData.organic_results || [];
-          log(`Google Search found: ${results.length} results`);
+        if (clRes.ok) {
+          const clData = await clRes.json();
+          const results = clData.organic_results || [];
+          log(`Craigslist raw results: ${results.length}`);
 
-          for (const item of results.slice(0, 15)) {
-            // Determine source
-            let source = 'Private';
-            if (item.link?.includes('craigslist')) source = 'Craigslist';
-            else if (item.link?.includes('offerup')) source = 'OfferUp';
-            else if (item.link?.includes('facebook')) source = 'FB Marketplace';
+          for (const item of results.slice(0, 20)) {
+            const url = item.link || '';
+            if (seenUrls.has(url)) continue;
+            if (!url.includes('craigslist.org')) continue;
+            seenUrls.add(url);
 
-            // Parse price from title/snippet
-            const priceMatch = (item.title + ' ' + (item.snippet || '')).match(/\$?([\d,]+)/);
-            const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : null;
+            const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
 
-            // Skip if price seems unreasonable (likely not a price)
-            if (price && (price < 500 || price > 500000)) continue;
+            // Filter by year range
+            if (year_min && parsed.year && parsed.year < year_min) continue;
+            if (year_max && parsed.year && parsed.year > year_max) continue;
 
-            // Parse year
-            const yearMatch = (item.title || '').match(/\b(19|20)\d{2}\b/);
-            const parsedYear = yearMatch ? parseInt(yearMatch[0]) : null;
-
-            // Parse miles
-            const milesMatch = (item.title + ' ' + (item.snippet || '')).match(/(\d{1,3}[,.]?\d{3})\s*(mi|miles|k\s*mi)/i);
-            const parsedMiles = milesMatch ? parseInt(milesMatch[1].replace(/[,\.]/g, '')) : null;
+            // Filter by price
+            if (max_price && parsed.price && parsed.price > max_price) continue;
+            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
 
             privateListings.push({
-              title: item.title,
-              year: parsedYear,
-              make: make,
-              model: model,
-              price: price,
-              miles: parsedMiles,
-              location: item.displayed_link?.split(' › ')[0] || 'Unknown',
-              url: item.link,
-              source: source,
+              title: parsed.cleanTitle || item.title,
+              year: parsed.year,
+              make,
+              model,
+              price: parsed.price,
+              miles: parsed.miles,
+              location: item.displayed_link?.split('/')[0]?.replace('.craigslist.org', '') || cityInfo.city,
+              url,
+              source: 'Craigslist',
               thumbnail: null,
             });
+            clCount++;
           }
         }
-      } catch (googleError) {
-        log(`Google Search Error: ${googleError.message}`);
+      } catch (clError) {
+        log(`Craigslist Exception: ${clError.message}`);
       }
 
-      // Estimate deal scores for private listings using market average
-      const avgMarketPrice = marketSummary?.median_price || marketSummary?.avg_price;
-      if (avgMarketPrice) {
+      log(`Craigslist added: ${clCount} listings`);
+
+      // ----- GOOGLE SEARCH: Facebook Marketplace -----
+      try {
+        const fbQuery = `${vehicleQuery} for sale site:facebook.com/marketplace`;
+        const fbParams = new URLSearchParams({
+          api_key: SERPAPI_API_KEY,
+          engine: 'google',
+          q: fbQuery,
+          location: `${cityInfo.city}, ${cityInfo.state}`,
+          num: '20',
+        });
+
+        const fbUrl = `https://serpapi.com/search?${fbParams.toString()}`;
+        log(`FB Marketplace (Google) URL: ${fbUrl.replace(SERPAPI_API_KEY, 'KEY_HIDDEN')}`);
+
+        const fbRes = await fetch(fbUrl);
+        log(`FB Marketplace Response Status: ${fbRes.status}`);
+
+        if (fbRes.ok) {
+          const fbData = await fbRes.json();
+          const results = fbData.organic_results || [];
+          log(`FB Marketplace raw results: ${results.length}`);
+
+          for (const item of results.slice(0, 20)) {
+            const url = item.link || '';
+            if (seenUrls.has(url)) continue;
+            if (!url.includes('facebook.com')) continue;
+            seenUrls.add(url);
+
+            const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
+
+            // Filter by year range
+            if (year_min && parsed.year && parsed.year < year_min) continue;
+            if (year_max && parsed.year && parsed.year > year_max) continue;
+
+            // Filter by price
+            if (max_price && parsed.price && parsed.price > max_price) continue;
+            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+
+            privateListings.push({
+              title: parsed.cleanTitle || item.title,
+              year: parsed.year,
+              make,
+              model,
+              price: parsed.price,
+              miles: parsed.miles,
+              location: cityInfo.city,
+              url,
+              source: 'FB Marketplace',
+              thumbnail: null,
+            });
+            fbCount++;
+          }
+        }
+      } catch (fbError) {
+        log(`FB Marketplace Exception: ${fbError.message}`);
+      }
+
+      log(`FB Marketplace added: ${fbCount} listings`);
+
+      // ----- GOOGLE SEARCH: OfferUp -----
+      try {
+        const ouQuery = `${vehicleQuery} for sale site:offerup.com`;
+        const ouParams = new URLSearchParams({
+          api_key: SERPAPI_API_KEY,
+          engine: 'google',
+          q: ouQuery,
+          location: `${cityInfo.city}, ${cityInfo.state}`,
+          num: '15',
+        });
+
+        const ouUrl = `https://serpapi.com/search?${ouParams.toString()}`;
+        log(`OfferUp (Google) URL: ${ouUrl.replace(SERPAPI_API_KEY, 'KEY_HIDDEN')}`);
+
+        const ouRes = await fetch(ouUrl);
+        log(`OfferUp Response Status: ${ouRes.status}`);
+
+        if (ouRes.ok) {
+          const ouData = await ouRes.json();
+          const results = ouData.organic_results || [];
+          log(`OfferUp raw results: ${results.length}`);
+
+          for (const item of results.slice(0, 15)) {
+            const url = item.link || '';
+            if (seenUrls.has(url)) continue;
+            if (!url.includes('offerup.com')) continue;
+            seenUrls.add(url);
+
+            const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
+
+            // Filter by year range
+            if (year_min && parsed.year && parsed.year < year_min) continue;
+            if (year_max && parsed.year && parsed.year > year_max) continue;
+
+            // Filter by price
+            if (max_price && parsed.price && parsed.price > max_price) continue;
+            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+
+            privateListings.push({
+              title: parsed.cleanTitle || item.title,
+              year: parsed.year,
+              make,
+              model,
+              price: parsed.price,
+              miles: parsed.miles,
+              location: item.displayed_link?.split('/')[0] || cityInfo.city,
+              url,
+              source: 'OfferUp',
+              thumbnail: null,
+            });
+            offerUpCount++;
+          }
+        }
+      } catch (ouError) {
+        log(`OfferUp Exception: ${ouError.message}`);
+      }
+
+      log(`OfferUp added: ${offerUpCount} listings`);
+
+      // ----- GOOGLE SEARCH: CarGurus -----
+      try {
+        const cgQuery = `${vehicleQuery} for sale site:cargurus.com`;
+        const cgParams = new URLSearchParams({
+          api_key: SERPAPI_API_KEY,
+          engine: 'google',
+          q: cgQuery,
+          location: `${cityInfo.city}, ${cityInfo.state}`,
+          num: '15',
+        });
+
+        const cgUrl = `https://serpapi.com/search?${cgParams.toString()}`;
+        log(`CarGurus (Google) URL: ${cgUrl.replace(SERPAPI_API_KEY, 'KEY_HIDDEN')}`);
+
+        const cgRes = await fetch(cgUrl);
+        log(`CarGurus Response Status: ${cgRes.status}`);
+
+        if (cgRes.ok) {
+          const cgData = await cgRes.json();
+          const results = cgData.organic_results || [];
+          log(`CarGurus raw results: ${results.length}`);
+
+          for (const item of results.slice(0, 15)) {
+            const url = item.link || '';
+            if (seenUrls.has(url)) continue;
+            if (!url.includes('cargurus.com')) continue;
+            seenUrls.add(url);
+
+            const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
+
+            // Filter by year range
+            if (year_min && parsed.year && parsed.year < year_min) continue;
+            if (year_max && parsed.year && parsed.year > year_max) continue;
+
+            // Filter by price
+            if (max_price && parsed.price && parsed.price > max_price) continue;
+            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+
+            privateListings.push({
+              title: parsed.cleanTitle || item.title,
+              year: parsed.year,
+              make,
+              model,
+              price: parsed.price,
+              miles: parsed.miles,
+              location: item.displayed_link?.split('/')[0] || cityInfo.city,
+              url,
+              source: 'CarGurus',
+              thumbnail: null,
+            });
+            carGurusCount++;
+          }
+        }
+      } catch (cgError) {
+        log(`CarGurus Exception: ${cgError.message}`);
+      }
+
+      log(`CarGurus added: ${carGurusCount} listings`);
+
+      // ----- DEAL SCORING FOR PRIVATE LISTINGS -----
+      const dealerMedianPrice = marketSummary?.median_price || marketSummary?.avg_price;
+      if (dealerMedianPrice) {
+        log(`Scoring private listings against dealer median: $${dealerMedianPrice}`);
         for (const listing of privateListings) {
           if (listing.price) {
-            const { score, savings, percentage } = calculateDealScore(listing.price, avgMarketPrice);
+            const { score, savings, percentage } = calculatePrivateDealScore(listing.price, dealerMedianPrice);
             listing.estimated_deal_score = score;
             listing.estimated_savings = savings;
             listing.savings_percentage = percentage;
+            listing.dealer_comparison = dealerMedianPrice;
           }
         }
       }
 
-      // Sort private listings by price
-      privateListings.sort((a, b) => (a.price || 999999) - (b.price || 999999));
+      // ----- SORT PRIVATE LISTINGS -----
+      // Sort by deal score (best first), then by price ascending
+      privateListings.sort((a, b) => {
+        const scoreA = getDealScorePriority(a.estimated_deal_score || 'UNKNOWN');
+        const scoreB = getDealScorePriority(b.estimated_deal_score || 'UNKNOWN');
+        if (scoreA !== scoreB) return scoreA - scoreB;
+        return (a.price || 999999) - (b.price || 999999);
+      });
 
-      log(`Total private listings: ${privateListings.length}`);
+      log(`\n=== PRIVATE PARTY SUMMARY ===`);
+      log(`Craigslist: ${clCount}`);
+      log(`FB Marketplace: ${fbCount}`);
+      log(`OfferUp: ${offerUpCount}`);
+      log(`CarGurus: ${carGurusCount}`);
+      log(`Total private listings (deduplicated): ${privateListings.length}`);
     }
 
     // ===== FALLBACK: Use Claude if no results =====
