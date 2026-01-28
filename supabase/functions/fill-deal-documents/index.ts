@@ -165,9 +165,28 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
 }
 
 // ============================================
+// RESOLVE DOTTED PATH (e.g., "vehicle.vin" -> value)
+// ============================================
+function resolvePath(obj: Record<string, any>, path: string): any {
+  // Handle dotted paths like "vehicle.vin", "deal.purchaser_name"
+  const parts = path.split('.');
+  let value = obj;
+  for (const part of parts) {
+    if (value === undefined || value === null) return null;
+    value = value[part];
+  }
+  return value;
+}
+
+// ============================================
 // FILL PDF FORM
 // ============================================
-async function fillPdfForm(pdfBytes: ArrayBuffer, fieldMapping: Record<string, string>, context: Record<string, any>): Promise<Uint8Array> {
+async function fillPdfForm(
+  pdfBytes: ArrayBuffer,
+  fieldMapping: Record<string, string>,
+  context: Record<string, any>,
+  rawData: { deal: any, vehicle: any, dealer: any, customer: any }
+): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
 
   try {
@@ -176,16 +195,26 @@ async function fillPdfForm(pdfBytes: ArrayBuffer, fieldMapping: Record<string, s
 
     console.log(`PDF has ${fields.length} fields`);
 
-    // First, try to fill using the field mapping
-    for (const [contextKey, pdfFieldName] of Object.entries(fieldMapping || {})) {
+    // Field mapping format: { "PDFFieldName": "source.path" }
+    // e.g., { "VIN": "vehicle.vin", "BuyerName": "deal.purchaser_name" }
+    for (const [pdfFieldName, sourcePath] of Object.entries(fieldMapping || {})) {
       try {
-        const value = context[contextKey];
+        // Resolve the dotted path from raw data
+        let value = resolvePath(rawData, sourcePath);
+
+        // If not found in raw data, try flat context
+        if (value === undefined || value === null) {
+          // Convert dotted path to flat key: "vehicle.vin" -> "vin", "deal.purchaser_name" -> "purchaser_name"
+          const flatKey = sourcePath.split('.').pop() || sourcePath;
+          value = context[flatKey];
+        }
+
         if (value === undefined || value === null || value === '') continue;
 
         try {
           const field = form.getTextField(pdfFieldName);
-          field.setText(value.toString());
-          console.log(`Filled ${pdfFieldName} with ${contextKey}`);
+          field.setText(String(value));
+          console.log(`Filled ${pdfFieldName} = ${value}`);
         } catch {
           try {
             const checkbox = form.getCheckBox(pdfFieldName);
@@ -400,7 +429,12 @@ serve(async (req) => {
         console.log(`Template downloaded: ${templateBytes.byteLength} bytes`);
 
         // Fill the form
-        const filledPdfBytes = await fillPdfForm(templateBytes, form.field_mapping || {}, context);
+        const filledPdfBytes = await fillPdfForm(
+          templateBytes,
+          form.field_mapping || {},
+          context,
+          { deal, vehicle, dealer, customer }
+        );
         console.log(`PDF filled: ${filledPdfBytes.length} bytes`);
 
         // Generate filename and path
