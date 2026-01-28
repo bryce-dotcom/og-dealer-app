@@ -690,9 +690,54 @@ export default function DealsPage() {
       showToast('Customer email required for e-signature', 'error');
       return;
     }
-    
+
     // TODO: Integrate with DocuSeal or similar e-signature service
     showToast('E-Signature integration coming soon');
+  };
+
+  // Delete a generated document
+  const deleteGeneratedDoc = async (doc) => {
+    if (!confirm(`Delete ${doc.form_name || doc.form_number}?`)) return;
+
+    try {
+      // Delete from storage if path exists
+      if (doc.storage_path) {
+        await supabase.storage
+          .from('deal-documents')
+          .remove([doc.storage_path]);
+      }
+
+      // Delete from database
+      await supabase.from('generated_documents').delete().eq('id', doc.id);
+
+      // Reload docs
+      await loadGeneratedDocs(editingDeal.id);
+      showToast('Document deleted');
+    } catch (err) {
+      showToast('Failed to delete: ' + err.message, 'error');
+    }
+  };
+
+  // Delete all generated documents for current deal
+  const deleteAllGeneratedDocs = async () => {
+    if (!confirm(`Delete all ${currentDealDocs.length} generated documents?`)) return;
+
+    try {
+      // Delete from storage
+      const paths = currentDealDocs.filter(d => d.storage_path).map(d => d.storage_path);
+      if (paths.length > 0) {
+        await supabase.storage.from('deal-documents').remove(paths);
+      }
+
+      // Delete from database
+      await supabase.from('generated_documents').delete().eq('deal_id', editingDeal.id);
+
+      // Reload docs
+      await loadGeneratedDocs(editingDeal.id);
+      showToast('All documents deleted');
+    } catch (err) {
+      showToast('Failed to delete: ' + err.message, 'error');
+    }
   };
 
   // Check if a document has been generated
@@ -1066,7 +1111,7 @@ export default function DealsPage() {
                     Generated: {new Date(currentDealDocs[0]?.generated_at).toLocaleString()}
                   </div>
 
-                  {/* Document list with download/view */}
+                  {/* Document list with download/view/delete */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto' }}>
                     {currentDealDocs.map((doc, i) => (
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: theme.bg, borderRadius: '6px', border: `1px solid #22c55e40` }}>
@@ -1074,21 +1119,35 @@ export default function DealsPage() {
                           <div style={{ color: theme.text, fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.form_name || doc.form_number}</div>
                           <div style={{ color: theme.textMuted, fontSize: '9px' }}>{doc.form_number}</div>
                         </div>
-                        {doc.public_url && (
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <a href={doc.public_url} target="_blank" rel="noopener noreferrer"
-                              style={{ padding: '4px 8px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
-                              View
-                            </a>
-                            <a href={doc.public_url} download={doc.file_name}
-                              style={{ padding: '4px 8px', backgroundColor: theme.bgCard, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
-                              ↓
-                            </a>
-                          </div>
-                        )}
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          {doc.public_url && (
+                            <>
+                              <a href={doc.public_url} target="_blank" rel="noopener noreferrer"
+                                style={{ padding: '4px 8px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
+                                View
+                              </a>
+                              <a href={doc.public_url} download={doc.file_name}
+                                style={{ padding: '4px 8px', backgroundColor: theme.bgCard, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '4px', fontSize: '10px', textDecoration: 'none' }}>
+                                ↓
+                              </a>
+                            </>
+                          )}
+                          <button onClick={() => deleteGeneratedDoc(doc)}
+                            style={{ padding: '4px 8px', backgroundColor: '#ef444420', color: '#ef4444', border: '1px solid #ef444440', borderRadius: '4px', fontSize: '10px', cursor: 'pointer' }}>
+                            ✕
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
+
+                  {/* Delete All button */}
+                  {currentDealDocs.length > 1 && (
+                    <button onClick={deleteAllGeneratedDocs}
+                      style={{ width: '100%', padding: '8px', backgroundColor: '#ef444420', color: '#ef4444', border: '1px solid #ef444440', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', marginBottom: '12px' }}>
+                      Delete All Documents
+                    </button>
+                  )}
 
                   {/* Signing & Delivery Options */}
                   <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '12px' }}>

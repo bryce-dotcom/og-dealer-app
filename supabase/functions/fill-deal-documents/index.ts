@@ -181,19 +181,40 @@ function resolvePath(obj: Record<string, any>, path: string): any {
 // ============================================
 // FILL PDF FORM
 // ============================================
+interface FillResult {
+  pdfBytes: Uint8Array;
+  debug: {
+    pdfFieldCount: number;
+    pdfFieldNames: string[];
+    mappingCount: number;
+    filledCount: number;
+    filledFields: string[];
+  };
+}
+
 async function fillPdfForm(
   pdfBytes: ArrayBuffer,
   fieldMapping: Record<string, string>,
   context: Record<string, any>,
   rawData: { deal: any, vehicle: any, dealer: any, customer: any }
-): Promise<Uint8Array> {
+): Promise<FillResult> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
+  const debug = {
+    pdfFieldCount: 0,
+    pdfFieldNames: [] as string[],
+    mappingCount: Object.keys(fieldMapping || {}).length,
+    filledCount: 0,
+    filledFields: [] as string[]
+  };
 
   try {
     const form = pdfDoc.getForm();
     const fields = form.getFields();
 
-    console.log(`PDF has ${fields.length} fields`);
+    debug.pdfFieldCount = fields.length;
+    debug.pdfFieldNames = fields.map(f => f.getName());
+
+    console.log(`PDF has ${fields.length} fillable fields:`, debug.pdfFieldNames.slice(0, 10));
 
     // Field mapping format: { "PDFFieldName": "source.path" }
     // e.g., { "VIN": "vehicle.vin", "BuyerName": "deal.purchaser_name" }
@@ -214,16 +235,21 @@ async function fillPdfForm(
         try {
           const field = form.getTextField(pdfFieldName);
           field.setText(String(value));
+          debug.filledCount++;
+          debug.filledFields.push(`${pdfFieldName}=${value}`);
           console.log(`Filled ${pdfFieldName} = ${value}`);
         } catch {
           try {
             const checkbox = form.getCheckBox(pdfFieldName);
             if (value === 'X' || value === true || value === 'true') {
               checkbox.check();
+              debug.filledCount++;
+              debug.filledFields.push(`${pdfFieldName}=checked`);
               console.log(`Checked ${pdfFieldName}`);
             }
           } catch {
-            // Field not found in PDF
+            // Field not found in PDF - this is expected if mapping doesn't match actual PDF fields
+            console.log(`Field not found in PDF: ${pdfFieldName}`);
           }
         }
       } catch (err) {
@@ -262,9 +288,14 @@ async function fillPdfForm(
     form.flatten();
   } catch (err) {
     console.warn('PDF may not have fillable fields:', err);
+    debug.pdfFieldCount = 0;
+    debug.pdfFieldNames = ['ERROR: ' + (err instanceof Error ? err.message : String(err))];
   }
 
-  return await pdfDoc.save();
+  return {
+    pdfBytes: await pdfDoc.save(),
+    debug
+  };
 }
 
 // ============================================
@@ -429,13 +460,14 @@ serve(async (req) => {
         console.log(`Template downloaded: ${templateBytes.byteLength} bytes`);
 
         // Fill the form
-        const filledPdfBytes = await fillPdfForm(
+        const fillResult = await fillPdfForm(
           templateBytes,
           form.field_mapping || {},
           context,
           { deal, vehicle, dealer, customer }
         );
-        console.log(`PDF filled: ${filledPdfBytes.length} bytes`);
+        console.log(`PDF filled: ${fillResult.pdfBytes.length} bytes, ${fillResult.debug.filledCount} fields filled`);
+        console.log(`Debug:`, JSON.stringify(fillResult.debug));
 
         // Generate filename and path
         const timestamp = Date.now();
@@ -447,7 +479,7 @@ serve(async (req) => {
         // Upload to deal-documents bucket
         const { error: uploadError } = await supabase.storage
           .from('deal-documents')
-          .upload(storagePath, filledPdfBytes, {
+          .upload(storagePath, fillResult.pdfBytes, {
             contentType: 'application/pdf',
             upsert: true
           });
@@ -497,7 +529,8 @@ serve(async (req) => {
           form_name: form.form_name,
           file_name: fileName,
           storage_path: storagePath,
-          public_url: urlData?.signedUrl || null
+          public_url: urlData?.signedUrl || null,
+          debug: fillResult.debug
         });
 
         console.log(`Generated: ${form.form_name}`);
