@@ -406,7 +406,8 @@ serve(async (req) => {
         // Generate filename and path
         const timestamp = Date.now();
         const safeFormNumber = (form.form_number || 'DOC').replace(/[^a-zA-Z0-9-]/g, '_');
-        const fileName = `${safeFormNumber}_${deal_id.slice(0, 8)}_${timestamp}.pdf`;
+        const dealIdStr = String(deal_id);
+        const fileName = `${safeFormNumber}_${dealIdStr.slice(0, 8)}_${timestamp}.pdf`;
         const storagePath = `dealers/${deal.dealer_id}/deals/${deal_id}/${fileName}`;
 
         // Upload to deal-documents bucket
@@ -429,20 +430,32 @@ serve(async (req) => {
           .createSignedUrl(storagePath, 86400); // 24 hour URL
 
         // Record in generated_documents
-        const { error: insertError } = await supabase.from('generated_documents').insert({
-          deal_id: deal_id,
-          form_registry_id: form.id,
+        // Note: form_library_id FK points to form_library table, not form_staging
+        // So we leave it null and just store the form_number/form_name
+        const insertData = {
+          deal_id: typeof deal_id === 'string' ? parseInt(deal_id) : deal_id,
+          dealer_id: deal.dealer_id,
           form_number: form.form_number,
           form_name: form.form_name,
+          state: dealer?.state || 'UT',
           storage_path: storagePath,
-          file_name: fileName,
           public_url: urlData?.signedUrl || null,
-          generated_by: 'system',
-          generated_at: new Date().toISOString()
-        });
+          generated_by: 'system'
+        };
+        console.log('Inserting to generated_documents:', JSON.stringify(insertData));
+
+        const { data: insertResult, error: insertError } = await supabase.from('generated_documents').insert(insertData).select();
 
         if (insertError) {
-          console.warn(`Failed to record document: ${insertError.message}`);
+          console.error(`Failed to record document: ${insertError.message}`, JSON.stringify(insertError));
+          // Still add to generated but note the DB error
+          errors.push({
+            form_number: form.form_number,
+            form_name: form.form_name,
+            error: `PDF created but DB insert failed: ${insertError.message}`
+          });
+        } else {
+          console.log('Insert successful:', JSON.stringify(insertResult));
         }
 
         generated.push({
