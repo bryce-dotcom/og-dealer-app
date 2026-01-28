@@ -322,7 +322,7 @@ serve(async (req) => {
     // Get forms from form_staging
     const { data: forms, error: formsError } = await supabase
       .from('form_staging')
-      .select('id, form_number, form_name, storage_path, field_mapping')
+      .select('id, form_number, form_name, storage_path, storage_bucket, source_url, field_mapping')
       .in('id', pkg.form_ids)
       .eq('status', 'approved');
 
@@ -339,20 +339,64 @@ serve(async (req) => {
       try {
         console.log(`Processing: ${form.form_name} (${form.form_number})`);
 
-        if (!form.storage_path) {
-          throw new Error('No storage_path for form');
+        let templateBytes: ArrayBuffer | null = null;
+
+        // Try 1: Download from form-templates bucket if storage_path is set
+        if (form.storage_path) {
+          console.log(`Trying form-templates/${form.storage_path}`);
+          const { data: templateData, error: downloadError } = await supabase.storage
+            .from('form-templates')
+            .download(form.storage_path);
+
+          if (templateData && !downloadError) {
+            templateBytes = await templateData.arrayBuffer();
+            console.log(`Downloaded from form-templates: ${templateBytes.byteLength} bytes`);
+          } else {
+            console.log(`Not found in form-templates: ${downloadError?.message}`);
+          }
         }
 
-        // Download template from form-templates bucket
-        const { data: templateData, error: downloadError } = await supabase.storage
-          .from('form-templates')
-          .download(form.storage_path);
+        // Try 2: If source_url points to our storage, try form-pdfs bucket
+        if (!templateBytes && form.source_url?.includes('supabase.co/storage')) {
+          // Extract filename from source_url
+          const match = form.source_url.match(/\/form-pdfs\/(.+)$/);
+          if (match) {
+            const pdfPath = match[1];
+            console.log(`Trying form-pdfs/${pdfPath}`);
+            const { data: pdfData, error: pdfError } = await supabase.storage
+              .from('form-pdfs')
+              .download(pdfPath);
 
-        if (downloadError || !templateData) {
-          throw new Error(`Template not found: ${form.storage_path} - ${downloadError?.message}`);
+            if (pdfData && !pdfError) {
+              templateBytes = await pdfData.arrayBuffer();
+              console.log(`Downloaded from form-pdfs: ${templateBytes.byteLength} bytes`);
+            } else {
+              console.log(`Not found in form-pdfs: ${pdfError?.message}`);
+            }
+          }
         }
 
-        const templateBytes = await templateData.arrayBuffer();
+        // Try 3: Download from external source_url
+        if (!templateBytes && form.source_url && form.source_url.endsWith('.pdf')) {
+          console.log(`Trying external URL: ${form.source_url}`);
+          try {
+            const response = await fetch(form.source_url, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            });
+            if (response.ok) {
+              templateBytes = await response.arrayBuffer();
+              console.log(`Downloaded from URL: ${templateBytes.byteLength} bytes`);
+            } else {
+              console.log(`URL download failed: ${response.status}`);
+            }
+          } catch (urlErr) {
+            console.log(`URL download error: ${urlErr}`);
+          }
+        }
+
+        if (!templateBytes) {
+          throw new Error(`No PDF template available for ${form.form_number}. Upload PDF or set valid source_url.`);
+        }
         console.log(`Template downloaded: ${templateBytes.byteLength} bytes`);
 
         // Fill the form
