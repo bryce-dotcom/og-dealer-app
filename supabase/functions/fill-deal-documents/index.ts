@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
+import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
+import { TEMPLATES } from "./templates.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,7 +20,7 @@ function formatDate(value: string | null): string {
 
 function formatCurrency(value: number | string | null): string {
   const num = parseFloat(String(value)) || 0;
-  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatNumber(value: number | string | null): string {
@@ -75,7 +76,21 @@ function calculateFinancing(deal: any) {
 }
 
 // ============================================
-// BUILD FORM CONTEXT
+// GET NESTED VALUE FROM OBJECT
+// ============================================
+function getNestedValue(obj: any, path: string): any {
+  if (!path) return null;
+  const parts = path.split('.');
+  let value = obj;
+  for (const part of parts) {
+    if (value === undefined || value === null) return null;
+    value = value[part];
+  }
+  return value;
+}
+
+// ============================================
+// BUILD FORM CONTEXT - Flat object with all values
 // ============================================
 function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
   const financing = (deal.deal_type === 'BHPH' || deal.deal_type === 'Financing') ? calculateFinancing(deal) : null;
@@ -94,12 +109,18 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
     dealer_state: dealer?.state || 'UT',
     dealer_zip: dealer?.zip || '',
     dealer_phone: dealer?.phone || '',
+    dealer_license: dealer?.dealer_license || '',
 
     // Buyer (multiple aliases for different forms)
     buyer_name: deal.purchaser_name || customer?.name || '',
     buyer_address: customer?.address || '',
+    buyer_city: customer?.city || '',
+    buyer_state: customer?.state || '',
+    buyer_zip: customer?.zip || '',
     buyer_phone: deal.customer_phone || customer?.phone || '',
     buyer_email: deal.customer_email || customer?.email || '',
+    buyer_dl_number: customer?.dl_number || '',
+    buyer_dl_state: customer?.dl_state || '',
     owner_name: deal.purchaser_name || customer?.name || '',
     borrower_name: deal.purchaser_name || customer?.name || '',
     debtor_name: deal.purchaser_name || customer?.name || '',
@@ -118,12 +139,15 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
     make: (vehicle?.make || '').toUpperCase(),
     vehicle_model: (vehicle?.model || '').toUpperCase(),
     model: (vehicle?.model || '').toUpperCase(),
+    trim: vehicle?.trim || '',
     vin: (vehicle?.vin || '').toUpperCase(),
     body_type: vehicle?.body_type || 'SEDAN',
+    body_style: vehicle?.body_style || vehicle?.body_type || '',
     color: (vehicle?.color || '').toUpperCase(),
     stock_number: vehicle?.stock_number || '',
     odometer: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
     mileage: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
+    miles: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
 
     // Sale
     sale_date: formatDate(deal.date_of_sale),
@@ -134,8 +158,14 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
     price: formatCurrency(salePrice),
     trade_allowance: formatCurrency(tradeValue),
     trade_value: formatCurrency(tradeValue),
+    trade_payoff: formatCurrency(parseFloat(deal.trade_payoff) || 0),
     sales_tax: formatCurrency(salesTax),
+    tax_amount: formatCurrency(salesTax),
     doc_fee: formatCurrency(parseFloat(deal.doc_fee) || 299),
+    title_fee: formatCurrency(parseFloat(deal.title_fee) || 0),
+    registration_fee: formatCurrency(parseFloat(deal.registration_fee) || 0),
+    total_due: formatCurrency(salePrice + salesTax + (parseFloat(deal.doc_fee) || 299) - tradeValue),
+    down_payment: formatCurrency(parseFloat(deal.down_payment) || 0),
 
     // Financing (BHPH/Financing)
     ...(financing ? {
@@ -151,7 +181,7 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
       term_months: financing.termMonths.toString(),
       number_of_payments: financing.termMonths.toString(),
       first_payment_date: formatDate(financing.firstPaymentDate),
-      down_payment: formatCurrency(financing.downPayment)
+      final_payment_date: '', // Would need to calculate
     } : {}),
 
     // Lienholder (BHPH = dealer)
@@ -160,15 +190,257 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
 
     // Salesman
     salesman: deal.salesman || '',
-    salesperson: deal.salesman || ''
+    salesperson: deal.salesman || '',
+
+    // Signatures (placeholders)
+    buyer_signature: '',
+    seller_signature: '',
+    signature_date: formatDate(deal.date_of_sale),
+    co_buyer_signature: '',
   };
+}
+
+// ============================================
+// FILL HTML TEMPLATE WITH DATA
+// ============================================
+function fillHtmlTemplate(
+  html: string,
+  fieldMapping: Record<string, string>,
+  rawData: { deal: any, vehicle: any, dealer: any, customer: any },
+  context: Record<string, any>
+): string {
+  let filled = html;
+
+  // Replace {{field_name}} placeholders using field mapping
+  for (const [fieldName, dbColumn] of Object.entries(fieldMapping || {})) {
+    if (!dbColumn) continue;
+
+    // Get value from raw data using dotted path
+    let value = getNestedValue(rawData, dbColumn);
+
+    // If not found, try the flat context
+    if (value === undefined || value === null) {
+      const flatKey = dbColumn.split('.').pop() || dbColumn;
+      value = context[flatKey];
+    }
+
+    // Format the value
+    const strValue = value !== undefined && value !== null ? String(value) : '';
+
+    // Replace {{fieldName}} style placeholders
+    filled = filled.replace(new RegExp(`\\{\\{\\s*${fieldName}\\s*\\}\\}`, 'gi'), strValue);
+
+    // Replace content inside elements with data-field attribute
+    // Matches: data-field="fieldName">...</ or data-field="fieldName" ...>
+    const dataFieldRegex = new RegExp(
+      `(data-field=["']${fieldName}["'][^>]*>)([^<]*)(<)`,
+      'gi'
+    );
+    filled = filled.replace(dataFieldRegex, `$1${strValue}$3`);
+  }
+
+  // Also replace any remaining {{context_key}} placeholders directly from context
+  for (const [key, value] of Object.entries(context)) {
+    const strValue = value !== undefined && value !== null ? String(value) : '';
+    filled = filled.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi'), strValue);
+  }
+
+  return filled;
+}
+
+// ============================================
+// CONVERT HTML TO PDF USING EXTERNAL API
+// ============================================
+async function htmlToPdfExternal(html: string): Promise<Uint8Array | null> {
+  // Try PDFShift API if key is available
+  const pdfshiftKey = Deno.env.get("PDFSHIFT_API_KEY");
+  if (pdfshiftKey) {
+    try {
+      console.log("Converting HTML to PDF via PDFShift...");
+      const response = await fetch("https://api.pdfshift.io/v3/convert/pdf", {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${btoa(`api:${pdfshiftKey}`)}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          source: html,
+          landscape: false,
+          use_print: true,
+          format: "Letter"
+        })
+      });
+
+      if (response.ok) {
+        const pdfBuffer = await response.arrayBuffer();
+        console.log(`PDFShift returned ${pdfBuffer.byteLength} bytes`);
+        return new Uint8Array(pdfBuffer);
+      } else {
+        console.error("PDFShift error:", await response.text());
+      }
+    } catch (err) {
+      console.error("PDFShift failed:", err);
+    }
+  }
+
+  // Try html2pdf.app API if available
+  const html2pdfKey = Deno.env.get("HTML2PDF_API_KEY");
+  if (html2pdfKey) {
+    try {
+      console.log("Converting HTML to PDF via html2pdf.app...");
+      const response = await fetch("https://api.html2pdf.app/v1/generate", {
+        method: "POST",
+        headers: {
+          "Authorization": html2pdfKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          html: html,
+          format: "Letter",
+          marginTop: 10,
+          marginBottom: 10,
+          marginLeft: 10,
+          marginRight: 10
+        })
+      });
+
+      if (response.ok) {
+        const pdfBuffer = await response.arrayBuffer();
+        console.log(`html2pdf.app returned ${pdfBuffer.byteLength} bytes`);
+        return new Uint8Array(pdfBuffer);
+      } else {
+        console.error("html2pdf.app error:", await response.text());
+      }
+    } catch (err) {
+      console.error("html2pdf.app failed:", err);
+    }
+  }
+
+  return null;
+}
+
+// ============================================
+// CONVERT HTML TO PDF USING PDF-LIB (Fallback)
+// Creates a simple text-based PDF from HTML
+// ============================================
+async function htmlToPdfFallback(html: string, formName: string): Promise<Uint8Array> {
+  console.log("Using pdf-lib fallback for HTML to PDF conversion");
+
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  // Extract text content from HTML (basic parsing)
+  const textContent = html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '') // Remove style tags
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Remove script tags
+    .replace(/<[^>]+>/g, '\n') // Replace tags with newlines
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n\s*\n/g, '\n') // Remove empty lines
+    .trim();
+
+  const lines = textContent.split('\n').filter(line => line.trim());
+
+  let page = pdfDoc.addPage([612, 792]); // Letter size
+  const { width, height } = page.getSize();
+  let y = height - 50;
+  const lineHeight = 14;
+  const margin = 50;
+  const maxWidth = width - (margin * 2);
+
+  // Title
+  page.drawText(formName || 'Document', {
+    x: margin,
+    y,
+    size: 16,
+    font: boldFont,
+    color: rgb(0, 0, 0)
+  });
+  y -= 30;
+
+  // Add horizontal line
+  page.drawLine({
+    start: { x: margin, y },
+    end: { x: width - margin, y },
+    thickness: 1,
+    color: rgb(0.7, 0.7, 0.7)
+  });
+  y -= 20;
+
+  // Content
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+
+    // Word wrap
+    const words = trimmedLine.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const textWidth = font.widthOfTextAtSize(testLine, 10);
+
+      if (textWidth > maxWidth) {
+        if (currentLine) {
+          if (y < 50) {
+            page = pdfDoc.addPage([612, 792]);
+            y = height - 50;
+          }
+          page.drawText(currentLine, {
+            x: margin,
+            y,
+            size: 10,
+            font,
+            color: rgb(0, 0, 0)
+          });
+          y -= lineHeight;
+        }
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+
+    if (currentLine) {
+      if (y < 50) {
+        page = pdfDoc.addPage([612, 792]);
+        y = height - 50;
+      }
+      page.drawText(currentLine, {
+        x: margin,
+        y,
+        size: 10,
+        font,
+        color: rgb(0, 0, 0)
+      });
+      y -= lineHeight;
+    }
+  }
+
+  // Footer
+  const pages = pdfDoc.getPages();
+  for (let i = 0; i < pages.length; i++) {
+    pages[i].drawText(`Generated by OG Dealer - Page ${i + 1} of ${pages.length}`, {
+      x: margin,
+      y: 30,
+      size: 8,
+      font,
+      color: rgb(0.5, 0.5, 0.5)
+    });
+  }
+
+  return await pdfDoc.save();
 }
 
 // ============================================
 // RESOLVE DOTTED PATH (e.g., "vehicle.vin" -> value)
 // ============================================
 function resolvePath(obj: Record<string, any>, path: string): any {
-  // Handle dotted paths like "vehicle.vin", "deal.purchaser_name"
   const parts = path.split('.');
   let value = obj;
   for (const part of parts) {
@@ -179,7 +451,7 @@ function resolvePath(obj: Record<string, any>, path: string): any {
 }
 
 // ============================================
-// FILL PDF FORM
+// FILL PDF FORM (for fillable PDFs)
 // ============================================
 interface FillResult {
   pdfBytes: Uint8Array;
@@ -216,16 +488,11 @@ async function fillPdfForm(
 
     console.log(`PDF has ${fields.length} fillable fields:`, debug.pdfFieldNames.slice(0, 10));
 
-    // Field mapping format: { "PDFFieldName": "source.path" }
-    // e.g., { "VIN": "vehicle.vin", "BuyerName": "deal.purchaser_name" }
     for (const [pdfFieldName, sourcePath] of Object.entries(fieldMapping || {})) {
       try {
-        // Resolve the dotted path from raw data
         let value = resolvePath(rawData, sourcePath);
 
-        // If not found in raw data, try flat context
         if (value === undefined || value === null) {
-          // Convert dotted path to flat key: "vehicle.vin" -> "vin", "deal.purchaser_name" -> "purchaser_name"
           const flatKey = sourcePath.split('.').pop() || sourcePath;
           value = context[flatKey];
         }
@@ -237,7 +504,6 @@ async function fillPdfForm(
           field.setText(String(value));
           debug.filledCount++;
           debug.filledFields.push(`${pdfFieldName}=${value}`);
-          console.log(`Filled ${pdfFieldName} = ${value}`);
         } catch {
           try {
             const checkbox = form.getCheckBox(pdfFieldName);
@@ -245,11 +511,9 @@ async function fillPdfForm(
               checkbox.check();
               debug.filledCount++;
               debug.filledFields.push(`${pdfFieldName}=checked`);
-              console.log(`Checked ${pdfFieldName}`);
             }
           } catch {
-            // Field not found in PDF - this is expected if mapping doesn't match actual PDF fields
-            console.log(`Field not found in PDF: ${pdfFieldName}`);
+            // Field not found
           }
         }
       } catch (err) {
@@ -257,45 +521,38 @@ async function fillPdfForm(
       }
     }
 
-    // Also try to auto-fill any unmapped fields by matching field names to context keys
-    for (const field of fields) {
-      const fieldName = field.getName();
-      const normalizedFieldName = fieldName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-
-      // Check if this field was already filled by the mapping
-      const wasMapped = Object.values(fieldMapping || {}).includes(fieldName);
-      if (wasMapped) continue;
-
-      // Try to find a matching context key
-      for (const [contextKey, value] of Object.entries(context)) {
-        const normalizedContextKey = contextKey.toLowerCase().replace(/[^a-z0-9]/g, '_');
-        if (normalizedFieldName === normalizedContextKey ||
-            normalizedFieldName.includes(normalizedContextKey) ||
-            normalizedContextKey.includes(normalizedFieldName)) {
-          try {
-            if (value === undefined || value === null || value === '') continue;
-            const textField = form.getTextField(fieldName);
-            textField.setText(value.toString());
-            console.log(`Auto-filled ${fieldName} with ${contextKey}`);
-            break;
-          } catch {
-            // Not a text field or already filled
-          }
-        }
-      }
-    }
-
     form.flatten();
   } catch (err) {
     console.warn('PDF may not have fillable fields:', err);
     debug.pdfFieldCount = 0;
-    debug.pdfFieldNames = ['ERROR: ' + (err instanceof Error ? err.message : String(err))];
   }
 
   return {
     pdfBytes: await pdfDoc.save(),
     debug
   };
+}
+
+// ============================================
+// FIND TEMPLATE BY KEYWORD
+// ============================================
+function findTemplateByKeyword(formName: string): ((data: any) => Promise<Uint8Array>) | null {
+  const lower = (formName || '').toLowerCase();
+
+  if (lower.includes('mvcs') || lower.includes('contract of sale') || lower.includes('motor vehicle contract')) {
+    return TEMPLATES['MVCS'];
+  }
+  if (lower.includes('odometer') || lower.includes('mileage disclosure')) {
+    return TEMPLATES['Odometer Disclosure'];
+  }
+  if (lower.includes('bill of sale') || lower.includes('tc-861')) {
+    return TEMPLATES['Bill of Sale'];
+  }
+  if (lower.includes('buyers guide') || lower.includes("buyer's guide") || lower.includes('as-is') || lower.includes('warranty disclosure')) {
+    return TEMPLATES['Buyers Guide'];
+  }
+
+  return null;
 }
 
 // ============================================
@@ -363,6 +620,7 @@ serve(async (req) => {
 
     // Build context
     const context = buildFormContext(deal, vehicle, dealer, customer);
+    const rawData = { deal, vehicle, dealer, customer };
     console.log('Context built with keys:', Object.keys(context).length);
 
     // Get document package for this deal type
@@ -379,10 +637,10 @@ serve(async (req) => {
 
     console.log(`Package has ${pkg.form_ids.length} forms`);
 
-    // Get forms from form_staging
+    // Get forms from form_staging - NOW INCLUDING html_template_url and template_status
     const { data: forms, error: formsError } = await supabase
       .from('form_staging')
-      .select('id, form_number, form_name, storage_path, storage_bucket, source_url, field_mapping')
+      .select('id, form_number, form_name, storage_path, storage_bucket, source_url, field_mapping, html_template_url, template_status')
       .in('id', pkg.form_ids)
       .eq('status', 'approved');
 
@@ -399,75 +657,130 @@ serve(async (req) => {
       try {
         console.log(`Processing: ${form.form_name} (${form.form_number})`);
 
-        let templateBytes: ArrayBuffer | null = null;
+        let pdfBytes: Uint8Array;
+        let debugInfo: any = {};
 
-        // Try 1: Download from form-templates bucket if storage_path is set
-        if (form.storage_path) {
-          console.log(`Trying form-templates/${form.storage_path}`);
-          const { data: templateData, error: downloadError } = await supabase.storage
+        // ============================================
+        // PRIORITY 1: Check for HTML template
+        // ============================================
+        if (form.html_template_url && form.template_status === 'ready') {
+          console.log(`Using HTML template: ${form.html_template_url}`);
+
+          // Fetch HTML template from storage
+          const { data: htmlData, error: htmlError } = await supabase.storage
             .from('form-templates')
-            .download(form.storage_path);
+            .download(form.html_template_url);
 
-          if (templateData && !downloadError) {
-            templateBytes = await templateData.arrayBuffer();
-            console.log(`Downloaded from form-templates: ${templateBytes.byteLength} bytes`);
+          if (htmlData && !htmlError) {
+            const htmlTemplate = await htmlData.text();
+            console.log(`HTML template loaded: ${htmlTemplate.length} chars`);
+
+            // Fill the HTML template with data
+            const filledHtml = fillHtmlTemplate(htmlTemplate, form.field_mapping || {}, rawData, context);
+            console.log(`HTML filled with data`);
+
+            // Try external PDF conversion first
+            const externalPdf = await htmlToPdfExternal(filledHtml);
+
+            if (externalPdf) {
+              pdfBytes = externalPdf;
+              debugInfo = {
+                generatedFrom: 'html_template',
+                htmlTemplateUrl: form.html_template_url,
+                pdfConverter: 'external_api'
+              };
+            } else {
+              // Fallback to pdf-lib based conversion
+              pdfBytes = await htmlToPdfFallback(filledHtml, form.form_name);
+              debugInfo = {
+                generatedFrom: 'html_template',
+                htmlTemplateUrl: form.html_template_url,
+                pdfConverter: 'pdf-lib_fallback'
+              };
+            }
+
+            console.log(`PDF generated from HTML: ${pdfBytes.length} bytes`);
           } else {
-            console.log(`Not found in form-templates: ${downloadError?.message}`);
+            console.log(`Failed to load HTML template: ${htmlError?.message}`);
+            // Fall through to other methods
           }
         }
 
-        // Try 2: If source_url points to our storage, try form-pdfs bucket
-        if (!templateBytes && form.source_url?.includes('supabase.co/storage')) {
-          // Extract filename from source_url
-          const match = form.source_url.match(/\/form-pdfs\/(.+)$/);
-          if (match) {
-            const pdfPath = match[1];
-            console.log(`Trying form-pdfs/${pdfPath}`);
-            const { data: pdfData, error: pdfError } = await supabase.storage
-              .from('form-pdfs')
-              .download(pdfPath);
+        // ============================================
+        // PRIORITY 2: Try PDF template
+        // ============================================
+        if (!pdfBytes!) {
+          let templateBytes: ArrayBuffer | null = null;
 
-            if (pdfData && !pdfError) {
-              templateBytes = await pdfData.arrayBuffer();
-              console.log(`Downloaded from form-pdfs: ${templateBytes.byteLength} bytes`);
-            } else {
-              console.log(`Not found in form-pdfs: ${pdfError?.message}`);
+          // Try form-templates bucket
+          if (form.storage_path) {
+            console.log(`Trying form-templates/${form.storage_path}`);
+            const { data: templateData, error: downloadError } = await supabase.storage
+              .from('form-templates')
+              .download(form.storage_path);
+
+            if (templateData && !downloadError) {
+              templateBytes = await templateData.arrayBuffer();
+              console.log(`Downloaded from form-templates: ${templateBytes.byteLength} bytes`);
+            }
+          }
+
+          // Try form-pdfs bucket
+          if (!templateBytes && form.source_url?.includes('supabase.co/storage')) {
+            const match = form.source_url.match(/\/form-pdfs\/(.+)$/);
+            if (match) {
+              const pdfPath = match[1];
+              const { data: pdfData, error: pdfError } = await supabase.storage
+                .from('form-pdfs')
+                .download(pdfPath);
+
+              if (pdfData && !pdfError) {
+                templateBytes = await pdfData.arrayBuffer();
+              }
+            }
+          }
+
+          // Try external URL
+          if (!templateBytes && form.source_url && form.source_url.endsWith('.pdf')) {
+            try {
+              const response = await fetch(form.source_url, {
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+              });
+              if (response.ok) {
+                templateBytes = await response.arrayBuffer();
+              }
+            } catch {}
+          }
+
+          if (templateBytes) {
+            // Fill the PDF form
+            const fillResult = await fillPdfForm(templateBytes, form.field_mapping || {}, context, rawData);
+
+            // If PDF has fillable fields, use it
+            if (fillResult.debug.pdfFieldCount > 0) {
+              pdfBytes = fillResult.pdfBytes;
+              debugInfo = fillResult.debug;
             }
           }
         }
 
-        // Try 3: Download from external source_url
-        if (!templateBytes && form.source_url && form.source_url.endsWith('.pdf')) {
-          console.log(`Trying external URL: ${form.source_url}`);
-          try {
-            const response = await fetch(form.source_url, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-            });
-            if (response.ok) {
-              templateBytes = await response.arrayBuffer();
-              console.log(`Downloaded from URL: ${templateBytes.byteLength} bytes`);
-            } else {
-              console.log(`URL download failed: ${response.status}`);
-            }
-          } catch (urlErr) {
-            console.log(`URL download error: ${urlErr}`);
+        // ============================================
+        // PRIORITY 3: Use code-generated template
+        // ============================================
+        if (!pdfBytes!) {
+          const templateKey = form.form_name || form.form_number;
+          const templateGenerator = TEMPLATES[templateKey] ||
+                                     TEMPLATES[form.form_number] ||
+                                     findTemplateByKeyword(templateKey);
+
+          if (templateGenerator) {
+            console.log(`Using code generator for: ${templateKey}`);
+            pdfBytes = await templateGenerator({ deal, vehicle, dealer, customer });
+            debugInfo = { generatedFrom: 'code_template', templateKey };
+          } else {
+            throw new Error(`No template available for ${form.form_number}`);
           }
         }
-
-        if (!templateBytes) {
-          throw new Error(`No PDF template available for ${form.form_number}. Upload PDF or set valid source_url.`);
-        }
-        console.log(`Template downloaded: ${templateBytes.byteLength} bytes`);
-
-        // Fill the form
-        const fillResult = await fillPdfForm(
-          templateBytes,
-          form.field_mapping || {},
-          context,
-          { deal, vehicle, dealer, customer }
-        );
-        console.log(`PDF filled: ${fillResult.pdfBytes.length} bytes, ${fillResult.debug.filledCount} fields filled`);
-        console.log(`Debug:`, JSON.stringify(fillResult.debug));
 
         // Generate filename and path
         const timestamp = Date.now();
@@ -479,7 +792,7 @@ serve(async (req) => {
         // Upload to deal-documents bucket
         const { error: uploadError } = await supabase.storage
           .from('deal-documents')
-          .upload(storagePath, fillResult.pdfBytes, {
+          .upload(storagePath, pdfBytes, {
             contentType: 'application/pdf',
             upsert: true
           });
@@ -490,14 +803,12 @@ serve(async (req) => {
 
         console.log(`Uploaded to: ${storagePath}`);
 
-        // Get public URL
+        // Get signed URL
         const { data: urlData } = await supabase.storage
           .from('deal-documents')
-          .createSignedUrl(storagePath, 86400); // 24 hour URL
+          .createSignedUrl(storagePath, 86400);
 
         // Record in generated_documents
-        // Note: form_library_id FK points to form_library table, not form_staging
-        // So we leave it null and just store the form_number/form_name
         const insertData = {
           deal_id: typeof deal_id === 'string' ? parseInt(deal_id) : deal_id,
           dealer_id: deal.dealer_id,
@@ -508,20 +819,16 @@ serve(async (req) => {
           public_url: urlData?.signedUrl || null,
           generated_by: 'system'
         };
-        console.log('Inserting to generated_documents:', JSON.stringify(insertData));
 
-        const { data: insertResult, error: insertError } = await supabase.from('generated_documents').insert(insertData).select();
+        const { error: insertError } = await supabase.from('generated_documents').insert(insertData);
 
         if (insertError) {
-          console.error(`Failed to record document: ${insertError.message}`, JSON.stringify(insertError));
-          // Still add to generated but note the DB error
+          console.error(`DB insert failed: ${insertError.message}`);
           errors.push({
             form_number: form.form_number,
             form_name: form.form_name,
             error: `PDF created but DB insert failed: ${insertError.message}`
           });
-        } else {
-          console.log('Insert successful:', JSON.stringify(insertResult));
         }
 
         generated.push({
@@ -530,7 +837,7 @@ serve(async (req) => {
           file_name: fileName,
           storage_path: storagePath,
           public_url: urlData?.signedUrl || null,
-          debug: fillResult.debug
+          debug: debugInfo
         });
 
         console.log(`Generated: ${form.form_name}`);

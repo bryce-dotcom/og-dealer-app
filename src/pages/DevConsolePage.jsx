@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import FormTemplateGenerator from '../components/FormTemplateGenerator';
 
 export default function DevConsolePage() {
   const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, setDealer, fetchAllData: storeRefresh } = useStore();
@@ -39,6 +40,7 @@ export default function DevConsolePage() {
   const [discoverState, setDiscoverState] = useState('all');
   const [discoverProgress, setDiscoverProgress] = useState('');
   const [promoteModal, setPromoteModal] = useState(null); // { form, selectedLibrary }
+  const [templateGeneratorModal, setTemplateGeneratorModal] = useState(null); // { form } for HTML template generation
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -1652,6 +1654,7 @@ export default function DevConsolePage() {
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping Score</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>HTML Template</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
                       </tr>
                     </thead>
@@ -1677,8 +1680,23 @@ export default function DevConsolePage() {
                               <span style={{ fontSize: '12px', fontWeight: '600', color: (f.mapping_confidence || 0) >= 99 ? '#22c55e' : '#eab308' }}>{f.mapping_confidence || 0}%</span>
                             </div>
                           </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <span style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              textTransform: 'uppercase',
+                              backgroundColor: f.template_status === 'ready' ? '#22c55e' : f.template_status === 'generating' ? '#eab308' : '#3f3f46',
+                              color: f.template_status === 'generating' ? '#000' : '#fff'
+                            }}>
+                              {f.template_status || 'none'}
+                            </span>
+                          </td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                             {(f.mapping_confidence || 0) < 99 && <button onClick={() => setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || ['field1', 'field2', 'field3', 'field4', 'field5'] })} style={{ background: 'none', border: 'none', color: '#eab308', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Map Fields</button>}
+                            <button onClick={() => setTemplateGeneratorModal(f)} style={{ background: 'none', border: 'none', color: '#a855f7', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }} title="Generate HTML template from PDF">
+                              {f.template_status === 'ready' ? 'Edit HTML' : f.template_status === 'generating' ? 'Generating...' : 'Generate HTML'}
+                            </button>
                             <button onClick={() => setFormModal(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
                             {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#a1a1aa', fontSize: '11px', marginRight: '8px' }}>PDF</a>}
                             <button onClick={() => removeFromLibrary(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Remove</button>
@@ -2584,6 +2602,22 @@ export default function DevConsolePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* FORM TEMPLATE GENERATOR MODAL */}
+      {templateGeneratorModal && (
+        <FormTemplateGenerator
+          formId={templateGeneratorModal.id}
+          pdfUrl={templateGeneratorModal.source_url || templateGeneratorModal.storage_path}
+          formName={templateGeneratorModal.form_name}
+          state={templateGeneratorModal.state}
+          onSave={(result) => {
+            showToast(`HTML template saved for ${templateGeneratorModal.form_name}`);
+            setTemplateGeneratorModal(null);
+            loadAllData();
+          }}
+          onClose={() => setTemplateGeneratorModal(null)}
+        />
       )}
     </div>
   );
