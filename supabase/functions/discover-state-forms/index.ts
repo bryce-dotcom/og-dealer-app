@@ -225,13 +225,11 @@ Return ONLY the JSON array.`;
       forms = [];
     }
 
-    console.log(`AI returned ${forms.length} forms, validating URLs...`);
+    console.log(`AI returned ${forms.length} forms, validating URLs in parallel...`);
 
-    // Process and VALIDATE forms
-    const validForms: any[] = [];
+    // Pre-process forms: filter duplicates and prepare URLs
+    const formsToValidate: { form: any; sourceUrl: string }[] = [];
     const skippedForms: any[] = [];
-    let validatedCount = 0;
-    let invalidCount = 0;
 
     for (const form of forms) {
       // Skip if already exists
@@ -264,24 +262,56 @@ Return ONLY the JSON array.`;
         sourceUrl = fallbackUrl;
       }
 
-      // VALIDATE PDF URL with HEAD request
-      console.log(`Validating: ${form.form_number} - ${sourceUrl}`);
-      const validation = await validatePdfUrl(sourceUrl);
+      formsToValidate.push({ form, sourceUrl });
+    }
 
+    console.log(`Validating ${formsToValidate.length} form URLs in parallel...`);
+
+    // PARALLEL URL validation - much faster than sequential
+    const validationResults = await Promise.all(
+      formsToValidate.map(async ({ form, sourceUrl }) => {
+        const validation = await validatePdfUrl(sourceUrl);
+        return { form, sourceUrl, validation };
+      })
+    );
+
+    // Process validation results
+    const validForms: any[] = [];
+    let validatedCount = 0;
+    let invalidCount = 0;
+
+    for (const { form, sourceUrl, validation } of validationResults) {
       if (validation.valid) {
         validatedCount++;
         validForms.push({
+          // Required fields
           form_number: form.form_number.toUpperCase().trim(),
           form_name: form.form_name.trim(),
           state: stateUpper,
           source_url: sourceUrl,
-          status: "pending",
-          workflow_status: "staging",
-          ai_confidence: 0.85,
-          doc_type: form.doc_type || "deal",
+
+          // Category (maps from doc_type)
+          category: form.doc_type || "deal",
           description: form.description || null,
-          url_validated: true,
-          url_validated_at: new Date().toISOString(),
+
+          // AI discovery metadata
+          ai_discovered: true,
+          last_verified: new Date().toISOString(),
+
+          // Workflow
+          workflow_status: "staging",
+
+          // PDF validation
+          pdf_validated: true,
+
+          // Optional - set to null/defaults
+          is_fillable: null,
+          required_for: null,
+          html_template_url: null,
+          field_mapping: null,
+
+          // Include dealer_id if provided
+          ...(dealer_id ? { dealer_id } : {}),
         });
         console.log(`✓ Valid: ${form.form_number}`);
       } else {
