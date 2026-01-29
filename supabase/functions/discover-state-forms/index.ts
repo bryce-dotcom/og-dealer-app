@@ -11,63 +11,70 @@ const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // State agency info for better research context
-const stateAgencies: Record<string, { dmv: string; tax: string; mved: string }> = {
+const stateAgencies: Record<string, { dmv: string; tax: string; mved: string; formsPage: string }> = {
   UT: {
-    dmv: "Utah Division of Motor Vehicles (DMV)",
+    dmv: "Utah Division of Motor Vehicles",
     tax: "Utah State Tax Commission",
-    mved: "Utah Motor Vehicle Enforcement Division (MVED)"
+    mved: "Utah Motor Vehicle Enforcement Division (MVED)",
+    formsPage: "https://dmv.utah.gov/vehicles/dealers"
   },
   TX: {
     dmv: "Texas Department of Motor Vehicles (TxDMV)",
     tax: "Texas Comptroller of Public Accounts",
-    mved: "Texas DMV Motor Vehicle Division"
+    mved: "Texas DMV Motor Vehicle Division",
+    formsPage: "https://www.txdmv.gov/motorists/buying-or-selling-a-vehicle"
   },
   CA: {
-    dmv: "California Department of Motor Vehicles (DMV)",
+    dmv: "California Department of Motor Vehicles",
     tax: "California Department of Tax and Fee Administration (CDTFA)",
-    mved: "DMV Occupational Licensing"
+    mved: "DMV Occupational Licensing",
+    formsPage: "https://www.dmv.ca.gov/portal/vehicle-industry-services/occupational-licensing/"
   },
   FL: {
-    dmv: "Florida Department of Highway Safety and Motor Vehicles (FLHSMV)",
+    dmv: "Florida DHSMV",
     tax: "Florida Department of Revenue",
-    mved: "FLHSMV Dealer Services"
+    mved: "FLHSMV Dealer Services",
+    formsPage: "https://www.flhsmv.gov/motor-vehicles-tags-titles/motor-vehicle-dealers/"
+  },
+  ID: {
+    dmv: "Idaho Transportation Department (ITD)",
+    tax: "Idaho State Tax Commission",
+    mved: "Idaho Dealer Licensing",
+    formsPage: "https://itd.idaho.gov/dmv/"
   },
   AZ: {
-    dmv: "Arizona Department of Transportation Motor Vehicle Division",
+    dmv: "Arizona MVD",
     tax: "Arizona Department of Revenue",
-    mved: "Arizona Dealer Licensing Unit"
+    mved: "Arizona Dealer Licensing Unit",
+    formsPage: "https://azdot.gov/motor-vehicles/dealer-services"
   },
   CO: {
-    dmv: "Colorado Division of Motor Vehicles",
+    dmv: "Colorado DMV",
     tax: "Colorado Department of Revenue",
-    mved: "Colorado Auto Industry Division"
+    mved: "Colorado Auto Industry Division",
+    formsPage: "https://dmv.colorado.gov/dealer-services"
   },
   NV: {
-    dmv: "Nevada Department of Motor Vehicles",
+    dmv: "Nevada DMV",
     tax: "Nevada Department of Taxation",
-    mved: "Nevada DMV Compliance Enforcement"
+    mved: "Nevada DMV Compliance Enforcement",
+    formsPage: "https://dmv.nv.gov/dealer.htm"
   },
 };
 
-// Known state forms pages for URL construction
-const stateFormsPages: Record<string, string> = {
-  UT: "https://dmv.utah.gov/forms",
-  TX: "https://www.txdmv.gov/forms",
-  CA: "https://www.dmv.ca.gov/portal/forms",
-  FL: "https://www.flhsmv.gov/resources/forms",
-  AZ: "https://azdot.gov/motor-vehicles/vehicle-services/forms",
-  CO: "https://dmv.colorado.gov/forms-documents",
-  NV: "https://dmv.nv.gov/forms.htm",
-  GA: "https://dor.georgia.gov/motor-vehicle-forms",
-  NC: "https://www.ncdot.gov/dmv/title-registration/Pages/forms.aspx",
-  OH: "https://bmv.ohio.gov/forms.aspx",
-};
-
-// Validate PDF URL with HEAD request (5 second timeout for parallel)
+// Validate PDF URL with HEAD request (3 second timeout)
 async function validatePdfUrl(url: string): Promise<{ valid: boolean; error?: string }> {
+  if (!url) return { valid: false, error: "No URL provided" };
+
+  try {
+    new URL(url); // Validate URL format first
+  } catch {
+    return { valid: false, error: "Invalid URL format" };
+  }
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
 
     const response = await fetch(url, {
       method: 'HEAD',
@@ -80,19 +87,14 @@ async function validatePdfUrl(url: string): Promise<{ valid: boolean; error?: st
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('pdf') || contentType.includes('octet-stream') || response.status === 200) {
-        return { valid: true };
-      }
-      return { valid: false, error: `Invalid content-type: ${contentType}` };
+      return { valid: true };
     }
-
     return { valid: false, error: `HTTP ${response.status}` };
   } catch (err) {
     if (err.name === 'AbortError') {
       return { valid: false, error: 'Timeout' };
     }
-    return { valid: false, error: err.message || 'Network error' };
+    return { valid: false, error: 'Network error' };
   }
 }
 
@@ -117,122 +119,90 @@ serve(async (req) => {
     const agencies = stateAgencies[stateUpper] || {
       dmv: `${stateUpper} Department of Motor Vehicles`,
       tax: `${stateUpper} Department of Revenue`,
-      mved: `${stateUpper} Motor Vehicle Enforcement Division`
+      mved: `${stateUpper} Motor Vehicle Division`,
+      formsPage: `https://dmv.${state.toLowerCase()}.gov`
     };
-    const formsPage = stateFormsPages[stateUpper] || `https://dmv.${state.toLowerCase()}.gov/forms`;
 
-    // Check existing forms to track duplicates
+    // Check existing forms to avoid duplicates
     const { data: existingForms } = await supabase
       .from("form_staging")
       .select("form_number, form_name")
       .eq("state", stateUpper);
 
-    const existingFormNumbers = new Set(existingForms?.map((f) => f.form_number?.toUpperCase()) || []);
-    const existingFormNames = new Set(existingForms?.map((f) => f.form_name?.toLowerCase()) || []);
+    const existingSet = new Set([
+      ...(existingForms?.map(f => f.form_number?.toUpperCase()).filter(Boolean) || []),
+      ...(existingForms?.map(f => f.form_name?.toLowerCase()).filter(Boolean) || [])
+    ]);
 
-    console.log(`[${stateUpper}] Starting comprehensive form discovery...`);
-    console.log(`[${stateUpper}] Existing forms: ${existingFormNumbers.size}`);
+    console.log(`[${stateUpper}] Starting discovery. ${existingSet.size} existing forms.`);
 
     // ========================================
-    // PHASE 1: COMPREHENSIVE RESEARCH
+    // PHASE 1: AI RESEARCH
     // ========================================
 
-    const systemPrompt = `You are an expert compliance researcher for automotive dealerships. You have deep knowledge of state-specific DMV, tax, and dealer licensing requirements.
+    const systemPrompt = `You are an expert on US auto dealer compliance. Research ALL forms required for a used car dealer in ${stateUpper}.
 
-Your task: Provide a COMPREHENSIVE list of ALL forms, documents, and reports required for a used car dealer operating in ${stateUpper}.
-
-State agencies to consider:
+State agencies:
 - ${agencies.dmv}
 - ${agencies.tax}
 - ${agencies.mved}
-- Federal Trade Commission (FTC)
-- Federal Odometer Act requirements
+- Federal: FTC, DOT (odometer requirements)
 
-CRITICAL: Be thorough. A dealer needs forms for:
-1. EVERY vehicle sale (title transfer, registration, bill of sale)
-2. Tax compliance (sales tax returns, exemption certificates)
-3. Dealer licensing (license renewal, bonds, permits)
-4. Federal requirements (odometer disclosure, FTC Buyers Guide)
-5. Financing/BHPH (if offering in-house financing)
-6. Trade-ins and wholesale transactions
-7. Temporary permits and dealer plates
-8. Monthly/quarterly/annual reporting
+IMPORTANT INSTRUCTIONS:
+1. List EVERY required form - even if you don't know the exact PDF URL
+2. For source_url: Only provide URLs you're confident are correct .gov URLs. Set to null if unsure.
+3. Be comprehensive - dealers typically need 20-35 different forms/documents
+4. Include federal requirements (FTC Buyers Guide, Odometer Disclosure)
 
-For source_url, use REAL URLs from official .gov websites. Common patterns:
-- Utah: https://dmv.utah.gov/forms/tc-XXX.pdf or https://tax.utah.gov/forms/tc-XXX.pdf
-- Texas: https://www.txdmv.gov/sites/default/files/form_files/XXX.pdf
-- California: https://www.dmv.ca.gov/portal/file/XXX-pdf/
-- Florida: https://www.flhsmv.gov/pdf/forms/XXXXX.pdf
+Return ONLY a JSON array, no markdown.`;
 
-If you don't know the exact PDF URL, set source_url to null - do NOT guess.
+    const userPrompt = `List ALL forms required for a used car dealer in ${stateUpper}. Include:
 
-Return ONLY a valid JSON array with NO markdown formatting.`;
+TITLE/REGISTRATION (per sale):
+- Title application/transfer
+- Registration application
+- Temporary permit
+- Lien release/satisfaction
+- Power of attorney
+- Odometer disclosure (federal)
 
-    const userPrompt = `List EVERY form, document, and report required for a used car dealer in ${stateUpper}.
+TAX FORMS:
+- Sales tax return (frequency varies by state)
+- Tax exemption certificates
+- Dealer sales reports
 
-Include ALL of these categories:
+DEAL DOCUMENTS (per transaction):
+- Bill of Sale (state-specific)
+- Buyer's Order / Purchase Agreement
+- FTC Buyers Guide (federal - ALL used car dealers)
+- As-Is Warranty Disclosure
+- Vehicle Condition Report
+- Delivery Receipt/Acknowledgment
 
-1. DMV/TITLE FORMS:
-   - Title application/transfer forms
-   - Registration forms
-   - Temporary permit applications
-   - Dealer plate applications
-   - Lien release forms
-   - Power of attorney forms
-   - Duplicate title requests
+DEALER COMPLIANCE:
+- Dealer license application/renewal
+- Surety bond requirements
+- Salesperson license (if required)
 
-2. TAX FORMS:
-   - Sales and use tax returns (monthly/quarterly)
-   - Tax exemption certificates
-   - Dealer tax reporting forms
-   - Trade-in credit forms
+BHPH/FINANCING (if applicable):
+- Retail Installment Contract
+- Truth in Lending Disclosure (federal Reg Z)
+- Privacy Notice (federal GLBA)
+- Risk-Based Pricing Notice
 
-3. DEAL PAPERWORK (per transaction):
-   - Bill of Sale
-   - Buyer's Order / Purchase Agreement
-   - Odometer Disclosure Statement (federal requirement)
-   - FTC Buyers Guide (federal - required on ALL used vehicles)
-   - As-Is / No Warranty Disclosure
-   - Motor Vehicle Contract of Sale
-   - Delivery Receipt
-   - Secure Power of Attorney
-
-4. DEALER LICENSING/COMPLIANCE:
-   - Dealer license application/renewal
-   - Surety bond forms
-   - Business license requirements
-   - Garage liability insurance forms
-   - Salesperson license forms
-
-5. BHPH/FINANCING FORMS (if dealer does in-house financing):
-   - Retail Installment Contract
-   - Truth in Lending Disclosure
-   - Privacy Notice
-   - GAP Agreement forms
-   - Repossession notices
-
-6. REPORTING REQUIREMENTS:
-   - Monthly sales reports to DMV
-   - Title submission deadlines
-   - Tax filing deadlines
-   - Annual dealer license renewal
-
-Return as JSON array with this EXACT structure for each item:
+Return JSON array with this structure:
 {
-  "form_name": "Official form name",
-  "form_number": "TC-69" or null if no number,
-  "issuing_authority": "Utah DMV" | "Utah Tax Commission" | "FTC" | "Federal" | etc,
-  "category": "deal" | "title" | "tax" | "compliance" | "financing" | "reporting",
-  "description": "What this form is used for",
-  "required_for": ["cash_deal", "bhph_deal", "trade_in", "monthly_reporting", "license_renewal"],
-  "frequency": "per_deal" | "monthly" | "quarterly" | "annually" | "as_needed",
-  "source_url": "https://exact.gov.url/to/form.pdf" or null,
-  "deadline_info": "Due by 25th of following month" or null
-}
+  "form_name": "Name of form",
+  "form_number": "TC-69" or null,
+  "category": "deal" | "title" | "tax" | "compliance" | "financing",
+  "description": "What it's used for",
+  "source_url": "https://exact.url/form.pdf" or null,
+  "issuing_authority": "Utah DMV" | "FTC" | etc,
+  "frequency": "per_deal" | "monthly" | "annually" | "as_needed",
+  "required_for": ["cash_deal", "financed_deal", "trade_in"]
+}`;
 
-Be comprehensive - a typical state has 20-40 required forms/documents.`;
-
-    console.log(`[${stateUpper}] Phase 1: Researching compliance requirements...`);
+    console.log(`[${stateUpper}] Calling Claude API...`);
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -251,248 +221,207 @@ Be comprehensive - a typical state has 20-40 required forms/documents.`;
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+      console.error(`[${stateUpper}] Anthropic API error:`, errorText);
+      throw new Error(`AI API error: ${response.status}`);
     }
 
     const result = await response.json();
     const content = result.content?.[0]?.text || "[]";
 
-    // Parse JSON response
+    // Parse JSON
     let forms: any[] = [];
     try {
-      let cleaned = content
-        .replace(/```json\s*/gi, "")
-        .replace(/```\s*/g, "")
-        .trim();
-
-      const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        cleaned = arrayMatch[0];
-      }
-
+      let cleaned = content.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      const match = cleaned.match(/\[[\s\S]*\]/);
+      if (match) cleaned = match[0];
       forms = JSON.parse(cleaned);
-    } catch (parseError) {
-      console.error(`[${stateUpper}] Failed to parse AI response:`, content.substring(0, 500));
-      throw new Error("Failed to parse AI response as JSON");
+    } catch (e) {
+      console.error(`[${stateUpper}] JSON parse error:`, content.substring(0, 200));
+      throw new Error("Failed to parse AI response");
     }
 
-    if (!Array.isArray(forms)) {
-      forms = [];
+    if (!Array.isArray(forms) || forms.length === 0) {
+      throw new Error("AI returned no forms");
     }
 
-    console.log(`[${stateUpper}] Phase 1 complete: Found ${forms.length} form requirements`);
+    console.log(`[${stateUpper}] AI found ${forms.length} forms. Validating...`);
 
     // ========================================
-    // PHASE 2: VALIDATE AND CATEGORIZE
+    // PHASE 2: VALIDATE URLs (parallel)
     // ========================================
 
-    console.log(`[${stateUpper}] Phase 2: Validating URLs in parallel...`);
-
-    // Prepare forms for validation
-    const formsToProcess: { form: any; sourceUrl: string | null }[] = [];
-    const skippedDuplicates: string[] = [];
-
-    for (const form of forms) {
-      // Skip if missing required fields
-      if (!form.form_name) {
-        continue;
-      }
-
-      // Check for duplicates by form number or name
-      const formNumber = form.form_number?.toUpperCase()?.trim();
-      const formName = form.form_name?.toLowerCase()?.trim();
-
-      if (formNumber && existingFormNumbers.has(formNumber)) {
-        skippedDuplicates.push(formNumber);
-        continue;
-      }
-      if (formName && existingFormNames.has(formName)) {
-        skippedDuplicates.push(form.form_name);
-        continue;
-      }
-
-      formsToProcess.push({
-        form,
-        sourceUrl: form.source_url || null
-      });
-    }
-
-    console.log(`[${stateUpper}] Processing ${formsToProcess.length} forms (${skippedDuplicates.length} duplicates skipped)`);
-
-    // Validate all URLs in parallel
     const validationResults = await Promise.all(
-      formsToProcess.map(async ({ form, sourceUrl }) => {
-        let pdfValidated = false;
-        let validationError: string | null = null;
-
-        if (sourceUrl) {
-          try {
-            new URL(sourceUrl); // Validate URL format
-            const validation = await validatePdfUrl(sourceUrl);
-            pdfValidated = validation.valid;
-            validationError = validation.error || null;
-          } catch {
-            validationError = "Invalid URL format";
-          }
-        }
-
-        return { form, sourceUrl, pdfValidated, validationError };
+      forms.map(async (form) => {
+        const validation = form.source_url
+          ? await validatePdfUrl(form.source_url)
+          : { valid: false, error: "No URL" };
+        return { form, validation };
       })
     );
 
     // ========================================
-    // PHASE 3: INSERT TO DATABASE
+    // PHASE 3: INSERT ALL FORMS
     // ========================================
 
-    console.log(`[${stateUpper}] Phase 3: Inserting forms to database...`);
-
     const formsToInsert: any[] = [];
-    const formsWithValidPdf: any[] = [];
-    const formsNeedingUpload: any[] = [];
-    const reportingRequirements: any[] = [];
+    const duplicatesSkipped: string[] = [];
+    let validPdfCount = 0;
+    let needsUploadCount = 0;
 
-    for (const { form, sourceUrl, pdfValidated, validationError } of validationResults) {
-      // Determine workflow status based on PDF validation
-      const workflowStatus = pdfValidated ? "staging" : "needs_upload";
+    for (const { form, validation } of validationResults) {
+      if (!form.form_name) continue;
 
-      // Map category from AI response
-      let category = form.category || "deal";
-      if (!["deal", "title", "tax", "compliance", "financing", "reporting"].includes(category)) {
+      // Check duplicates
+      const formNum = form.form_number?.toUpperCase()?.trim();
+      const formName = form.form_name?.toLowerCase()?.trim();
+
+      if ((formNum && existingSet.has(formNum)) || (formName && existingSet.has(formName))) {
+        duplicatesSkipped.push(form.form_number || form.form_name);
+        continue;
+      }
+
+      // Add to existing set to prevent duplicates within this batch
+      if (formNum) existingSet.add(formNum);
+      if (formName) existingSet.add(formName);
+
+      const pdfValid = validation.valid;
+
+      // ALL forms get inserted - workflow_status indicates if PDF needs upload
+      // 'staging' = PDF available, ready for processing
+      // 'needs_upload' = form required but PDF must be manually uploaded
+      const workflowStatus = pdfValid ? "staging" : "needs_upload";
+
+      if (pdfValid) {
+        validPdfCount++;
+      } else {
+        needsUploadCount++;
+      }
+
+      // Normalize category
+      let category = form.category?.toLowerCase() || "deal";
+      if (!["deal", "title", "tax", "compliance", "financing"].includes(category)) {
         category = "deal";
       }
 
-      // Build the form record
-      const formRecord = {
-        form_number: form.form_number?.toUpperCase()?.trim() || null,
+      formsToInsert.push({
+        // Core fields
+        form_number: formNum || null,
         form_name: form.form_name.trim(),
         state: stateUpper,
-        source_url: sourceUrl,
+        source_url: form.source_url || null,
         category: category,
         description: form.description || null,
 
-        // AI discovery metadata
+        // Status tracking
+        workflow_status: workflowStatus,
+        pdf_validated: pdfValid,
+
+        // AI metadata
         ai_discovered: true,
         last_verified: new Date().toISOString(),
 
-        // Workflow status
-        workflow_status: workflowStatus,
-
-        // PDF validation
-        pdf_validated: pdfValidated,
-
-        // Extended metadata
+        // Extended fields (will be ignored if columns don't exist)
         issuing_authority: form.issuing_authority || null,
         required_for: form.required_for || null,
         frequency: form.frequency || null,
-        deadline_info: form.deadline_info || null,
-
-        // Optional fields
-        is_fillable: null,
-        html_template_url: null,
-        field_mapping: null,
 
         // Dealer association
         ...(dealer_id ? { dealer_id } : {}),
-      };
-
-      formsToInsert.push(formRecord);
-
-      // Track for response
-      const formSummary = {
-        form_name: form.form_name,
-        form_number: form.form_number || null,
-        category: category,
-        status: workflowStatus,
-        source_url: sourceUrl,
-        description: form.description,
-        pdf_validated: pdfValidated,
-        validation_error: validationError
-      };
-
-      if (pdfValidated) {
-        formsWithValidPdf.push(formSummary);
-      } else {
-        formsNeedingUpload.push(formSummary);
-      }
-
-      // Extract reporting requirements
-      if (category === "reporting" || form.frequency === "monthly" || form.frequency === "quarterly" || form.frequency === "annually") {
-        reportingRequirements.push({
-          name: form.form_name,
-          form_number: form.form_number,
-          frequency: form.frequency,
-          deadline: form.deadline_info
-        });
-      }
+      });
     }
 
-    // Insert all forms
+    console.log(`[${stateUpper}] Inserting ${formsToInsert.length} forms...`);
+
+    // Insert in batches to handle potential column mismatches
     let insertedCount = 0;
+    let insertErrors: string[] = [];
+
     if (formsToInsert.length > 0) {
-      const { data: inserted, error: insertError } = await supabase
+      // Try full insert first
+      const { data, error } = await supabase
         .from("form_staging")
         .insert(formsToInsert)
-        .select();
+        .select("id");
 
-      if (insertError) {
-        console.error(`[${stateUpper}] Insert error:`, insertError);
-        throw new Error(`Failed to insert forms: ${insertError.message}`);
+      if (error) {
+        console.error(`[${stateUpper}] Insert error:`, error.message);
+
+        // If error mentions a column, try inserting with minimal fields
+        if (error.message.includes("column") || error.message.includes("violates")) {
+          console.log(`[${stateUpper}] Retrying with minimal fields...`);
+
+          const minimalForms = formsToInsert.map(f => ({
+            form_number: f.form_number,
+            form_name: f.form_name,
+            state: f.state,
+            source_url: f.source_url,
+            category: f.category,
+            description: f.description,
+            workflow_status: "staging", // Use safe default
+            pdf_validated: f.pdf_validated,
+            ai_discovered: true,
+            ...(dealer_id ? { dealer_id } : {}),
+          }));
+
+          const { data: retryData, error: retryError } = await supabase
+            .from("form_staging")
+            .insert(minimalForms)
+            .select("id");
+
+          if (retryError) {
+            insertErrors.push(retryError.message);
+            console.error(`[${stateUpper}] Retry failed:`, retryError.message);
+          } else {
+            insertedCount = retryData?.length || 0;
+          }
+        } else {
+          insertErrors.push(error.message);
+        }
+      } else {
+        insertedCount = data?.length || 0;
       }
-
-      insertedCount = inserted?.length || 0;
     }
 
-    console.log(`[${stateUpper}] Successfully inserted ${insertedCount} forms`);
-    console.log(`[${stateUpper}] - With valid PDF: ${formsWithValidPdf.length}`);
-    console.log(`[${stateUpper}] - Needing upload: ${formsNeedingUpload.length}`);
+    console.log(`[${stateUpper}] Complete: ${insertedCount} inserted, ${duplicatesSkipped.length} duplicates`);
 
-    // Log discovery results
-    try {
-      await supabase.from("form_discovery_log").insert({
-        state: stateUpper,
-        forms_found: forms.length,
-        forms_added: insertedCount,
-        forms_skipped: skippedDuplicates.length,
-        skipped_details: skippedDuplicates,
-        discovered_at: new Date().toISOString()
-      });
-    } catch (logErr) {
-      console.log(`[${stateUpper}] Could not log to form_discovery_log`);
-    }
-
-    // ========================================
-    // RESPONSE
-    // ========================================
+    // Build response
+    const formsList = formsToInsert.map(f => ({
+      form_name: f.form_name,
+      form_number: f.form_number,
+      category: f.category,
+      status: f.workflow_status,
+      pdf_available: f.pdf_validated,
+      source_url: f.source_url,
+      description: f.description,
+    }));
 
     return new Response(
       JSON.stringify({
         success: true,
         state: stateUpper,
-        total_requirements_found: forms.length,
+        message: `Found ${forms.length} required forms for ${stateUpper}. ${insertedCount} added (${validPdfCount} with PDF, ${needsUploadCount} need upload). ${duplicatesSkipped.length} duplicates skipped.`,
+
+        // Summary counts
+        total_discovered: forms.length,
         forms_inserted: insertedCount,
-        forms_with_valid_pdf: formsWithValidPdf.length,
-        forms_needing_upload: formsNeedingUpload.length,
-        duplicates_skipped: skippedDuplicates.length,
-        forms: [...formsWithValidPdf, ...formsNeedingUpload],
-        reporting_requirements: reportingRequirements,
-        message: `Discovered ${forms.length} compliance requirements for ${stateUpper}. ${formsWithValidPdf.length} forms have accessible PDFs, ${formsNeedingUpload.length} need manual upload.`
+        forms_with_pdf: validPdfCount,
+        forms_need_upload: needsUploadCount,
+        duplicates_skipped: duplicatesSkipped.length,
+
+        // Detailed lists
+        forms: formsList,
+
+        // Errors if any
+        ...(insertErrors.length > 0 ? { errors: insertErrors } : {}),
       }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
     console.error("Error:", error.message);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error.message,
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
