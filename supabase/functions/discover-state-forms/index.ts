@@ -10,19 +10,74 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// State resource links
+// BASELINE FORMS - every dealer needs these (will be customized by state)
+const baselineForms = [
+  // DEAL DOCUMENTS
+  { form_name: "Bill of Sale", category: "deal", description: "Documents the sale transaction between dealer and buyer" },
+  { form_name: "Buyers Order", category: "deal", description: "Purchase agreement showing vehicle details, price, fees, and terms" },
+  { form_name: "Odometer Disclosure Statement", category: "deal", description: "Federal requirement to disclose accurate mileage on all vehicle sales", form_number: "FEDERAL" },
+  { form_name: "FTC Buyers Guide", category: "deal", description: "Federal requirement - must be displayed on all used vehicles for sale", form_number: "FEDERAL" },
+  { form_name: "As-Is No Warranty Disclosure", category: "deal", description: "Discloses vehicle is sold without warranty" },
+  { form_name: "We-Owe / Due Bill", category: "deal", description: "Documents any items owed to buyer after sale" },
+  { form_name: "Vehicle Delivery Receipt", category: "deal", description: "Confirms buyer received the vehicle" },
+  { form_name: "Vehicle Condition Report", category: "deal", description: "Documents condition of vehicle at time of sale" },
+
+  // TITLE & REGISTRATION
+  { form_name: "Title Application", category: "title", description: "Application to transfer or obtain vehicle title" },
+  { form_name: "Dealer Report of Sale", category: "title", description: "Notifies state of vehicle sale by dealer" },
+  { form_name: "Power of Attorney for Title", category: "title", description: "Authorizes dealer to sign title documents on behalf of buyer" },
+  { form_name: "Secure Power of Attorney", category: "title", description: "Odometer-specific POA for title transfers" },
+  { form_name: "Lien Release", category: "title", description: "Releases existing lien on vehicle title" },
+  { form_name: "Duplicate Title Request", category: "title", description: "Request for replacement title" },
+  { form_name: "Temporary Permit", category: "title", description: "Temporary tag/permit while registration is processed" },
+  { form_name: "VIN Verification", category: "title", description: "Verifies vehicle identification number matches records" },
+
+  // FINANCING / BHPH
+  { form_name: "Retail Installment Contract", category: "financing", description: "Finance agreement for vehicle purchase with payment terms" },
+  { form_name: "Motor Vehicle Contract of Sale", category: "financing", description: "Contract for financed vehicle purchase" },
+  { form_name: "Security Agreement", category: "financing", description: "Establishes lien on vehicle for financed purchases" },
+  { form_name: "Truth in Lending Disclosure", category: "financing", description: "Federal Reg Z disclosure of APR, finance charges, and payment terms", form_number: "FEDERAL" },
+  { form_name: "Credit Application", category: "financing", description: "Application for vehicle financing" },
+  { form_name: "Privacy Notice", category: "financing", description: "Federal GLBA privacy disclosure for financial transactions", form_number: "FEDERAL" },
+  { form_name: "Right to Cure Default Notice", category: "financing", description: "Notice to buyer of default and right to cure before repossession" },
+  { form_name: "Notice of Intent to Repossess", category: "financing", description: "Legal notice before vehicle repossession" },
+  { form_name: "GAP Waiver Agreement", category: "financing", description: "Guaranteed Asset Protection waiver agreement" },
+  { form_name: "Payment Schedule", category: "financing", description: "Amortization schedule showing all payments" },
+  { form_name: "Arbitration Agreement", category: "financing", description: "Agreement to arbitrate disputes" },
+
+  // TAX
+  { form_name: "Sales Tax Return", category: "tax", description: "Monthly/quarterly sales tax filing" },
+  { form_name: "Sales Tax Exemption Certificate", category: "tax", description: "Certificate for tax-exempt purchases" },
+  { form_name: "Resale Certificate", category: "tax", description: "Certificate for dealer-to-dealer sales without tax" },
+
+  // DISCLOSURES
+  { form_name: "Damage Disclosure Statement", category: "disclosure", description: "Discloses known damage to vehicle" },
+  { form_name: "Salvage Title Disclosure", category: "disclosure", description: "Discloses if vehicle has salvage title history" },
+  { form_name: "Rebuilt Title Disclosure", category: "disclosure", description: "Discloses if vehicle has rebuilt/reconstructed title" },
+  { form_name: "Frame Damage Disclosure", category: "disclosure", description: "Discloses structural/frame damage" },
+  { form_name: "Flood Damage Disclosure", category: "disclosure", description: "Discloses flood damage history" },
+  { form_name: "Accident History Disclosure", category: "disclosure", description: "Discloses known accident history" },
+
+  // COMPLIANCE
+  { form_name: "Dealer License Application", category: "compliance", description: "Application for dealer license" },
+  { form_name: "Dealer License Renewal", category: "compliance", description: "Annual dealer license renewal" },
+  { form_name: "Surety Bond", category: "compliance", description: "Required dealer bond" },
+  { form_name: "Consignment Agreement", category: "compliance", description: "Agreement to sell vehicle on consignment" },
+];
+
+// State resources
 const stateResources: Record<string, { dmv: string; tax: string; forms: string }> = {
   UT: { dmv: "https://dmv.utah.gov", tax: "https://tax.utah.gov", forms: "https://dmv.utah.gov/vehicles/dealers" },
-  TX: { dmv: "https://www.txdmv.gov", tax: "https://comptroller.texas.gov", forms: "https://www.txdmv.gov/motorists/buying-or-selling-a-vehicle" },
-  CA: { dmv: "https://www.dmv.ca.gov", tax: "https://www.cdtfa.ca.gov", forms: "https://www.dmv.ca.gov/portal/vehicle-industry-services/" },
-  FL: { dmv: "https://www.flhsmv.gov", tax: "https://floridarevenue.com", forms: "https://www.flhsmv.gov/motor-vehicles-tags-titles/" },
-  AZ: { dmv: "https://azdot.gov/mvd", tax: "https://azdor.gov", forms: "https://azdot.gov/motor-vehicles/vehicle-services" },
-  CO: { dmv: "https://dmv.colorado.gov", tax: "https://tax.colorado.gov", forms: "https://dmv.colorado.gov/dealer-services" },
-  NV: { dmv: "https://dmv.nv.gov", tax: "https://tax.nv.gov", forms: "https://dmv.nv.gov/dealer.htm" },
-  ID: { dmv: "https://itd.idaho.gov/dmv", tax: "https://tax.idaho.gov", forms: "https://itd.idaho.gov/dmv/vehicles/" },
+  TX: { dmv: "https://www.txdmv.gov", tax: "https://comptroller.texas.gov", forms: "https://www.txdmv.gov/forms" },
+  CA: { dmv: "https://www.dmv.ca.gov", tax: "https://www.cdtfa.ca.gov", forms: "https://www.dmv.ca.gov/portal/forms/" },
+  FL: { dmv: "https://www.flhsmv.gov", tax: "https://floridarevenue.com", forms: "https://www.flhsmv.gov/pdf/forms/" },
+  AZ: { dmv: "https://azdot.gov/mvd", tax: "https://azdor.gov", forms: "https://azdot.gov/mvd/forms" },
+  CO: { dmv: "https://dmv.colorado.gov", tax: "https://tax.colorado.gov", forms: "https://dmv.colorado.gov/forms" },
+  NV: { dmv: "https://dmv.nv.gov", tax: "https://tax.nv.gov", forms: "https://dmv.nv.gov/forms.htm" },
+  ID: { dmv: "https://itd.idaho.gov/dmv", tax: "https://tax.idaho.gov", forms: "https://itd.idaho.gov/dmv/" },
 };
 
-// Validate URL and return status
+// Validate URL
 async function checkUrl(url: string): Promise<{ url: string; valid: boolean; status: number | string }> {
   if (!url) return { url, valid: false, status: "no_url" };
   try {
@@ -42,7 +97,7 @@ serve(async (req) => {
   }
 
   try {
-    const { state, dealer_id } = await req.json();
+    const { state, dealer_id, clear_existing } = await req.json();
     if (!state) throw new Error("State is required");
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
@@ -56,152 +111,57 @@ serve(async (req) => {
       forms: `https://dmv.${stateLower}.gov/forms`
     };
 
+    // Option to clear existing forms for this state first
+    if (clear_existing) {
+      console.log(`[${stateUpper}] Clearing existing forms...`);
+      await supabase.from("form_staging").delete().eq("state", stateUpper);
+    }
+
     // Get existing forms
     const { data: existing } = await supabase
       .from("form_staging")
       .select("form_number, form_name")
       .eq("state", stateUpper);
 
-    const existingKeys = new Set([
-      ...(existing?.map(f => f.form_number?.toUpperCase()).filter(Boolean) || []),
-      ...(existing?.map(f => f.form_name?.toLowerCase()).filter(Boolean) || [])
-    ]);
+    const existingNames = new Set(existing?.map(f => f.form_name?.toLowerCase()).filter(Boolean) || []);
 
-    console.log(`[${stateUpper}] Discovering forms...`);
+    console.log(`[${stateUpper}] Existing forms: ${existingNames.size}`);
+    console.log(`[${stateUpper}] Baseline forms: ${baselineForms.length}`);
 
-    // EXPLICIT AI PROMPT - demand 20+ forms
-    const systemPrompt = `You are a compliance expert for used car dealerships in ${stateUpper}.
+    // Ask AI ONLY for state-specific form numbers and URLs for our baseline forms
+    const formNamesForAI = baselineForms.map(f => f.form_name).join('\n- ');
 
-List EVERY form required to operate a used car dealership and complete vehicle sales.
+    const aiPrompt = `For ${stateUpper}, provide the official STATE FORM NUMBERS and PDF URLs for these dealer forms:
 
-YOU MUST RETURN AT LEAST 20 FORMS. This is critical - dealerships need many forms.
+${formNamesForAI}
 
-REQUIRED CATEGORIES - include forms from EACH category:
+Return a JSON object mapping each form name to its ${stateUpper}-specific details:
 
-1. DEAL DOCUMENTS (minimum 6 forms):
-   - Bill of Sale (state-specific)
-   - Buyers Order / Purchase Agreement
-   - Odometer Disclosure Statement (FEDERAL - required on ALL sales)
-   - FTC Buyers Guide / As-Is Disclosure (FEDERAL - required on ALL used cars)
-   - We-Owe / Due Bill
-   - Delivery Receipt / Acknowledgment
-   - Vehicle Condition Report
-
-2. TITLE & REGISTRATION (minimum 5 forms):
-   - Title Application / Transfer
-   - Dealer Report of Sale
-   - Power of Attorney for Title
-   - Lien Release / Satisfaction of Lien
-   - Duplicate Title Request
-   - Temporary Permit / Temp Tags
-   - VIN Verification / Inspection
-
-3. FINANCING / BHPH (minimum 6 forms):
-   - Retail Installment Contract / Motor Vehicle Contract of Sale
-   - Security Agreement
-   - Truth in Lending Disclosure (FEDERAL Reg Z)
-   - Right to Cure Default Notice
-   - Notice of Intent to Repossess
-   - Credit Application
-   - Privacy Notice (FEDERAL GLBA)
-   - GAP Waiver Agreement
-   - Arbitration Agreement
-
-4. TAX (minimum 2 forms):
-   - Sales and Use Tax Return
-   - Tax Exemption Certificate
-   - Resale Certificate
-
-5. DISCLOSURES (minimum 4 forms):
-   - Damage Disclosure Statement
-   - Salvage Title Disclosure
-   - Rebuilt/Reconstructed Title Disclosure
-   - Frame Damage Disclosure
-   - Flood Damage Disclosure
-   - Lemon Law Disclosure (if applicable)
-
-6. COMPLIANCE (minimum 2 forms):
-   - Dealer License Application/Renewal
-   - Surety Bond
-
-For source_urls, search these ${stateUpper} government websites:
-- ${resources.dmv}
-- ${resources.tax}
-- ${stateUpper.toLowerCase()}.gov
-- dps.${stateLower}.gov
-- dot.${stateLower}.gov
-
-Return ONLY a valid JSON array. No markdown code blocks. No explanations.
-MINIMUM 20 FORMS REQUIRED.`;
-
-    const userPrompt = `List ALL forms for ${stateUpper} used car dealers. Return JSON array:
-
-[
-  {
-    "form_name": "Bill of Sale",
+{
+  "Bill of Sale": {
     "form_number": "TC-891",
-    "category": "deal",
-    "description": "Required for all vehicle sales to document the transaction",
-    "required": true,
-    "source_urls": [
-      "https://dmv.utah.gov/forms/tc-891.pdf",
-      "https://tax.utah.gov/forms/current/tc-891.pdf"
-    ]
+    "source_urls": ["https://dmv.utah.gov/forms/tc-891.pdf", "https://tax.utah.gov/forms/tc-891.pdf"]
   },
-  {
-    "form_name": "Odometer Disclosure Statement",
-    "form_number": "FEDERAL",
-    "category": "deal",
-    "description": "Federal requirement for all motor vehicle transfers",
-    "required": true,
-    "source_urls": ["https://www.nhtsa.gov/document/odometer-disclosure"]
+  "Title Application": {
+    "form_number": "TC-656",
+    "source_urls": ["https://dmv.utah.gov/forms/tc-656.pdf"]
+  },
+  "Odometer Disclosure Statement": {
+    "form_number": "TC-891",
+    "source_urls": ["https://dmv.utah.gov/forms/tc-891.pdf"]
   }
-]
+}
 
-CHECKLIST - You MUST include ALL of these:
+IMPORTANT:
+- Use actual ${stateUpper} form numbers (like TC-69, TC-656, TC-891 for Utah)
+- Include multiple possible URLs from: ${resources.dmv}, ${resources.tax}
+- If form is federal only (FTC Buyers Guide, TILA), use "FEDERAL" and federal URLs
+- If you don't know the form number, use null
+- If you don't know any URLs, use empty array []
 
-DEAL DOCUMENTS (6+):
-☐ Bill of Sale
-☐ Buyers Order / Purchase Agreement
-☐ Odometer Disclosure (FEDERAL)
-☐ FTC Buyers Guide (FEDERAL)
-☐ We-Owe / Due Bill
-☐ Delivery Receipt
+Return ONLY the JSON object. No markdown.`;
 
-TITLE & REGISTRATION (5+):
-☐ Title Application
-☐ Dealer Report of Sale
-☐ Power of Attorney
-☐ Lien Release
-☐ Temporary Permit
-
-FINANCING / BHPH (6+):
-☐ Retail Installment Contract
-☐ Security Agreement
-☐ Truth in Lending (FEDERAL)
-☐ Right to Cure Notice
-☐ Credit Application
-☐ Privacy Notice (FEDERAL)
-
-TAX (2+):
-☐ Sales Tax Return
-☐ Exemption Certificate
-
-DISCLOSURES (4+):
-☐ Damage Disclosure
-☐ Salvage Title Disclosure
-☐ Rebuilt Title Disclosure
-☐ Frame Damage Disclosure
-
-COMPLIANCE (2+):
-☐ Dealer License
-☐ Surety Bond
-
-RETURN MINIMUM 20 FORMS. Include state-specific form numbers where applicable. For federal forms, use "FEDERAL" as form_number.
-
-Return the JSON array now:`;
-
-    console.log(`[${stateUpper}] Calling AI (expecting 20+ forms)...`);
+    console.log(`[${stateUpper}] Asking AI for state-specific form numbers and URLs...`);
 
     const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -212,9 +172,8 @@ Return the JSON array now:`;
       },
       body: JSON.stringify({
         model: "claude-3-5-sonnet-20241022",
-        max_tokens: 8192,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
+        max_tokens: 4096,
+        messages: [{ role: "user", content: aiPrompt }],
       }),
     });
 
@@ -223,111 +182,92 @@ Return the JSON array now:`;
     }
 
     const aiResult = await aiResponse.json();
-    const content = aiResult.content?.[0]?.text || "[]";
+    const content = aiResult.content?.[0]?.text || "{}";
 
-    // Parse JSON
-    let forms: any[] = [];
+    // Parse AI response
+    let stateFormInfo: Record<string, { form_number?: string; source_urls?: string[] }> = {};
     try {
       let cleaned = content.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      const match = cleaned.match(/\[[\s\S]*\]/);
+      const match = cleaned.match(/\{[\s\S]*\}/);
       if (match) cleaned = match[0];
-      forms = JSON.parse(cleaned);
+      stateFormInfo = JSON.parse(cleaned);
     } catch {
-      console.error(`[${stateUpper}] Parse error:`, content.substring(0, 500));
-      throw new Error("Failed to parse AI response");
+      console.error(`[${stateUpper}] Failed to parse AI response, using baseline only`);
+      stateFormInfo = {};
     }
 
-    const aiReturnedCount = forms.length;
-    console.log(`[${stateUpper}] AI returned ${aiReturnedCount} forms`);
+    console.log(`[${stateUpper}] AI provided info for ${Object.keys(stateFormInfo).length} forms`);
 
-    if (aiReturnedCount < 10) {
-      console.warn(`[${stateUpper}] WARNING: AI only returned ${aiReturnedCount} forms (expected 20+)`);
-    }
-
-    // Collect ALL URLs for parallel validation
-    const allUrls: { formIndex: number; url: string }[] = [];
-    for (let i = 0; i < forms.length; i++) {
-      const form = forms[i];
-      let urls: string[] = [];
-      if (Array.isArray(form.source_urls)) {
-        urls = form.source_urls.filter((u: any) => typeof u === 'string' && u.length > 0);
-      } else if (form.source_url && typeof form.source_url === 'string') {
-        urls = [form.source_url];
-      }
-      for (const url of urls) {
-        allUrls.push({ formIndex: i, url });
+    // Collect all URLs for validation
+    const allUrls: { formName: string; url: string }[] = [];
+    for (const [formName, info] of Object.entries(stateFormInfo)) {
+      if (info.source_urls && Array.isArray(info.source_urls)) {
+        for (const url of info.source_urls) {
+          if (typeof url === 'string' && url.length > 0) {
+            allUrls.push({ formName, url });
+          }
+        }
       }
     }
 
     console.log(`[${stateUpper}] Validating ${allUrls.length} URLs...`);
 
-    // Validate all URLs in parallel
+    // Validate URLs in parallel
     const urlResults = await Promise.all(allUrls.map(({ url }) => checkUrl(url)));
 
-    // Group results by form
-    const urlsByForm: Map<number, Array<{ url: string; valid: boolean; status: number | string }>> = new Map();
+    // Group URL results by form name
+    const urlsByForm: Map<string, Array<{ url: string; valid: boolean; status: number | string }>> = new Map();
     for (let i = 0; i < allUrls.length; i++) {
-      const { formIndex } = allUrls[i];
-      if (!urlsByForm.has(formIndex)) urlsByForm.set(formIndex, []);
-      urlsByForm.get(formIndex)!.push(urlResults[i]);
+      const { formName } = allUrls[i];
+      if (!urlsByForm.has(formName)) urlsByForm.set(formName, []);
+      urlsByForm.get(formName)!.push(urlResults[i]);
     }
 
-    // Build insert list
+    // Build final form list
     const toInsert: any[] = [];
-    const duplicates: string[] = [];
-    let totalUrlsValidated = 0;
+    let skippedCount = 0;
     let totalUrlsWorking = 0;
 
-    for (let i = 0; i < forms.length; i++) {
-      const form = forms[i];
-      if (!form.form_name) continue;
-
-      const formNum = form.form_number?.toString().toUpperCase().trim() || null;
-      const formName = form.form_name.toLowerCase().trim();
-
-      // Skip duplicates
-      if ((formNum && existingKeys.has(formNum)) || existingKeys.has(formName)) {
-        duplicates.push(formNum || form.form_name);
+    for (const baseForm of baselineForms) {
+      // Skip if already exists
+      if (existingNames.has(baseForm.form_name.toLowerCase())) {
+        skippedCount++;
         continue;
       }
-      if (formNum) existingKeys.add(formNum);
-      existingKeys.add(formName);
 
-      // Get URL results
-      const formUrls = urlsByForm.get(i) || [];
-      totalUrlsValidated += formUrls.length;
+      // Get state-specific info from AI
+      const stateInfo = stateFormInfo[baseForm.form_name] || {};
+      const formUrls = urlsByForm.get(baseForm.form_name) || [];
 
+      // Find working URL
       const workingUrl = formUrls.find(u => u.valid);
-      const hasWorkingUrl = !!workingUrl;
-      if (hasWorkingUrl) totalUrlsWorking++;
+      if (workingUrl) totalUrlsWorking++;
 
-      const alternateUrls = formUrls.map(u => ({ url: u.url, status: u.status, valid: u.valid }));
-
-      // Normalize category
-      let category = form.category?.toLowerCase() || "deal";
-      const validCategories = ["deal", "title", "financing", "tax", "disclosure", "compliance"];
-      if (!validCategories.includes(category)) category = "deal";
+      // Build alternate_urls
+      const alternateUrls = formUrls.length > 0 ? formUrls.map(u => ({
+        url: u.url,
+        status: u.status,
+        valid: u.valid
+      })) : null;
 
       toInsert.push({
-        form_number: formNum,
-        form_name: form.form_name.trim(),
+        form_number: stateInfo.form_number || baseForm.form_number || null,
+        form_name: baseForm.form_name,
         state: stateUpper,
         source_url: workingUrl?.url || formUrls[0]?.url || null,
-        category,
-        description: form.description || null,
+        category: baseForm.category,
+        description: baseForm.description,
         workflow_status: "staging",
-        pdf_validated: hasWorkingUrl,
+        pdf_validated: !!workingUrl,
         ai_discovered: true,
-        required_for: form.required === false ? ["optional"] : ["all_deals"],
-        alternate_urls: alternateUrls.length > 0 ? alternateUrls : null,
+        alternate_urls: alternateUrls,
         ...(dealer_id ? { dealer_id } : {}),
       });
     }
 
-    console.log(`[${stateUpper}] Inserting ${toInsert.length} forms...`);
-    console.log(`[${stateUpper}] URLs: ${totalUrlsValidated} checked, ${totalUrlsWorking} working`);
+    console.log(`[${stateUpper}] Inserting ${toInsert.length} forms (${skippedCount} already existed)...`);
 
-    // Insert all forms
+    // Insert forms
     let insertedCount = 0;
     let insertError: string | null = null;
 
@@ -339,8 +279,7 @@ Return the JSON array now:`;
 
         // Fallback without optional columns
         if (error.message.includes("column")) {
-          console.log(`[${stateUpper}] Retrying without optional columns...`);
-          const fallbackInsert = toInsert.map(({ required_for, alternate_urls, ...rest }) => rest);
+          const fallbackInsert = toInsert.map(({ alternate_urls, ...rest }) => rest);
           const { data: retryData, error: retryError } = await supabase.from("form_staging").insert(fallbackInsert).select("id");
 
           if (retryError) {
@@ -356,7 +295,7 @@ Return the JSON array now:`;
       }
     }
 
-    console.log(`[${stateUpper}] Done: ${insertedCount} inserted`);
+    console.log(`[${stateUpper}] Done: ${insertedCount} inserted, ${skippedCount} skipped (duplicates)`);
 
     // Count by category
     const byCategory: Record<string, number> = {};
@@ -381,10 +320,9 @@ Return the JSON array now:`;
         state: stateUpper,
 
         // Summary
-        ai_returned: aiReturnedCount,
+        baseline_forms: baselineForms.length,
         total_inserted: insertedCount,
-        duplicates_skipped: duplicates.length,
-        urls_checked: totalUrlsValidated,
+        already_existed: skippedCount,
         urls_working: totalUrlsWorking,
 
         // By category
@@ -397,7 +335,7 @@ Return the JSON array now:`;
         forms: formsList,
 
         ...(insertError ? { insert_error: insertError } : {}),
-        message: `Found ${aiReturnedCount} forms for ${stateUpper}. ${insertedCount} added. ${totalUrlsWorking}/${totalUrlsValidated} URLs valid.`
+        message: `${insertedCount} forms added for ${stateUpper}. ${skippedCount} already existed. ${totalUrlsWorking} URLs validated.`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
