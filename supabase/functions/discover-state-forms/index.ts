@@ -12,60 +12,23 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // State resource links
 const stateResources: Record<string, { dmv: string; tax: string; forms: string }> = {
-  UT: {
-    dmv: "https://dmv.utah.gov",
-    tax: "https://tax.utah.gov",
-    forms: "https://dmv.utah.gov/vehicles/dealers"
-  },
-  TX: {
-    dmv: "https://www.txdmv.gov",
-    tax: "https://comptroller.texas.gov",
-    forms: "https://www.txdmv.gov/motorists/buying-or-selling-a-vehicle"
-  },
-  CA: {
-    dmv: "https://www.dmv.ca.gov",
-    tax: "https://www.cdtfa.ca.gov",
-    forms: "https://www.dmv.ca.gov/portal/vehicle-industry-services/"
-  },
-  FL: {
-    dmv: "https://www.flhsmv.gov",
-    tax: "https://floridarevenue.com",
-    forms: "https://www.flhsmv.gov/motor-vehicles-tags-titles/"
-  },
-  AZ: {
-    dmv: "https://azdot.gov/mvd",
-    tax: "https://azdor.gov",
-    forms: "https://azdot.gov/motor-vehicles/vehicle-services"
-  },
-  CO: {
-    dmv: "https://dmv.colorado.gov",
-    tax: "https://tax.colorado.gov",
-    forms: "https://dmv.colorado.gov/dealer-services"
-  },
-  NV: {
-    dmv: "https://dmv.nv.gov",
-    tax: "https://tax.nv.gov",
-    forms: "https://dmv.nv.gov/dealer.htm"
-  },
-  ID: {
-    dmv: "https://itd.idaho.gov/dmv",
-    tax: "https://tax.idaho.gov",
-    forms: "https://itd.idaho.gov/dmv/vehicles/"
-  },
+  UT: { dmv: "https://dmv.utah.gov", tax: "https://tax.utah.gov", forms: "https://dmv.utah.gov/vehicles/dealers" },
+  TX: { dmv: "https://www.txdmv.gov", tax: "https://comptroller.texas.gov", forms: "https://www.txdmv.gov/motorists/buying-or-selling-a-vehicle" },
+  CA: { dmv: "https://www.dmv.ca.gov", tax: "https://www.cdtfa.ca.gov", forms: "https://www.dmv.ca.gov/portal/vehicle-industry-services/" },
+  FL: { dmv: "https://www.flhsmv.gov", tax: "https://floridarevenue.com", forms: "https://www.flhsmv.gov/motor-vehicles-tags-titles/" },
+  AZ: { dmv: "https://azdot.gov/mvd", tax: "https://azdor.gov", forms: "https://azdot.gov/motor-vehicles/vehicle-services" },
+  CO: { dmv: "https://dmv.colorado.gov", tax: "https://tax.colorado.gov", forms: "https://dmv.colorado.gov/dealer-services" },
+  NV: { dmv: "https://dmv.nv.gov", tax: "https://tax.nv.gov", forms: "https://dmv.nv.gov/dealer.htm" },
+  ID: { dmv: "https://itd.idaho.gov/dmv", tax: "https://tax.idaho.gov", forms: "https://itd.idaho.gov/dmv/vehicles/" },
 };
 
-// Validate URL and return status code
+// Validate URL and return status
 async function checkUrl(url: string): Promise<{ url: string; valid: boolean; status: number | string }> {
   if (!url) return { url, valid: false, status: "no_url" };
-
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(url, {
-      method: 'HEAD',
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
     clearTimeout(timeout);
     return { url, valid: res.ok, status: res.status };
   } catch (err) {
@@ -86,10 +49,11 @@ serve(async (req) => {
     if (!ANTHROPIC_API_KEY) throw new Error("Missing Anthropic API key");
 
     const stateUpper = state.toUpperCase();
+    const stateLower = state.toLowerCase();
     const resources = stateResources[stateUpper] || {
-      dmv: `https://dmv.${state.toLowerCase()}.gov`,
-      tax: `https://tax.${state.toLowerCase()}.gov`,
-      forms: `https://dmv.${state.toLowerCase()}.gov/forms`
+      dmv: `https://dmv.${stateLower}.gov`,
+      tax: `https://tax.${stateLower}.gov`,
+      forms: `https://dmv.${stateLower}.gov/forms`
     };
 
     // Get existing forms
@@ -105,77 +69,139 @@ serve(async (req) => {
 
     console.log(`[${stateUpper}] Discovering forms...`);
 
-    // AI prompt - request MULTIPLE URLs per form
-    const systemPrompt = `You are a compliance expert for ${stateUpper} used car dealers.
+    // EXPLICIT AI PROMPT - demand 20+ forms
+    const systemPrompt = `You are a compliance expert for used car dealerships in ${stateUpper}.
 
-List ALL forms a dealer needs. For EACH form, provide MULTIPLE possible download URLs if you know them.
+List EVERY form required to operate a used car dealership and complete vehicle sales.
 
-DEAL TYPES:
-- all_deals: Forms needed for every sale
-- cash: Cash purchase only
-- financed: BHPH/dealer financing
-- trade_in: Customer trading in vehicle
-- wholesale: Dealer-to-dealer
+YOU MUST RETURN AT LEAST 20 FORMS. This is critical - dealerships need many forms.
 
-For source_urls, include ALL possible locations where this form might be found:
-- State DMV website
-- State Tax Commission
-- Department of Revenue
-- Secretary of State
-- Federal sites (ftc.gov, nhtsa.gov)
+REQUIRED CATEGORIES - include forms from EACH category:
 
-Return ONLY valid JSON array. No markdown.`;
+1. DEAL DOCUMENTS (minimum 6 forms):
+   - Bill of Sale (state-specific)
+   - Buyers Order / Purchase Agreement
+   - Odometer Disclosure Statement (FEDERAL - required on ALL sales)
+   - FTC Buyers Guide / As-Is Disclosure (FEDERAL - required on ALL used cars)
+   - We-Owe / Due Bill
+   - Delivery Receipt / Acknowledgment
+   - Vehicle Condition Report
 
-    const userPrompt = `List ALL forms for ${stateUpper} used car dealers.
+2. TITLE & REGISTRATION (minimum 5 forms):
+   - Title Application / Transfer
+   - Dealer Report of Sale
+   - Power of Attorney for Title
+   - Lien Release / Satisfaction of Lien
+   - Duplicate Title Request
+   - Temporary Permit / Temp Tags
+   - VIN Verification / Inspection
 
-Return JSON array with MULTIPLE URLs per form:
+3. FINANCING / BHPH (minimum 6 forms):
+   - Retail Installment Contract / Motor Vehicle Contract of Sale
+   - Security Agreement
+   - Truth in Lending Disclosure (FEDERAL Reg Z)
+   - Right to Cure Default Notice
+   - Notice of Intent to Repossess
+   - Credit Application
+   - Privacy Notice (FEDERAL GLBA)
+   - GAP Waiver Agreement
+   - Arbitration Agreement
+
+4. TAX (minimum 2 forms):
+   - Sales and Use Tax Return
+   - Tax Exemption Certificate
+   - Resale Certificate
+
+5. DISCLOSURES (minimum 4 forms):
+   - Damage Disclosure Statement
+   - Salvage Title Disclosure
+   - Rebuilt/Reconstructed Title Disclosure
+   - Frame Damage Disclosure
+   - Flood Damage Disclosure
+   - Lemon Law Disclosure (if applicable)
+
+6. COMPLIANCE (minimum 2 forms):
+   - Dealer License Application/Renewal
+   - Surety Bond
+
+For source_urls, search these ${stateUpper} government websites:
+- ${resources.dmv}
+- ${resources.tax}
+- ${stateUpper.toLowerCase()}.gov
+- dps.${stateLower}.gov
+- dot.${stateLower}.gov
+
+Return ONLY a valid JSON array. No markdown code blocks. No explanations.
+MINIMUM 20 FORMS REQUIRED.`;
+
+    const userPrompt = `List ALL forms for ${stateUpper} used car dealers. Return JSON array:
+
 [
   {
-    "form_name": "Utah Bill of Sale",
+    "form_name": "Bill of Sale",
     "form_number": "TC-891",
     "category": "deal",
-    "deal_types": ["all_deals"],
-    "description": "Required for all vehicle sales",
+    "description": "Required for all vehicle sales to document the transaction",
+    "required": true,
     "source_urls": [
       "https://dmv.utah.gov/forms/tc-891.pdf",
-      "https://tax.utah.gov/forms/current/tc-891.pdf",
-      "https://dmv.utah.gov/vehicles/dealers/forms"
-    ],
-    "where_to_find": "Utah DMV or Tax Commission website"
+      "https://tax.utah.gov/forms/current/tc-891.pdf"
+    ]
+  },
+  {
+    "form_name": "Odometer Disclosure Statement",
+    "form_number": "FEDERAL",
+    "category": "deal",
+    "description": "Federal requirement for all motor vehicle transfers",
+    "required": true,
+    "source_urls": ["https://www.nhtsa.gov/document/odometer-disclosure"]
   }
 ]
 
-IMPORTANT:
-- source_urls is an ARRAY - include ALL possible URLs where the form might be found
-- Include .gov URLs from DMV, Tax Commission, DOT, etc.
-- It's OK if some URLs don't work - we'll validate them
-- Set source_urls to empty array [] if you don't know any URLs
+CHECKLIST - You MUST include ALL of these:
 
-FORMS TO INCLUDE (25-30 minimum):
+DEAL DOCUMENTS (6+):
+☐ Bill of Sale
+☐ Buyers Order / Purchase Agreement
+☐ Odometer Disclosure (FEDERAL)
+☐ FTC Buyers Guide (FEDERAL)
+☐ We-Owe / Due Bill
+☐ Delivery Receipt
 
-ALL DEALS:
-- Bill of Sale, Odometer Disclosure (federal), FTC Buyers Guide
-- Title Application, Dealer Report of Sale, Delivery Receipt
+TITLE & REGISTRATION (5+):
+☐ Title Application
+☐ Dealer Report of Sale
+☐ Power of Attorney
+☐ Lien Release
+☐ Temporary Permit
 
-FINANCED/BHPH:
-- Retail Installment Contract, Truth in Lending, Security Agreement
-- Payment Schedule, Credit Application, Privacy Notice, GAP Waiver
+FINANCING / BHPH (6+):
+☐ Retail Installment Contract
+☐ Security Agreement
+☐ Truth in Lending (FEDERAL)
+☐ Right to Cure Notice
+☐ Credit Application
+☐ Privacy Notice (FEDERAL)
 
-TRADE-IN:
-- Trade-In Appraisal, Lien Payoff Auth, Power of Attorney
+TAX (2+):
+☐ Sales Tax Return
+☐ Exemption Certificate
 
-TAX:
-- Sales Tax Return, Exemption Certificate
+DISCLOSURES (4+):
+☐ Damage Disclosure
+☐ Salvage Title Disclosure
+☐ Rebuilt Title Disclosure
+☐ Frame Damage Disclosure
 
-COMPLIANCE:
-- Dealer License, Surety Bond, Salesperson License
+COMPLIANCE (2+):
+☐ Dealer License
+☐ Surety Bond
 
-DISCLOSURES:
-- Salvage/Rebuilt, Damage, Frame Damage, Emissions/Safety
+RETURN MINIMUM 20 FORMS. Include state-specific form numbers where applicable. For federal forms, use "FEDERAL" as form_number.
 
-Return the JSON array now.`;
+Return the JSON array now:`;
 
-    console.log(`[${stateUpper}] Calling AI for forms with multiple URLs...`);
+    console.log(`[${stateUpper}] Calling AI (expecting 20+ forms)...`);
 
     const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -207,18 +233,21 @@ Return the JSON array now.`;
       if (match) cleaned = match[0];
       forms = JSON.parse(cleaned);
     } catch {
-      console.error(`[${stateUpper}] Parse error:`, content.substring(0, 300));
+      console.error(`[${stateUpper}] Parse error:`, content.substring(0, 500));
       throw new Error("Failed to parse AI response");
     }
 
     const aiReturnedCount = forms.length;
     console.log(`[${stateUpper}] AI returned ${aiReturnedCount} forms`);
 
-    // Collect ALL URLs from all forms for parallel validation
+    if (aiReturnedCount < 10) {
+      console.warn(`[${stateUpper}] WARNING: AI only returned ${aiReturnedCount} forms (expected 20+)`);
+    }
+
+    // Collect ALL URLs for parallel validation
     const allUrls: { formIndex: number; url: string }[] = [];
     for (let i = 0; i < forms.length; i++) {
       const form = forms[i];
-      // Handle both source_urls (array) and source_url (string) for backwards compatibility
       let urls: string[] = [];
       if (Array.isArray(form.source_urls)) {
         urls = form.source_urls.filter((u: any) => typeof u === 'string' && u.length > 0);
@@ -230,20 +259,16 @@ Return the JSON array now.`;
       }
     }
 
-    console.log(`[${stateUpper}] Validating ${allUrls.length} URLs in parallel...`);
+    console.log(`[${stateUpper}] Validating ${allUrls.length} URLs...`);
 
     // Validate all URLs in parallel
-    const urlResults = await Promise.all(
-      allUrls.map(({ url }) => checkUrl(url))
-    );
+    const urlResults = await Promise.all(allUrls.map(({ url }) => checkUrl(url)));
 
-    // Group results by form index
+    // Group results by form
     const urlsByForm: Map<number, Array<{ url: string; valid: boolean; status: number | string }>> = new Map();
     for (let i = 0; i < allUrls.length; i++) {
       const { formIndex } = allUrls[i];
-      if (!urlsByForm.has(formIndex)) {
-        urlsByForm.set(formIndex, []);
-      }
+      if (!urlsByForm.has(formIndex)) urlsByForm.set(formIndex, []);
       urlsByForm.get(formIndex)!.push(urlResults[i]);
     }
 
@@ -268,47 +293,32 @@ Return the JSON array now.`;
       if (formNum) existingKeys.add(formNum);
       existingKeys.add(formName);
 
-      // Get URL validation results for this form
+      // Get URL results
       const formUrls = urlsByForm.get(i) || [];
       totalUrlsValidated += formUrls.length;
 
-      // Find first working URL (if any)
       const workingUrl = formUrls.find(u => u.valid);
       const hasWorkingUrl = !!workingUrl;
       if (hasWorkingUrl) totalUrlsWorking++;
 
-      // Build alternate_urls array with all URLs and their status
-      const alternateUrls = formUrls.map(u => ({
-        url: u.url,
-        status: u.status,
-        valid: u.valid
-      }));
+      const alternateUrls = formUrls.map(u => ({ url: u.url, status: u.status, valid: u.valid }));
 
       // Normalize category
       let category = form.category?.toLowerCase() || "deal";
-      const validCategories = ["deal", "title", "financing", "tax", "compliance", "disclosure"];
+      const validCategories = ["deal", "title", "financing", "tax", "disclosure", "compliance"];
       if (!validCategories.includes(category)) category = "deal";
-
-      // Normalize deal_types
-      let dealTypes = form.deal_types;
-      if (!Array.isArray(dealTypes)) {
-        dealTypes = ["all_deals"];
-      }
 
       toInsert.push({
         form_number: formNum,
         form_name: form.form_name.trim(),
         state: stateUpper,
-        // source_url = first working URL, or first URL if none work, or null
         source_url: workingUrl?.url || formUrls[0]?.url || null,
         category,
         description: form.description || null,
         workflow_status: "staging",
-        // pdf_validated = true if ANY URL works
         pdf_validated: hasWorkingUrl,
         ai_discovered: true,
-        required_for: dealTypes,
-        // Store ALL URLs with their validation status
+        required_for: form.required === false ? ["optional"] : ["all_deals"],
         alternate_urls: alternateUrls.length > 0 ? alternateUrls : null,
         ...(dealer_id ? { dealer_id } : {}),
       });
@@ -322,24 +332,16 @@ Return the JSON array now.`;
     let insertError: string | null = null;
 
     if (toInsert.length > 0) {
-      const { data, error } = await supabase
-        .from("form_staging")
-        .insert(toInsert)
-        .select("id");
+      const { data, error } = await supabase.from("form_staging").insert(toInsert).select("id");
 
       if (error) {
         console.error(`[${stateUpper}] Insert error:`, error.message);
 
-        // Fallback: remove columns that might not exist
+        // Fallback without optional columns
         if (error.message.includes("column")) {
           console.log(`[${stateUpper}] Retrying without optional columns...`);
-
           const fallbackInsert = toInsert.map(({ required_for, alternate_urls, ...rest }) => rest);
-
-          const { data: retryData, error: retryError } = await supabase
-            .from("form_staging")
-            .insert(fallbackInsert)
-            .select("id");
+          const { data: retryData, error: retryError } = await supabase.from("form_staging").insert(fallbackInsert).select("id");
 
           if (retryError) {
             insertError = retryError.message;
@@ -356,29 +358,17 @@ Return the JSON array now.`;
 
     console.log(`[${stateUpper}] Done: ${insertedCount} inserted`);
 
-    // Organize forms by deal type
-    const byDealType: Record<string, any[]> = {
-      all_deals: [], cash: [], financed: [], trade_in: [], wholesale: [], consignment: []
-    };
-
+    // Count by category
+    const byCategory: Record<string, number> = {};
     for (const form of toInsert) {
-      const dealTypes = form.required_for || ["all_deals"];
-      for (const dt of dealTypes) {
-        if (byDealType[dt]) {
-          byDealType[dt].push({
-            form_name: form.form_name,
-            form_number: form.form_number,
-          });
-        }
-      }
+      byCategory[form.category] = (byCategory[form.category] || 0) + 1;
     }
 
-    // Build response with full URL info
+    // Build response
     const formsList = toInsert.map(f => ({
       form_name: f.form_name,
       form_number: f.form_number,
       category: f.category,
-      deal_types: f.required_for,
       description: f.description,
       source_url: f.source_url,
       pdf_validated: f.pdf_validated,
@@ -397,25 +387,17 @@ Return the JSON array now.`;
         urls_checked: totalUrlsValidated,
         urls_working: totalUrlsWorking,
 
+        // By category
+        forms_by_category: byCategory,
+
         // State resources
         state_resources: resources,
 
-        // Forms by deal type
-        forms_by_deal_type: {
-          all_deals: byDealType.all_deals.length,
-          cash_sale: byDealType.cash.length,
-          financed_bhph: byDealType.financed.length,
-          trade_in: byDealType.trade_in.length,
-          wholesale: byDealType.wholesale.length,
-          consignment: byDealType.consignment.length,
-        },
-
-        // Full form list with all URLs
+        // Full form list
         forms: formsList,
 
         ...(insertError ? { insert_error: insertError } : {}),
-
-        message: `Found ${aiReturnedCount} forms. ${insertedCount} added. Checked ${totalUrlsValidated} URLs (${totalUrlsWorking} working).`
+        message: `Found ${aiReturnedCount} forms for ${stateUpper}. ${insertedCount} added. ${totalUrlsWorking}/${totalUrlsValidated} URLs valid.`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
