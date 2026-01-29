@@ -750,8 +750,9 @@ export default function DevConsolePage() {
     setDiscoverProgress('');
 
     try {
+      let totalFormsFound = 0;
       let totalFormsAdded = 0;
-      let totalRulesAdded = 0;
+      let totalFormsSkipped = 0;
       let statesProcessed = 0;
 
       if (discoverState === 'all') {
@@ -759,31 +760,30 @@ export default function DevConsolePage() {
         const statesToProcess = keyStates;
         for (let i = 0; i < statesToProcess.length; i++) {
           const state = statesToProcess[i];
-          setDiscoverProgress(`Discovering ${state} forms & rules... (${i + 1}/${statesToProcess.length})`);
+          setDiscoverProgress(`Discovering ${state} forms... (${i + 1}/${statesToProcess.length})`);
 
           try {
             const response = await supabase.functions.invoke('discover-state-forms', {
               body: { state, dealer_id: dealerId }
             });
 
-            if (response.data?.forms_added) {
-              totalFormsAdded += response.data.forms_added;
-            }
-            if (response.data?.rules_added) {
-              totalRulesAdded += response.data.rules_added;
+            if (response.data) {
+              totalFormsFound += response.data.forms_found || 0;
+              totalFormsAdded += response.data.forms_added || 0;
+              totalFormsSkipped += response.data.forms_skipped || 0;
             }
             statesProcessed++;
           } catch (err) {
             console.error(`Failed to discover for ${state}:`, err);
-            // Continue with other states even if one fails
           }
         }
 
         setDiscoverProgress('');
-        showToast(`Found ${totalFormsAdded} forms and ${totalRulesAdded} rules across ${statesProcessed} states`);
+        const msg = `Found ${totalFormsFound} forms, ${totalFormsAdded} valid (${totalFormsSkipped} skipped due to broken links) across ${statesProcessed} states`;
+        showToast(msg);
       } else {
         // Discover for single state
-        setDiscoverProgress(`Discovering ${discoverState} forms & rules...`);
+        setDiscoverProgress(`Discovering ${discoverState} forms...`);
 
         const response = await supabase.functions.invoke('discover-state-forms', {
           body: { state: discoverState, dealer_id: dealerId }
@@ -797,10 +797,15 @@ export default function DevConsolePage() {
           throw new Error(response.data.error);
         }
 
-        totalFormsAdded = response.data?.forms_added || 0;
-        totalRulesAdded = response.data?.rules_added || 0;
+        const { forms_found = 0, forms_added = 0, forms_skipped = 0, skipped_reasons } = response.data || {};
         setDiscoverProgress('');
-        showToast(`Found ${totalFormsAdded} forms and ${totalRulesAdded} rules for ${discoverState}`);
+
+        // Show detailed result
+        let msg = `Found ${forms_found} forms for ${discoverState}. ${forms_added} valid, ${forms_skipped} skipped.`;
+        if (skipped_reasons?.length > 0) {
+          console.log('Skipped forms:', skipped_reasons);
+        }
+        showToast(msg);
       }
 
       loadAllData();
@@ -1294,19 +1299,7 @@ export default function DevConsolePage() {
                 <button onClick={runAIResearch} disabled={aiResearching} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
                   {aiResearching ? 'Discovering...' : 'AI Discover Forms'}
                 </button>
-                {formsNeedingFix > 0 && (
-                  <button
-                    onClick={fixMissingPDFs}
-                    disabled={fixingPDFs}
-                    style={{
-                      ...btnPrimary,
-                      backgroundColor: '#f59e0b',
-                      opacity: fixingPDFs ? 0.6 : 1
-                    }}
-                  >
-                    {fixingPDFs ? fixProgress || 'Fixing...' : `Fix ${formsNeedingFix} Missing PDFs`}
-                  </button>
-                )}
+                {/* Fix Missing PDFs button removed - URL validation now done during AI Discover */}
                 <HelpButton />
               </div>
             </div>
@@ -1644,68 +1637,144 @@ export default function DevConsolePage() {
                   </div>
                 </div>
 
-                {/* Library Table */}
+                {/* Library Table - Workflow Status: staging -> html_generated -> mapped -> production */}
                 <div style={cardStyle}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid #3f3f46' }}>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form Name</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping Score</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>HTML Template</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>PDF Link</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {getFilteredLibrary().map(f => (
-                        <tr
-                          key={f.id}
-                          style={{ borderBottom: '1px solid #3f3f46', cursor: (f.mapping_confidence || 0) < 99 ? 'pointer' : 'default', backgroundColor: (f.mapping_confidence || 0) < 99 ? 'rgba(234, 179, 8, 0.05)' : 'transparent' }}
-                          onClick={() => { if ((f.mapping_confidence || 0) < 99) setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || ['field1', 'field2', 'field3', 'field4', 'field5'] }); }}
-                        >
-                          <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>{f.form_number}</td>
-                          <td style={{ padding: '10px 8px' }}>
-                            <div>{f.form_name}</div>
-                            {f.description && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{f.description.substring(0, 50)}...</div>}
-                          </td>
-                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
-                          <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[f.category] || '#71717a', textTransform: 'uppercase' }}>{f.category}</span></td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                              <div style={{ width: '80px', height: '8px', backgroundColor: '#3f3f46', borderRadius: '4px', overflow: 'hidden' }}>
-                                <div style={{ width: `${f.mapping_confidence || 0}%`, height: '100%', backgroundColor: (f.mapping_confidence || 0) >= 99 ? '#22c55e' : (f.mapping_confidence || 0) >= 50 ? '#eab308' : '#ef4444' }} />
+                      {getFilteredLibrary().map(f => {
+                        const ws = f.workflow_status || 'staging';
+                        const statusColors = {
+                          staging: '#71717a',
+                          html_generated: '#eab308',
+                          mapped: '#3b82f6',
+                          production: '#22c55e'
+                        };
+                        const statusLabels = {
+                          staging: 'Staging',
+                          html_generated: 'HTML Ready',
+                          mapped: 'Mapped',
+                          production: 'Production'
+                        };
+                        return (
+                          <tr key={f.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                            <td style={{ padding: '10px 8px' }}>
+                              <div style={{ fontFamily: 'monospace', fontWeight: '600', marginBottom: '2px' }}>{f.form_number}</div>
+                              <div>{f.form_name}</div>
+                              {f.description && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{f.description.substring(0, 60)}...</div>}
+                            </td>
+                            <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
+                            <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[f.category] || '#71717a', textTransform: 'uppercase' }}>{f.category || f.doc_type || 'deal'}</span></td>
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              <span style={{
+                                padding: '4px 10px',
+                                borderRadius: '12px',
+                                fontSize: '11px',
+                                fontWeight: '600',
+                                backgroundColor: statusColors[ws],
+                                color: ws === 'production' ? '#000' : '#fff'
+                              }}>
+                                {ws === 'production' && '✓ '}{statusLabels[ws]}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              {f.source_url ? (
+                                <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: f.url_validated ? '#22c55e' : '#3b82f6', fontSize: '11px' }}>
+                                  {f.url_validated ? '✓ PDF' : 'View PDF'}
+                                </a>
+                              ) : (
+                                <span style={{ color: '#ef4444', fontSize: '11px' }}>Missing</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                {/* STAGING: Generate HTML */}
+                                {ws === 'staging' && (
+                                  <button
+                                    onClick={() => setTemplateGeneratorModal(f)}
+                                    style={{ background: 'none', border: 'none', color: '#a855f7', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}
+                                  >
+                                    Generate HTML
+                                  </button>
+                                )}
+                                {/* HTML_GENERATED: Analyze Mapping + View HTML */}
+                                {ws === 'html_generated' && (
+                                  <>
+                                    <button
+                                      onClick={() => setTemplateGeneratorModal(f)}
+                                      style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      View HTML
+                                    </button>
+                                    <button
+                                      onClick={() => setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || [] })}
+                                      style={{ background: 'none', border: 'none', color: '#eab308', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}
+                                    >
+                                      Analyze Mapping
+                                    </button>
+                                  </>
+                                )}
+                                {/* MAPPED: Edit Mapping + Promote */}
+                                {ws === 'mapped' && (
+                                  <>
+                                    <button
+                                      onClick={() => setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || [] })}
+                                      style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      Edit Mapping
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        await supabase.from('form_staging').update({ workflow_status: 'production', status: 'approved' }).eq('id', f.id);
+                                        showToast(`${f.form_name} promoted to production`);
+                                        loadAllData();
+                                      }}
+                                      style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}
+                                    >
+                                      Promote
+                                    </button>
+                                  </>
+                                )}
+                                {/* PRODUCTION: View + Edit (demotes) */}
+                                {ws === 'production' && (
+                                  <>
+                                    <button
+                                      onClick={() => setTemplateGeneratorModal(f)}
+                                      style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      View
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        await supabase.from('form_staging').update({ workflow_status: 'mapped' }).eq('id', f.id);
+                                        showToast(`${f.form_name} demoted to mapped for editing`);
+                                        loadAllData();
+                                      }}
+                                      style={{ background: 'none', border: 'none', color: '#eab308', cursor: 'pointer', fontSize: '11px' }}
+                                    >
+                                      Edit
+                                    </button>
+                                  </>
+                                )}
+                                {/* Common actions */}
+                                <button onClick={() => removeFromLibrary(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Delete</button>
                               </div>
-                              <span style={{ fontSize: '12px', fontWeight: '600', color: (f.mapping_confidence || 0) >= 99 ? '#22c55e' : '#eab308' }}>{f.mapping_confidence || 0}%</span>
-                            </div>
-                          </td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <span style={{
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '10px',
-                              textTransform: 'uppercase',
-                              backgroundColor: f.template_status === 'ready' ? '#22c55e' : f.template_status === 'generating' ? '#eab308' : '#3f3f46',
-                              color: f.template_status === 'generating' ? '#000' : '#fff'
-                            }}>
-                              {f.template_status || 'none'}
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                            {(f.mapping_confidence || 0) < 99 && <button onClick={() => setFieldMapperModal({ ...f, field_mapping: f.field_mapping || {}, detected_fields: f.detected_fields || ['field1', 'field2', 'field3', 'field4', 'field5'] })} style={{ background: 'none', border: 'none', color: '#eab308', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Map Fields</button>}
-                            <button onClick={() => setTemplateGeneratorModal(f)} style={{ background: 'none', border: 'none', color: '#a855f7', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }} title="Generate HTML template from PDF">
-                              {f.template_status === 'ready' ? 'Edit HTML' : f.template_status === 'generating' ? 'Generating...' : 'Generate HTML'}
-                            </button>
-                            <button onClick={() => setFormModal(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px', marginRight: '8px' }}>Edit</button>
-                            {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#a1a1aa', fontSize: '11px', marginRight: '8px' }}>PDF</a>}
-                            <button onClick={() => removeFromLibrary(f.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Remove</button>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
-                  {getFilteredLibrary().length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No forms in library. Promote forms from Staging or add manually.</p>}
+                  {getFilteredLibrary().length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No forms in library. Click "AI Discover Forms" to find forms for your state.</p>}
                 </div>
               </div>
             )}

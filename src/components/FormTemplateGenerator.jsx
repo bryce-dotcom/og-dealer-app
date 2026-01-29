@@ -133,14 +133,36 @@ export default function FormTemplateGenerator({ formId, pdfUrl, formName, state,
 
   const generateTemplate = async () => {
     if (!pdfUrl) {
-      setError('No PDF URL provided');
+      setError('No PDF URL provided. Please ensure the form has a valid PDF source.');
       return;
     }
 
     setIsGenerating(true);
     setError(null);
 
+    // 60 second timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      setError('Request timed out after 60 seconds. The PDF may be too large or the server is busy. Please try again.');
+      setIsGenerating(false);
+    }, 60000);
+
     try {
+      // First, validate the PDF URL is accessible
+      try {
+        const checkResponse = await fetch(pdfUrl, { method: 'HEAD', signal: controller.signal });
+        if (!checkResponse.ok) {
+          clearTimeout(timeoutId);
+          setError(`PDF not accessible (HTTP ${checkResponse.status}). The link may be broken or the file was moved.`);
+          setIsGenerating(false);
+          return;
+        }
+      } catch (fetchErr) {
+        // If HEAD fails, try anyway - some servers don't support HEAD
+        console.log('HEAD check failed, proceeding anyway:', fetchErr.message);
+      }
+
       const { data, error } = await supabase.functions.invoke('generate-form-template', {
         body: {
           pdf_url: pdfUrl,
@@ -150,12 +172,29 @@ export default function FormTemplateGenerator({ formId, pdfUrl, formName, state,
         }
       });
 
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error);
+      clearTimeout(timeoutId);
+
+      if (error) {
+        if (error.message?.includes('404') || error.message?.includes('not found')) {
+          throw new Error('PDF not found (404). The link may be outdated.');
+        }
+        throw error;
+      }
+      if (!data.success) {
+        if (data.error?.includes('Failed to download') || data.error?.includes('404')) {
+          throw new Error('PDF could not be downloaded. Please check the source URL is correct.');
+        }
+        throw new Error(data.error);
+      }
 
       setHtmlContent(data.html);
       setEditedHtml(data.html);
       setDetectedFields(data.detected_fields || []);
+
+      // Update workflow_status to html_generated
+      if (formId) {
+        await supabase.from('form_staging').update({ workflow_status: 'html_generated' }).eq('id', formId);
+      }
 
       // Initialize field mappings with smart defaults
       const initialMappings = {};
@@ -165,7 +204,12 @@ export default function FormTemplateGenerator({ formId, pdfUrl, formName, state,
       setFieldMappings(initialMappings);
 
     } catch (err) {
-      setError(err.message);
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        setError('Request was cancelled or timed out.');
+      } else {
+        setError(err.message || 'An unexpected error occurred');
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -280,13 +324,14 @@ export default function FormTemplateGenerator({ formId, pdfUrl, formName, state,
 
       if (mappingError) throw mappingError;
 
-      // Update form_staging
+      // Update form_staging with workflow_status = 'mapped'
       const { error: updateError } = await supabase
         .from('form_staging')
         .update({
           html_template_url: htmlPath,
           field_mapping: fieldMappings,
-          template_status: 'ready'
+          template_status: 'ready',
+          workflow_status: 'mapped'
         })
         .eq('id', formId);
 
@@ -336,10 +381,26 @@ export default function FormTemplateGenerator({ formId, pdfUrl, formName, state,
           </div>
         </div>
 
-        {/* Error display */}
+        {/* Error display with retry */}
         {error && (
-          <div className="mx-4 mt-4 p-3 bg-red-100 border border-red-300 text-red-700 rounded">
-            {error}
+          <div className="mx-4 mt-4 p-3 bg-red-100 border border-red-300 text-red-700 rounded flex items-center justify-between">
+            <div>
+              <strong>Error:</strong> {error}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={generateTemplate}
+                className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => setError(null)}
+                className="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
 

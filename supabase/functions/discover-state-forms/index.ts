@@ -10,7 +10,7 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// State DMV base URLs for fallback
+// State DMV base URLs
 const stateDmvUrls: Record<string, string> = {
   AL: "https://revenue.alabama.gov/motor-vehicle/forms",
   AK: "https://doa.alaska.gov/dmv/forms",
@@ -69,14 +69,46 @@ function getStateFormsUrl(state: string): string {
   return stateDmvUrls[state.toUpperCase()] || `https://dmv.${state.toLowerCase()}.gov/forms`;
 }
 
+// Validate PDF URL with HEAD request
+async function validatePdfUrl(url: string): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+    const response = await fetch(url, {
+      method: 'HEAD',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      // Check content type if available
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('pdf') || contentType.includes('octet-stream') || response.status === 200) {
+        return { valid: true };
+      }
+      return { valid: false, error: `Invalid content-type: ${contentType}` };
+    }
+
+    return { valid: false, error: `HTTP ${response.status} ${response.statusText}` };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return { valid: false, error: 'Request timeout (10s)' };
+    }
+    return { valid: false, error: err.message || 'Network error' };
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // This function uses service role key for DB operations
-    // Authorization is handled by Supabase's built-in JWT verification
     const { state, county, dealer_id } = await req.json();
 
     if (!state) {
@@ -99,17 +131,17 @@ serve(async (req) => {
 
     const existingFormNumbers = new Set(existingForms?.map((f) => f.form_number) || []);
 
-    // AI prompt with doc_type, deadline tracking, and compliance notes
+    // AI prompt for form discovery
     const systemPrompt = `You are an expert on US state DMV forms and dealer compliance requirements.
 
 Your task: Return a JSON array of official DMV/state forms required for auto dealers in the given state.
 
 CRITICAL REQUIREMENTS:
 1. Every form MUST have a source_url - use official state DMV/DOT/DOR website URLs
-2. If you don't know the exact URL, use the state's main forms page: ${fallbackUrl}
-3. Form numbers must be accurate and real
-4. Categorize each form by doc_type and identify deadlines
-5. Include detailed compliance_notes explaining the form's purpose and requirements
+2. URLs must point to actual PDF files when possible (ending in .pdf)
+3. If you don't know the exact PDF URL, use the state's main forms page: ${fallbackUrl}
+4. Form numbers must be accurate and real
+5. Categorize each form by doc_type
 
 Response format - return ONLY valid JSON, no markdown:
 [
@@ -118,22 +150,7 @@ Response format - return ONLY valid JSON, no markdown:
     "form_name": "Application for Utah Title",
     "doc_type": "deal",
     "source_url": "https://dmv.utah.gov/forms/tc-69.pdf",
-    "has_deadline": true,
-    "deadline_days": 30,
-    "deadline_description": "Within 30 days of sale",
-    "cadence": "per_transaction",
-    "compliance_notes": "Required for every vehicle sale. Dealer must submit within 30 days or face $25 late fee. Used for: all cash sales, financed sales, trade-ins. Requires odometer disclosure, VIN verification, and lienholder info if financed."
-  },
-  {
-    "form_number": "TC-62M",
-    "form_name": "Monthly Sales Tax Return",
-    "doc_type": "tax",
-    "source_url": "https://tax.utah.gov/forms/tc-62m.pdf",
-    "has_deadline": true,
-    "deadline_days": 25,
-    "deadline_description": "Due by 25th of following month",
-    "cadence": "monthly",
-    "compliance_notes": "Monthly sales tax filing. Report all vehicle sales from previous month. Include sales tax collected on each transaction. Penalty: 10% of tax due + interest if late. Required even if no sales (file zero return)."
+    "description": "Required for every vehicle sale to transfer title"
   }
 ]
 
@@ -142,78 +159,23 @@ doc_type values:
 - finance: BHPH/financing disclosures, loan agreements, truth in lending
 - licensing: Dealer license renewal, surety bonds, business permits
 - tax: Sales tax returns, use tax filings
-- reporting: DMV reports, inventory reports, dealer reports
+- reporting: DMV reports, inventory reports
 
-cadence values:
-- per_transaction: Required for each vehicle sale
-- monthly: Monthly filing requirement
-- quarterly: Quarterly filing requirement
-- annually: Annual renewal/filing
-
-compliance_notes should include:
-- What the form is used for
-- When it's required (cash sale, BHPH, financed, trade-in, all sales)
-- Penalties for non-compliance
-- Any special requirements or conditions
-
-Only include forms you're confident exist. Every form MUST have source_url.`;
+Only include forms you're confident exist with valid URLs.`;
 
     const userPrompt = `List ALL required forms for auto dealers in ${stateUpper}${county ? `, ${county} County` : ""}.
 
-Be COMPREHENSIVE - include EVERY form a dealer might need. For EACH form provide detailed compliance_notes.
-
-=== DEAL DOCS (per sale) ===
-- Title application/transfer forms
-- Registration forms
+Include:
+- Title application/transfer forms (per sale)
 - Bill of Sale
-- Odometer Disclosure Statement (federal requirement)
-- Buyer's Guide (FTC requirement - AS-IS or warranty)
-- Damage Disclosure (if required by state)
-- Lemon Law Disclosure (if applicable)
-- Power of Attorney forms
-- Lien release forms
+- Odometer Disclosure Statement
+- Buyer's Guide (FTC requirement)
+- BHPH/Financing disclosure forms
+- Sales tax forms
+- Dealer license forms
 
-=== BHPH / IN-HOUSE FINANCING DOCS ===
-THIS IS CRITICAL - Include ALL forms for Buy Here Pay Here dealers:
-- Retail Installment Sales Contract (RISC)
-- Truth in Lending Disclosure (TILA - Regulation Z)
-- Right to Cancel Notice (if applicable)
-- Payment Schedule/Amortization
-- Insurance Disclosure
-- GAP Insurance forms
-- Repossession notices
-- Default/Late payment notices
-- Privacy Notice (GLBA requirement)
-- Risk-Based Pricing Notice
-- Adverse Action Notice
-- Credit Application
-- BHPH-specific state disclosures
-
-=== OUTSIDE/BANK FINANCING DOCS ===
-- Lender Assignment forms
-- Finance disclosure forms
-- Credit application authorization
-
-=== LICENSING & COMPLIANCE DOCS ===
-- Dealer License Application/Renewal
-- Surety Bond forms
-- Business License
-- Sales Tax License/Permit
-- Continuing Education certificates
-- Dealer Plate applications
-
-=== TAX DOCS ===
-- Sales Tax Return (monthly/quarterly)
-- Use Tax Return
-- Inventory Tax (if applicable)
-
-=== REPORTING DOCS ===
-- DMV sales reports
-- Title status reports
-- Inventory reports
-
-Include federal forms that apply (FTC Buyer's Guide, TILA disclosures, odometer statement).
-Every form MUST have source_url and detailed compliance_notes explaining when and why it's needed.`;
+For each form provide the exact PDF URL if known, otherwise use the state forms page URL.
+Return ONLY the JSON array.`;
 
     console.log(`Discovering forms for ${stateUpper}...`);
 
@@ -243,43 +205,33 @@ Every form MUST have source_url and detailed compliance_notes explaining when an
     // Parse the JSON response
     let forms: any[] = [];
     try {
-      console.log("Raw AI response:", content);
+      let cleaned = content
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
 
-      // Clean up the response - multiple strategies
-      let cleaned = content;
-
-      // Remove markdown code blocks
-      cleaned = cleaned.replace(/```json\s*/gi, "");
-      cleaned = cleaned.replace(/```\s*/g, "");
-
-      // Try to find JSON array in the response
       const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
       if (arrayMatch) {
         cleaned = arrayMatch[0];
       }
 
-      cleaned = cleaned.trim();
-      console.log("Cleaned response:", cleaned);
-
       forms = JSON.parse(cleaned);
     } catch (parseError) {
       console.error("Failed to parse AI response:", content);
-      console.error("Parse error:", parseError.message);
-
-      // Return empty array instead of throwing - let function complete gracefully
       forms = [];
-      console.log("Returning empty forms array due to parse error");
     }
 
     if (!Array.isArray(forms)) {
       forms = [];
     }
 
-    console.log(`AI returned ${forms.length} forms`);
+    console.log(`AI returned ${forms.length} forms, validating URLs...`);
 
-    // Process and validate forms
+    // Process and VALIDATE forms
     const validForms: any[] = [];
-    const skippedForms: string[] = [];
+    const skippedForms: any[] = [];
+    let validatedCount = 0;
+    let invalidCount = 0;
 
     for (const form of forms) {
       // Skip if already exists
@@ -290,47 +242,61 @@ Every form MUST have source_url and detailed compliance_notes explaining when an
 
       // Validate required fields
       if (!form.form_number || !form.form_name) {
-        console.log(`Skipping invalid form (missing number/name):`, form);
-        skippedForms.push(form.form_number || "unknown");
+        skippedForms.push({
+          form_name: form.form_name || 'Unknown',
+          url: form.source_url,
+          reason: 'Missing form number or name'
+        });
         continue;
       }
 
-      // FIX: Handle missing source_url with fallback
+      // Get or generate URL
       let sourceUrl = form.source_url;
       if (!sourceUrl || sourceUrl.trim() === "") {
-        // Generate a fallback URL based on form number
         const formSlug = form.form_number.toLowerCase().replace(/[^a-z0-9]/g, "-");
-        sourceUrl = `${fallbackUrl}/${formSlug}`;
-        console.log(`Generated fallback URL for ${form.form_number}: ${sourceUrl}`);
+        sourceUrl = `${fallbackUrl}/${formSlug}.pdf`;
       }
 
       // Validate URL format
       try {
         new URL(sourceUrl);
       } catch {
-        // If URL is invalid, use fallback
         sourceUrl = fallbackUrl;
-        console.log(`Invalid URL for ${form.form_number}, using fallback: ${sourceUrl}`);
       }
 
-      // Include doc_type and deadline tracking
-      validForms.push({
-        form_number: form.form_number.toUpperCase().trim(),
-        form_name: form.form_name.trim(),
-        state: stateUpper,
-        source_url: sourceUrl,
-        status: "pending",
-        ai_confidence: 0.70,
-        doc_type: form.doc_type || "deal",
-        has_deadline: form.has_deadline === true,
-        deadline_days: form.deadline_days ? parseInt(form.deadline_days) : null,
-        deadline_description: form.deadline_description || null,
-        cadence: form.cadence || (form.has_deadline ? "per_transaction" : null),
-        compliance_notes: form.compliance_notes || null,
-      });
+      // VALIDATE PDF URL with HEAD request
+      console.log(`Validating: ${form.form_number} - ${sourceUrl}`);
+      const validation = await validatePdfUrl(sourceUrl);
+
+      if (validation.valid) {
+        validatedCount++;
+        validForms.push({
+          form_number: form.form_number.toUpperCase().trim(),
+          form_name: form.form_name.trim(),
+          state: stateUpper,
+          source_url: sourceUrl,
+          status: "pending",
+          workflow_status: "staging",
+          ai_confidence: 0.85,
+          doc_type: form.doc_type || "deal",
+          description: form.description || null,
+          url_validated: true,
+          url_validated_at: new Date().toISOString(),
+        });
+        console.log(`✓ Valid: ${form.form_number}`);
+      } else {
+        invalidCount++;
+        skippedForms.push({
+          form_name: form.form_name,
+          form_number: form.form_number,
+          url: sourceUrl,
+          reason: validation.error || 'URL not accessible'
+        });
+        console.log(`✗ Invalid: ${form.form_number} - ${validation.error}`);
+      }
     }
 
-    console.log(`Valid forms to insert: ${validForms.length}, Skipped: ${skippedForms.length}`);
+    console.log(`Validation complete: ${validatedCount} valid, ${invalidCount} invalid`);
 
     // Insert valid forms into form_staging
     let insertedCount = 0;
@@ -349,183 +315,23 @@ Every form MUST have source_url and detailed compliance_notes explaining when an
       console.log(`Successfully inserted ${insertedCount} forms`);
     }
 
-    // === PHASE 2: Discover Compliance Rules ===
-    let rulesInserted = 0;
-    try {
-      console.log(`Discovering compliance rules for ${stateUpper}...`);
+    // Log skipped forms for review
+    if (skippedForms.length > 0) {
+      console.log("Skipped forms:", JSON.stringify(skippedForms, null, 2));
 
-      // Check existing rules to avoid duplicates
-      const { data: existingRules } = await supabase
-        .from("compliance_rules")
-        .select("rule_name")
-        .eq("state", stateUpper);
-
-      const existingRuleNames = new Set(existingRules?.map((r) => r.rule_name.toLowerCase()) || []);
-
-    const rulesSystemPrompt = `You are an expert on US state auto dealer compliance requirements for independent auto dealers.
-
-Your task: Return a JSON array of ALL compliance rules and filing requirements for auto dealers in the given state.
-
-Response format - return ONLY valid JSON, no markdown:
-[
-  {
-    "rule_name": "Monthly Sales Tax Return",
-    "category": "tax",
-    "agency": "Utah State Tax Commission",
-    "description": "Report and remit sales tax collected on vehicle sales",
-    "deadline_days": 25,
-    "deadline_description": "Due by 25th of following month",
-    "filing_cadence": "monthly",
-    "late_fee": 25.00,
-    "penalty_description": "5% penalty plus 1% per month interest",
-    "required_forms": ["TC-62M", "TC-941"]
-  }
-]
-
-Categories to cover:
-- tax: Sales tax filing, use tax, inventory tax
-- title: Title transfer deadlines per sale
-- registration: Vehicle registration requirements
-- licensing: Dealer license renewal, bond requirements, surety
-- disclosure: Required buyer disclosures (AS-IS, damage, odometer)
-- financing: BHPH/financing disclosure requirements, usury limits
-- reporting: DMV/state reporting requirements
-
-Filing cadence options: monthly, quarterly, annually, per_transaction
-
-IMPORTANT: Include rules for ALL deal types:
-1. CASH SALES - what's required per cash sale
-2. BHPH (Buy Here Pay Here) - in-house financing requirements, disclosures, usury laws
-3. BANK/OUTSIDE FINANCING - third party financing requirements
-4. TRADE-INS - title/lien payoff requirements
-
-Be specific about deadlines. Example: "Title must be transferred within 30 days of sale"
-
-Only include rules you're confident about for this specific state.`;
-
-    const rulesUserPrompt = `List ALL compliance rules for auto dealers in ${stateUpper}, covering:
-
-1. TAX RULES:
-   - Sales tax filing frequency and deadlines
-   - Use tax requirements
-   - Late penalties
-
-2. TITLE/REGISTRATION (per sale):
-   - Days to transfer title after sale
-   - Registration requirements
-   - Temporary tag limits and duration
-
-3. DEALER LICENSING:
-   - License renewal deadlines
-   - Bond requirements
-   - Continuing education
-
-4. DEAL-TYPE SPECIFIC:
-   - BHPH/In-house financing rules (interest rate caps, disclosure requirements)
-   - Cash sale requirements
-   - Outside financing requirements
-
-5. REQUIRED DISCLOSURES:
-   - Buyer's Guide requirements
-   - AS-IS disclosure
-   - Damage/accident disclosure
-   - Odometer disclosure timing
-
-For each rule provide: deadline_days, filing_cadence, late_fee, required_forms, agency
-- The responsible agency`;
-
-    const rulesResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-3-haiku-20240307",
-        max_tokens: 4000,
-        system: rulesSystemPrompt,
-        messages: [{ role: "user", content: rulesUserPrompt }],
-      }),
-    });
-
-    console.log(`Rules API response status: ${rulesResponse.status}`);
-
-    let rules: any[] = [];
-    if (rulesResponse.ok) {
-      const rulesResult = await rulesResponse.json();
-      const rulesContent = rulesResult.content?.[0]?.text || "[]";
-      console.log(`Rules AI response length: ${rulesContent.length} chars`);
-
+      // Store skipped forms in discovery log for review
       try {
-        let cleanedRules = rulesContent;
-        cleanedRules = cleanedRules.replace(/```json\s*/gi, "");
-        cleanedRules = cleanedRules.replace(/```\s*/g, "");
-        const arrayMatch = cleanedRules.match(/\[[\s\S]*\]/);
-        if (arrayMatch) {
-          cleanedRules = arrayMatch[0];
-        }
-        rules = JSON.parse(cleanedRules.trim());
-        console.log(`Parsed ${rules.length} rules from AI`);
-      } catch (parseError) {
-        console.error("Failed to parse rules response:", rulesContent.substring(0, 500));
-        rules = [];
+        await supabase.from("form_discovery_log").insert({
+          state: stateUpper,
+          forms_found: forms.length,
+          forms_added: insertedCount,
+          forms_skipped: skippedForms.length,
+          skipped_details: skippedForms,
+          discovered_at: new Date().toISOString()
+        });
+      } catch (logErr) {
+        console.log("Could not log to form_discovery_log (table may not exist)");
       }
-    } else {
-      const errorText = await rulesResponse.text();
-      console.error(`Rules API failed: ${rulesResponse.status} - ${errorText.substring(0, 200)}`);
-    }
-
-    if (Array.isArray(rules) && rules.length > 0) {
-        const validRules: any[] = [];
-
-        for (const rule of rules) {
-          if (!rule.rule_name || existingRuleNames.has(rule.rule_name.toLowerCase())) {
-            continue;
-          }
-
-          // Only use columns that definitely exist in compliance_rules table
-          const ruleDescription = [
-            rule.description || "",
-            "",
-            `Filing: ${rule.filing_cadence || "per transaction"}`,
-            `Deadline: ${rule.deadline_description || (rule.deadline_days + " days after sale/period")}`,
-            rule.penalty_description ? `Penalty: ${rule.penalty_description}` : "",
-            rule.required_forms?.length ? `Forms: ${rule.required_forms.join(", ")}` : "",
-          ].filter(Boolean).join("\n");
-
-          validRules.push({
-            rule_name: rule.rule_name,
-            state: stateUpper,
-            category: rule.category || "tax",
-            agency: rule.agency || `${stateUpper} DMV`,
-            description: ruleDescription,
-            deadline_days: parseInt(rule.deadline_days) || 30,
-            late_fee: parseFloat(rule.late_fee) || 0,
-          });
-
-          console.log(`Prepared rule: ${rule.rule_name}`);
-        }
-
-      console.log(`Valid rules to insert: ${validRules.length}`);
-
-      if (validRules.length > 0) {
-        const { data: insertedRules, error: rulesError } = await supabase
-          .from("compliance_rules")
-          .insert(validRules)
-          .select();
-
-        if (!rulesError) {
-          rulesInserted = insertedRules?.length || 0;
-          console.log(`Successfully inserted ${rulesInserted} compliance rules`);
-        } else {
-          console.error("Rules insert error:", JSON.stringify(rulesError));
-        }
-      }
-    }
-    } catch (rulesErr: any) {
-      console.error("Rules discovery failed (non-fatal):", rulesErr.message);
-      // Continue without rules - forms still work
     }
 
     return new Response(
@@ -535,9 +341,8 @@ For each rule provide: deadline_days, filing_cadence, late_fee, required_forms, 
         forms_found: forms.length,
         forms_added: insertedCount,
         forms_skipped: skippedForms.length,
-        valid_forms: validForms.length,
-        rules_added: rulesInserted,
         skipped_reasons: skippedForms.length > 0 ? skippedForms : undefined,
+        message: `Found ${forms.length} forms, validated URLs. ${insertedCount} valid forms added, ${skippedForms.length} skipped due to broken links.`
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
