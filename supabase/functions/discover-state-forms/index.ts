@@ -10,91 +10,33 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// State agency info for better research context
-const stateAgencies: Record<string, { dmv: string; tax: string; mved: string; formsPage: string }> = {
-  UT: {
-    dmv: "Utah Division of Motor Vehicles",
-    tax: "Utah State Tax Commission",
-    mved: "Utah Motor Vehicle Enforcement Division (MVED)",
-    formsPage: "https://dmv.utah.gov/vehicles/dealers"
-  },
-  TX: {
-    dmv: "Texas Department of Motor Vehicles (TxDMV)",
-    tax: "Texas Comptroller of Public Accounts",
-    mved: "Texas DMV Motor Vehicle Division",
-    formsPage: "https://www.txdmv.gov/motorists/buying-or-selling-a-vehicle"
-  },
-  CA: {
-    dmv: "California Department of Motor Vehicles",
-    tax: "California Department of Tax and Fee Administration (CDTFA)",
-    mved: "DMV Occupational Licensing",
-    formsPage: "https://www.dmv.ca.gov/portal/vehicle-industry-services/occupational-licensing/"
-  },
-  FL: {
-    dmv: "Florida DHSMV",
-    tax: "Florida Department of Revenue",
-    mved: "FLHSMV Dealer Services",
-    formsPage: "https://www.flhsmv.gov/motor-vehicles-tags-titles/motor-vehicle-dealers/"
-  },
-  ID: {
-    dmv: "Idaho Transportation Department (ITD)",
-    tax: "Idaho State Tax Commission",
-    mved: "Idaho Dealer Licensing",
-    formsPage: "https://itd.idaho.gov/dmv/"
-  },
-  AZ: {
-    dmv: "Arizona MVD",
-    tax: "Arizona Department of Revenue",
-    mved: "Arizona Dealer Licensing Unit",
-    formsPage: "https://azdot.gov/motor-vehicles/dealer-services"
-  },
-  CO: {
-    dmv: "Colorado DMV",
-    tax: "Colorado Department of Revenue",
-    mved: "Colorado Auto Industry Division",
-    formsPage: "https://dmv.colorado.gov/dealer-services"
-  },
-  NV: {
-    dmv: "Nevada DMV",
-    tax: "Nevada Department of Taxation",
-    mved: "Nevada DMV Compliance Enforcement",
-    formsPage: "https://dmv.nv.gov/dealer.htm"
-  },
+// State agency context for AI research
+const stateContext: Record<string, string> = {
+  UT: "Utah DMV, Utah State Tax Commission, Utah MVED",
+  TX: "TxDMV, Texas Comptroller",
+  CA: "California DMV, CDTFA",
+  FL: "Florida DHSMV, Florida DOR",
+  ID: "Idaho ITD, Idaho Tax Commission",
+  AZ: "Arizona MVD, Arizona DOR",
+  CO: "Colorado DMV, Colorado DOR",
+  NV: "Nevada DMV, Nevada Taxation",
 };
 
-// Validate PDF URL with HEAD request (3 second timeout)
-async function validatePdfUrl(url: string): Promise<{ valid: boolean; error?: string }> {
-  if (!url) return { valid: false, error: "No URL provided" };
-
-  try {
-    new URL(url); // Validate URL format first
-  } catch {
-    return { valid: false, error: "Invalid URL format" };
-  }
-
+// Quick URL check (3s timeout)
+async function checkUrl(url: string): Promise<boolean> {
+  if (!url) return false;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-    const response = await fetch(url, {
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, {
       method: 'HEAD',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      signal: controller.signal
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      return { valid: true };
-    }
-    return { valid: false, error: `HTTP ${response.status}` };
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      return { valid: false, error: 'Timeout' };
-    }
-    return { valid: false, error: 'Network error' };
+    clearTimeout(timeout);
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -105,106 +47,29 @@ serve(async (req) => {
 
   try {
     const { state, dealer_id } = await req.json();
-
-    if (!state) {
-      throw new Error("State is required");
-    }
+    if (!state) throw new Error("State is required");
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!ANTHROPIC_API_KEY) {
-      throw new Error("Missing Anthropic API key");
-    }
+    if (!ANTHROPIC_API_KEY) throw new Error("Missing Anthropic API key");
 
     const stateUpper = state.toUpperCase();
-    const agencies = stateAgencies[stateUpper] || {
-      dmv: `${stateUpper} Department of Motor Vehicles`,
-      tax: `${stateUpper} Department of Revenue`,
-      mved: `${stateUpper} Motor Vehicle Division`,
-      formsPage: `https://dmv.${state.toLowerCase()}.gov`
-    };
+    const agencies = stateContext[stateUpper] || `${stateUpper} DMV, ${stateUpper} Tax Commission`;
 
-    // Check existing forms to avoid duplicates
-    const { data: existingForms } = await supabase
+    // Get existing forms to avoid duplicates
+    const { data: existing } = await supabase
       .from("form_staging")
       .select("form_number, form_name")
       .eq("state", stateUpper);
 
-    const existingSet = new Set([
-      ...(existingForms?.map(f => f.form_number?.toUpperCase()).filter(Boolean) || []),
-      ...(existingForms?.map(f => f.form_name?.toLowerCase()).filter(Boolean) || [])
+    const existingKeys = new Set([
+      ...(existing?.map(f => f.form_number?.toUpperCase()).filter(Boolean) || []),
+      ...(existing?.map(f => f.form_name?.toLowerCase()).filter(Boolean) || [])
     ]);
 
-    console.log(`[${stateUpper}] Starting discovery. ${existingSet.size} existing forms.`);
+    console.log(`[${stateUpper}] Discovering forms...`);
 
-    // ========================================
-    // PHASE 1: AI RESEARCH
-    // ========================================
-
-    const systemPrompt = `You are an expert on US auto dealer compliance. Research ALL forms required for a used car dealer in ${stateUpper}.
-
-State agencies:
-- ${agencies.dmv}
-- ${agencies.tax}
-- ${agencies.mved}
-- Federal: FTC, DOT (odometer requirements)
-
-IMPORTANT INSTRUCTIONS:
-1. List EVERY required form - even if you don't know the exact PDF URL
-2. For source_url: Only provide URLs you're confident are correct .gov URLs. Set to null if unsure.
-3. Be comprehensive - dealers typically need 20-35 different forms/documents
-4. Include federal requirements (FTC Buyers Guide, Odometer Disclosure)
-
-Return ONLY a JSON array, no markdown.`;
-
-    const userPrompt = `List ALL forms required for a used car dealer in ${stateUpper}. Include:
-
-TITLE/REGISTRATION (per sale):
-- Title application/transfer
-- Registration application
-- Temporary permit
-- Lien release/satisfaction
-- Power of attorney
-- Odometer disclosure (federal)
-
-TAX FORMS:
-- Sales tax return (frequency varies by state)
-- Tax exemption certificates
-- Dealer sales reports
-
-DEAL DOCUMENTS (per transaction):
-- Bill of Sale (state-specific)
-- Buyer's Order / Purchase Agreement
-- FTC Buyers Guide (federal - ALL used car dealers)
-- As-Is Warranty Disclosure
-- Vehicle Condition Report
-- Delivery Receipt/Acknowledgment
-
-DEALER COMPLIANCE:
-- Dealer license application/renewal
-- Surety bond requirements
-- Salesperson license (if required)
-
-BHPH/FINANCING (if applicable):
-- Retail Installment Contract
-- Truth in Lending Disclosure (federal Reg Z)
-- Privacy Notice (federal GLBA)
-- Risk-Based Pricing Notice
-
-Return JSON array with this structure:
-{
-  "form_name": "Name of form",
-  "form_number": "TC-69" or null,
-  "category": "deal" | "title" | "tax" | "compliance" | "financing",
-  "description": "What it's used for",
-  "source_url": "https://exact.url/form.pdf" or null,
-  "issuing_authority": "Utah DMV" | "FTC" | etc,
-  "frequency": "per_deal" | "monthly" | "annually" | "as_needed",
-  "required_for": ["cash_deal", "financed_deal", "trade_in"]
-}`;
-
-    console.log(`[${stateUpper}] Calling Claude API...`);
-
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    // AI Research - ask for ALL forms
+    const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -214,19 +79,41 @@ Return JSON array with this structure:
       body: JSON.stringify({
         model: "claude-3-5-sonnet-20241022",
         max_tokens: 8192,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
+        system: `You research auto dealer compliance forms. List ALL required forms for dealers in ${stateUpper}.
+Agencies: ${agencies}, plus Federal (FTC, DOT).
+Return ONLY a JSON array. No markdown. Include forms even if you don't know the PDF URL.`,
+        messages: [{
+          role: "user",
+          content: `List ALL forms a used car dealer needs in ${stateUpper}:
+
+1. TITLE/REGISTRATION: Title application, registration, temp permits, lien release, POA, odometer disclosure
+2. TAX: Sales tax returns, exemption certificates
+3. DEAL DOCS: Bill of sale, buyer's order, FTC Buyers Guide, as-is disclosure, delivery receipt
+4. COMPLIANCE: Dealer license, surety bond, salesperson license
+5. FINANCING: Retail installment contract, truth in lending, privacy notice
+
+Return JSON array:
+[
+  {
+    "form_name": "Form Name",
+    "form_number": "TC-123" or null,
+    "category": "deal|title|tax|compliance|financing",
+    "description": "What it's for",
+    "source_url": "https://..." or null
+  }
+]
+
+Include 20-35 forms. Set source_url to null if unsure.`
+        }],
       }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[${stateUpper}] Anthropic API error:`, errorText);
-      throw new Error(`AI API error: ${response.status}`);
+    if (!aiResponse.ok) {
+      throw new Error(`AI API error: ${aiResponse.status}`);
     }
 
-    const result = await response.json();
-    const content = result.content?.[0]?.text || "[]";
+    const aiResult = await aiResponse.json();
+    const content = aiResult.content?.[0]?.text || "[]";
 
     // Parse JSON
     let forms: any[] = [];
@@ -235,162 +122,125 @@ Return JSON array with this structure:
       const match = cleaned.match(/\[[\s\S]*\]/);
       if (match) cleaned = match[0];
       forms = JSON.parse(cleaned);
-    } catch (e) {
-      console.error(`[${stateUpper}] JSON parse error:`, content.substring(0, 200));
+    } catch {
       throw new Error("Failed to parse AI response");
     }
 
     if (!Array.isArray(forms) || forms.length === 0) {
-      throw new Error("AI returned no forms");
+      throw new Error("No forms returned");
     }
 
-    console.log(`[${stateUpper}] AI found ${forms.length} forms. Validating...`);
+    console.log(`[${stateUpper}] AI found ${forms.length} forms. Validating URLs...`);
 
-    // ========================================
-    // PHASE 2: VALIDATE URLs (parallel)
-    // ========================================
-
-    const validationResults = await Promise.all(
-      forms.map(async (form) => {
-        const validation = form.source_url
-          ? await validatePdfUrl(form.source_url)
-          : { valid: false, error: "No URL" };
-        return { form, validation };
-      })
+    // Validate all URLs in parallel
+    const validated = await Promise.all(
+      forms.map(async (form) => ({
+        form,
+        urlValid: form.source_url ? await checkUrl(form.source_url) : false
+      }))
     );
 
-    // ========================================
-    // PHASE 3: INSERT ALL FORMS
-    // ========================================
-
-    const formsToInsert: any[] = [];
-    const duplicatesSkipped: string[] = [];
-    let validPdfCount = 0;
+    // Build insert list - ADD ALL FORMS
+    const toInsert: any[] = [];
+    const skipped: string[] = [];
+    let readyCount = 0;
     let needsUploadCount = 0;
 
-    for (const { form, validation } of validationResults) {
+    for (const { form, urlValid } of validated) {
       if (!form.form_name) continue;
 
-      // Check duplicates
       const formNum = form.form_number?.toUpperCase()?.trim();
       const formName = form.form_name?.toLowerCase()?.trim();
 
-      if ((formNum && existingSet.has(formNum)) || (formName && existingSet.has(formName))) {
-        duplicatesSkipped.push(form.form_number || form.form_name);
+      // Skip duplicates
+      if ((formNum && existingKeys.has(formNum)) || (formName && existingKeys.has(formName))) {
+        skipped.push(formNum || form.form_name);
         continue;
       }
+      existingKeys.add(formNum || "");
+      existingKeys.add(formName || "");
 
-      // Add to existing set to prevent duplicates within this batch
-      if (formNum) existingSet.add(formNum);
-      if (formName) existingSet.add(formName);
+      // Determine status based on URL validity
+      // PDF valid → staging (ready for HTML generation)
+      // PDF invalid/missing → needs_upload (user must upload PDF)
+      const workflowStatus = urlValid ? "staging" : "needs_upload";
 
-      const pdfValid = validation.valid;
-
-      // ALL forms get inserted - workflow_status indicates if PDF needs upload
-      // 'staging' = PDF available, ready for processing
-      // 'needs_upload' = form required but PDF must be manually uploaded
-      const workflowStatus = pdfValid ? "staging" : "needs_upload";
-
-      if (pdfValid) {
-        validPdfCount++;
+      if (urlValid) {
+        readyCount++;
       } else {
         needsUploadCount++;
       }
 
-      // Normalize category
       let category = form.category?.toLowerCase() || "deal";
       if (!["deal", "title", "tax", "compliance", "financing"].includes(category)) {
         category = "deal";
       }
 
-      formsToInsert.push({
-        // Core fields
+      toInsert.push({
         form_number: formNum || null,
         form_name: form.form_name.trim(),
         state: stateUpper,
         source_url: form.source_url || null,
-        category: category,
+        category,
         description: form.description || null,
-
-        // Status tracking
         workflow_status: workflowStatus,
-        pdf_validated: pdfValid,
-
-        // AI metadata
+        pdf_validated: urlValid,
         ai_discovered: true,
-        last_verified: new Date().toISOString(),
-
-        // Extended fields (will be ignored if columns don't exist)
-        issuing_authority: form.issuing_authority || null,
-        required_for: form.required_for || null,
-        frequency: form.frequency || null,
-
-        // Dealer association
         ...(dealer_id ? { dealer_id } : {}),
       });
     }
 
-    console.log(`[${stateUpper}] Inserting ${formsToInsert.length} forms...`);
+    console.log(`[${stateUpper}] Inserting ${toInsert.length} forms (${readyCount} ready, ${needsUploadCount} need upload)...`);
 
-    // Insert in batches to handle potential column mismatches
+    // Insert all forms
     let insertedCount = 0;
-    let insertErrors: string[] = [];
+    let insertError = null;
 
-    if (formsToInsert.length > 0) {
-      // Try full insert first
+    if (toInsert.length > 0) {
       const { data, error } = await supabase
         .from("form_staging")
-        .insert(formsToInsert)
+        .insert(toInsert)
         .select("id");
 
       if (error) {
         console.error(`[${stateUpper}] Insert error:`, error.message);
 
-        // If error mentions a column, try inserting with minimal fields
-        if (error.message.includes("column") || error.message.includes("violates")) {
-          console.log(`[${stateUpper}] Retrying with minimal fields...`);
+        // Fallback: try with just 'staging' status if constraint fails
+        if (error.message.includes("violates") || error.message.includes("constraint")) {
+          console.log(`[${stateUpper}] Retrying with staging status...`);
 
-          const minimalForms = formsToInsert.map(f => ({
-            form_number: f.form_number,
-            form_name: f.form_name,
-            state: f.state,
-            source_url: f.source_url,
-            category: f.category,
-            description: f.description,
-            workflow_status: "staging", // Use safe default
-            pdf_validated: f.pdf_validated,
-            ai_discovered: true,
-            ...(dealer_id ? { dealer_id } : {}),
+          const fallbackInsert = toInsert.map(f => ({
+            ...f,
+            workflow_status: "staging" // Use safe default
           }));
 
           const { data: retryData, error: retryError } = await supabase
             .from("form_staging")
-            .insert(minimalForms)
+            .insert(fallbackInsert)
             .select("id");
 
           if (retryError) {
-            insertErrors.push(retryError.message);
-            console.error(`[${stateUpper}] Retry failed:`, retryError.message);
+            insertError = retryError.message;
           } else {
             insertedCount = retryData?.length || 0;
           }
         } else {
-          insertErrors.push(error.message);
+          insertError = error.message;
         }
       } else {
         insertedCount = data?.length || 0;
       }
     }
 
-    console.log(`[${stateUpper}] Complete: ${insertedCount} inserted, ${duplicatesSkipped.length} duplicates`);
+    console.log(`[${stateUpper}] Done: ${insertedCount} inserted`);
 
-    // Build response
-    const formsList = formsToInsert.map(f => ({
+    // Build response with full form list
+    const formsList = toInsert.map(f => ({
       form_name: f.form_name,
       form_number: f.form_number,
       category: f.category,
-      status: f.workflow_status,
-      pdf_available: f.pdf_validated,
+      workflow_status: f.workflow_status,
+      pdf_validated: f.pdf_validated,
       source_url: f.source_url,
       description: f.description,
     }));
@@ -399,20 +249,14 @@ Return JSON array with this structure:
       JSON.stringify({
         success: true,
         state: stateUpper,
-        message: `Found ${forms.length} required forms for ${stateUpper}. ${insertedCount} added (${validPdfCount} with PDF, ${needsUploadCount} need upload). ${duplicatesSkipped.length} duplicates skipped.`,
-
-        // Summary counts
-        total_discovered: forms.length,
-        forms_inserted: insertedCount,
-        forms_with_pdf: validPdfCount,
-        forms_need_upload: needsUploadCount,
-        duplicates_skipped: duplicatesSkipped.length,
-
-        // Detailed lists
+        total_found: forms.length,
+        total_inserted: insertedCount,
+        ready_for_processing: readyCount,
+        needs_upload: needsUploadCount,
+        duplicates_skipped: skipped.length,
         forms: formsList,
-
-        // Errors if any
-        ...(insertErrors.length > 0 ? { errors: insertErrors } : {}),
+        ...(insertError ? { error: insertError } : {}),
+        message: `Found ${forms.length} forms. ${insertedCount} added to database (${readyCount} ready, ${needsUploadCount} need PDF upload).`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
