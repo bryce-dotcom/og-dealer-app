@@ -10,7 +10,7 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// State resource links - where dealers can find forms
+// State resource links
 const stateResources: Record<string, { dmv: string; tax: string; forms: string }> = {
   UT: {
     dmv: "https://dmv.utah.gov",
@@ -54,6 +54,25 @@ const stateResources: Record<string, { dmv: string; tax: string; forms: string }
   },
 };
 
+// Validate URL and return status code
+async function checkUrl(url: string): Promise<{ url: string; valid: boolean; status: number | string }> {
+  if (!url) return { url, valid: false, status: "no_url" };
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, {
+      method: 'HEAD',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    clearTimeout(timeout);
+    return { url, valid: res.ok, status: res.status };
+  } catch (err) {
+    return { url, valid: false, status: err.name === 'AbortError' ? 'timeout' : 'error' };
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -84,87 +103,79 @@ serve(async (req) => {
       ...(existing?.map(f => f.form_name?.toLowerCase()).filter(Boolean) || [])
     ]);
 
-    console.log(`[${stateUpper}] Discovering forms by deal type...`);
+    console.log(`[${stateUpper}] Discovering forms...`);
 
-    // AI prompt focused on DEAL TYPES
+    // AI prompt - request MULTIPLE URLs per form
     const systemPrompt = `You are a compliance expert for ${stateUpper} used car dealers.
 
-Your job: List ALL forms/documents a dealer needs, organized by WHEN they're used.
+List ALL forms a dealer needs. For EACH form, provide MULTIPLE possible download URLs if you know them.
 
-DEAL TYPES TO COVER:
-1. CASH SALE - Customer pays full amount, no financing
-2. FINANCED SALE (BHPH) - Dealer provides in-house financing
-3. TRADE-IN - Customer trades in a vehicle as part of deal
-4. WHOLESALE - Dealer-to-dealer sale
-5. CONSIGNMENT - Selling vehicle on behalf of owner
+DEAL TYPES:
+- all_deals: Forms needed for every sale
+- cash: Cash purchase only
+- financed: BHPH/dealer financing
+- trade_in: Customer trading in vehicle
+- wholesale: Dealer-to-dealer
 
-FOR EACH FORM, specify which deal types require it using this array:
-deal_types: ["cash", "financed", "trade_in", "wholesale", "consignment", "all_deals"]
-
-Use "all_deals" for forms needed on EVERY transaction (like bill of sale, odometer).
-
-IMPORTANT:
-- Include ALL federal requirements (FTC Buyers Guide, Odometer Disclosure, TILA for financing)
-- Include ${stateUpper}-specific forms with actual form numbers if known
-- Set source_url to null if unsure - don't guess URLs
-- Focus on being COMPLETE, not on having working URLs
+For source_urls, include ALL possible locations where this form might be found:
+- State DMV website
+- State Tax Commission
+- Department of Revenue
+- Secretary of State
+- Federal sites (ftc.gov, nhtsa.gov)
 
 Return ONLY valid JSON array. No markdown.`;
 
-    const userPrompt = `List ALL forms for a ${stateUpper} used car dealer. Return JSON array:
+    const userPrompt = `List ALL forms for ${stateUpper} used car dealers.
 
+Return JSON array with MULTIPLE URLs per form:
 [
   {
-    "form_name": "Bill of Sale",
-    "form_number": "TC-891" or null,
-    "category": "deal" | "title" | "financing" | "tax" | "compliance" | "disclosure",
-    "deal_types": ["cash", "financed", "trade_in", "wholesale", "consignment", "all_deals"],
-    "description": "Required for all vehicle sales to document transfer",
-    "source_url": "https://..." or null,
-    "where_to_find": "Utah DMV website or Tax Commission"
+    "form_name": "Utah Bill of Sale",
+    "form_number": "TC-891",
+    "category": "deal",
+    "deal_types": ["all_deals"],
+    "description": "Required for all vehicle sales",
+    "source_urls": [
+      "https://dmv.utah.gov/forms/tc-891.pdf",
+      "https://tax.utah.gov/forms/current/tc-891.pdf",
+      "https://dmv.utah.gov/vehicles/dealers/forms"
+    ],
+    "where_to_find": "Utah DMV or Tax Commission website"
   }
 ]
 
-MUST INCLUDE (at minimum):
+IMPORTANT:
+- source_urls is an ARRAY - include ALL possible URLs where the form might be found
+- Include .gov URLs from DMV, Tax Commission, DOT, etc.
+- It's OK if some URLs don't work - we'll validate them
+- Set source_urls to empty array [] if you don't know any URLs
 
-EVERY DEAL needs:
-- Bill of Sale (state form if exists)
-- Odometer Disclosure Statement (federal)
-- FTC Buyers Guide / As-Is disclosure
-- Title Application
-- Dealer Report of Sale
-- Vehicle Delivery Receipt
+FORMS TO INCLUDE (25-30 minimum):
 
-FINANCED/BHPH deals also need:
-- Retail Installment Contract
-- Truth in Lending Disclosure (federal Reg Z)
-- Security Agreement
-- Payment Schedule
-- Credit Application
-- Privacy Notice (GLBA)
-- GAP Waiver (if offered)
+ALL DEALS:
+- Bill of Sale, Odometer Disclosure (federal), FTC Buyers Guide
+- Title Application, Dealer Report of Sale, Delivery Receipt
 
-TRADE-IN deals also need:
-- Trade-In Appraisal form
-- Title from customer
-- Lien payoff authorization (if applicable)
-- Power of Attorney
+FINANCED/BHPH:
+- Retail Installment Contract, Truth in Lending, Security Agreement
+- Payment Schedule, Credit Application, Privacy Notice, GAP Waiver
 
-TAX & COMPLIANCE:
-- Monthly Sales Tax Return
-- Tax Exemption Certificate (for exempt buyers)
-- Dealer License Renewal
-- Surety Bond
+TRADE-IN:
+- Trade-In Appraisal, Lien Payoff Auth, Power of Attorney
+
+TAX:
+- Sales Tax Return, Exemption Certificate
+
+COMPLIANCE:
+- Dealer License, Surety Bond, Salesperson License
 
 DISCLOSURES:
-- Salvage/Rebuilt Title Disclosure
-- Damage Disclosure
-- Frame Damage Disclosure
-- Emissions/Safety Inspection (if required in ${stateUpper})
+- Salvage/Rebuilt, Damage, Frame Damage, Emissions/Safety
 
-Include at least 25-30 forms total. For "where_to_find" suggest where dealer can get the form.`;
+Return the JSON array now.`;
 
-    console.log(`[${stateUpper}] Calling AI...`);
+    console.log(`[${stateUpper}] Calling AI for forms with multiple URLs...`);
 
     const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -203,11 +214,47 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
     const aiReturnedCount = forms.length;
     console.log(`[${stateUpper}] AI returned ${aiReturnedCount} forms`);
 
-    // Build insert list - ALL forms get added
+    // Collect ALL URLs from all forms for parallel validation
+    const allUrls: { formIndex: number; url: string }[] = [];
+    for (let i = 0; i < forms.length; i++) {
+      const form = forms[i];
+      // Handle both source_urls (array) and source_url (string) for backwards compatibility
+      let urls: string[] = [];
+      if (Array.isArray(form.source_urls)) {
+        urls = form.source_urls.filter((u: any) => typeof u === 'string' && u.length > 0);
+      } else if (form.source_url && typeof form.source_url === 'string') {
+        urls = [form.source_url];
+      }
+      for (const url of urls) {
+        allUrls.push({ formIndex: i, url });
+      }
+    }
+
+    console.log(`[${stateUpper}] Validating ${allUrls.length} URLs in parallel...`);
+
+    // Validate all URLs in parallel
+    const urlResults = await Promise.all(
+      allUrls.map(({ url }) => checkUrl(url))
+    );
+
+    // Group results by form index
+    const urlsByForm: Map<number, Array<{ url: string; valid: boolean; status: number | string }>> = new Map();
+    for (let i = 0; i < allUrls.length; i++) {
+      const { formIndex } = allUrls[i];
+      if (!urlsByForm.has(formIndex)) {
+        urlsByForm.set(formIndex, []);
+      }
+      urlsByForm.get(formIndex)!.push(urlResults[i]);
+    }
+
+    // Build insert list
     const toInsert: any[] = [];
     const duplicates: string[] = [];
+    let totalUrlsValidated = 0;
+    let totalUrlsWorking = 0;
 
-    for (const form of forms) {
+    for (let i = 0; i < forms.length; i++) {
+      const form = forms[i];
       if (!form.form_name) continue;
 
       const formNum = form.form_number?.toString().toUpperCase().trim() || null;
@@ -221,6 +268,22 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
       if (formNum) existingKeys.add(formNum);
       existingKeys.add(formName);
 
+      // Get URL validation results for this form
+      const formUrls = urlsByForm.get(i) || [];
+      totalUrlsValidated += formUrls.length;
+
+      // Find first working URL (if any)
+      const workingUrl = formUrls.find(u => u.valid);
+      const hasWorkingUrl = !!workingUrl;
+      if (hasWorkingUrl) totalUrlsWorking++;
+
+      // Build alternate_urls array with all URLs and their status
+      const alternateUrls = formUrls.map(u => ({
+        url: u.url,
+        status: u.status,
+        valid: u.valid
+      }));
+
       // Normalize category
       let category = form.category?.toLowerCase() || "deal";
       const validCategories = ["deal", "title", "financing", "tax", "compliance", "disclosure"];
@@ -232,43 +295,33 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
         dealTypes = ["all_deals"];
       }
 
-      // Build where_to_find with state resources
-      let whereToFind = form.where_to_find || null;
-      if (!whereToFind) {
-        if (category === "tax") {
-          whereToFind = resources.tax;
-        } else if (category === "title" || category === "deal") {
-          whereToFind = resources.dmv;
-        } else {
-          whereToFind = resources.forms;
-        }
-      }
-
       toInsert.push({
         form_number: formNum,
         form_name: form.form_name.trim(),
         state: stateUpper,
-        source_url: form.source_url || null,
+        // source_url = first working URL, or first URL if none work, or null
+        source_url: workingUrl?.url || formUrls[0]?.url || null,
         category,
         description: form.description || null,
-        // All forms start as needs_upload since we're not validating URLs
         workflow_status: "staging",
-        pdf_validated: false,
+        // pdf_validated = true if ANY URL works
+        pdf_validated: hasWorkingUrl,
         ai_discovered: true,
-        // Store deal_types and where_to_find in description if no dedicated columns
         required_for: dealTypes,
+        // Store ALL URLs with their validation status
+        alternate_urls: alternateUrls.length > 0 ? alternateUrls : null,
         ...(dealer_id ? { dealer_id } : {}),
       });
     }
 
     console.log(`[${stateUpper}] Inserting ${toInsert.length} forms...`);
+    console.log(`[${stateUpper}] URLs: ${totalUrlsValidated} checked, ${totalUrlsWorking} working`);
 
     // Insert all forms
     let insertedCount = 0;
     let insertError: string | null = null;
 
     if (toInsert.length > 0) {
-      // Try insert with required_for field
       const { data, error } = await supabase
         .from("form_staging")
         .insert(toInsert)
@@ -277,11 +330,11 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
       if (error) {
         console.error(`[${stateUpper}] Insert error:`, error.message);
 
-        // Fallback without required_for if column doesn't exist
-        if (error.message.includes("column") || error.message.includes("required_for")) {
-          console.log(`[${stateUpper}] Retrying without required_for...`);
+        // Fallback: remove columns that might not exist
+        if (error.message.includes("column")) {
+          console.log(`[${stateUpper}] Retrying without optional columns...`);
 
-          const fallbackInsert = toInsert.map(({ required_for, ...rest }) => rest);
+          const fallbackInsert = toInsert.map(({ required_for, alternate_urls, ...rest }) => rest);
 
           const { data: retryData, error: retryError } = await supabase
             .from("form_staging")
@@ -301,16 +354,11 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
       }
     }
 
-    console.log(`[${stateUpper}] Inserted: ${insertedCount}, Duplicates: ${duplicates.length}`);
+    console.log(`[${stateUpper}] Done: ${insertedCount} inserted`);
 
-    // Organize forms by deal type for response
+    // Organize forms by deal type
     const byDealType: Record<string, any[]> = {
-      all_deals: [],
-      cash: [],
-      financed: [],
-      trade_in: [],
-      wholesale: [],
-      consignment: []
+      all_deals: [], cash: [], financed: [], trade_in: [], wholesale: [], consignment: []
     };
 
     for (const form of toInsert) {
@@ -320,14 +368,12 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
           byDealType[dt].push({
             form_name: form.form_name,
             form_number: form.form_number,
-            category: form.category,
-            description: form.description,
           });
         }
       }
     }
 
-    // Build response
+    // Build response with full URL info
     const formsList = toInsert.map(f => ({
       form_name: f.form_name,
       form_number: f.form_number,
@@ -335,6 +381,8 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
       deal_types: f.required_for,
       description: f.description,
       source_url: f.source_url,
+      pdf_validated: f.pdf_validated,
+      all_urls: f.alternate_urls,
     }));
 
     return new Response(
@@ -346,11 +394,13 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
         ai_returned: aiReturnedCount,
         total_inserted: insertedCount,
         duplicates_skipped: duplicates.length,
+        urls_checked: totalUrlsValidated,
+        urls_working: totalUrlsWorking,
 
-        // State resources - where to find forms
+        // State resources
         state_resources: resources,
 
-        // Forms organized by deal type
+        // Forms by deal type
         forms_by_deal_type: {
           all_deals: byDealType.all_deals.length,
           cash_sale: byDealType.cash.length,
@@ -360,13 +410,12 @@ Include at least 25-30 forms total. For "where_to_find" suggest where dealer can
           consignment: byDealType.consignment.length,
         },
 
-        // Full form list
+        // Full form list with all URLs
         forms: formsList,
 
-        // Error if any
         ...(insertError ? { insert_error: insertError } : {}),
 
-        message: `Found ${aiReturnedCount} forms for ${stateUpper}. ${insertedCount} added to database.`
+        message: `Found ${aiReturnedCount} forms. ${insertedCount} added. Checked ${totalUrlsValidated} URLs (${totalUrlsWorking} working).`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
