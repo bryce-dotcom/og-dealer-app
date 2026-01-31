@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import FormTemplateGenerator from '../components/FormTemplateGenerator';
@@ -35,6 +35,8 @@ export default function DevConsolePage() {
   const [stagingFilter, setStagingFilter] = useState('all');
   const [stagingStateFilter, setStagingStateFilter] = useState('all');
   const [uploadFormModal, setUploadFormModal] = useState(null);
+  const [inlineUploadingId, setInlineUploadingId] = useState(null); // Track which row is uploading
+  const stagingFileInputRef = useRef(null); // Ref for hidden file input
   const [libraryStateFilter, setLibraryStateFilter] = useState('all');
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(null);
   const [discoverState, setDiscoverState] = useState('all');
@@ -530,14 +532,75 @@ export default function DevConsolePage() {
   const [stagingMapperModal, setStagingMapperModal] = useState(null);
 
   const analyzeForm = async (form) => {
+    if (!form.source_url) {
+      showToast('Please upload a PDF first before analyzing', 'error');
+      return;
+    }
     setLoading(true);
+
     try {
-      const { data, error } = await supabase.functions.invoke('analyze-form', {
-        body: { form_id: form.id, source_url: form.source_url }
+      let pdfUrl = form.source_url;
+      const isExternalUrl = !pdfUrl.includes('supabase.co/storage');
+
+      // If it's an external URL, try to fetch and upload to our storage first
+      if (isExternalUrl) {
+        showToast(`Fetching PDF from external link...`);
+        try {
+          const response = await fetch(pdfUrl);
+          if (!response.ok) {
+            throw new Error(`Link returned ${response.status} - please upload manually`);
+          }
+
+          const contentType = response.headers.get('content-type') || '';
+          if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
+            throw new Error(`Link is not a PDF (${contentType}) - please upload manually`);
+          }
+
+          const blob = await response.blob();
+          const fileName = `${form.state}/${form.form_name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.pdf`;
+
+          showToast(`Uploading to storage...`);
+          const { error: uploadError } = await supabase.storage
+            .from('form-pdfs')
+            .upload(fileName, blob, { contentType: 'application/pdf' });
+
+          if (uploadError) throw uploadError;
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('form-pdfs')
+            .getPublicUrl(fileName);
+
+          // Update the form with our storage URL
+          await supabase.from('form_staging').update({
+            source_url: publicUrl,
+            pdf_validated: true,
+            url_validated: true,
+            url_validated_at: new Date().toISOString()
+          }).eq('id', form.id);
+
+          pdfUrl = publicUrl;
+          showToast(`PDF saved to storage. Analyzing...`);
+        } catch (fetchErr) {
+          // CORS or network error - try analyzing directly via edge function
+          showToast(`Browser can't fetch link (CORS). Trying server-side...`);
+          // The edge function will try to fetch it
+        }
+      } else {
+        showToast(`Analyzing ${form.form_name}...`);
+      }
+
+      // Now analyze the PDF
+      const { data, error } = await supabase.functions.invoke('analyze-form-pdf', {
+        body: { form_id: form.id, pdf_url: pdfUrl }
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      showToast(`Analysis complete - ${data?.mapped_fields || 0}/${data?.total_fields || 0} fields mapped (${data?.mapping_confidence || 0}%)`);
+
+      const mapped = data?.mapped_count || 0;
+      const total = data?.pdf_fields_found || 0;
+      const pct = total > 0 ? Math.round((mapped / total) * 100) : 0;
+
+      showToast(`Analysis complete - ${mapped}/${total} fields mapped (${pct}%)`);
       loadAllData();
     } catch (err) {
       showToast('Analysis failed: ' + err.message, 'error');
@@ -546,10 +609,29 @@ export default function DevConsolePage() {
   };
 
   const openStagingMapper = (form) => {
+    // Convert field_mappings (array from analyze-form-pdf) to the format the mapper expects
+    // field_mappings: [{ pdf_field, universal_field, confidence, ... }]
+    // detected_fields: [field names]
+    // field_mapping: { field_name: universal_field }
+    let detected_fields = form.detected_fields || [];
+    let field_mapping = form.field_mapping || {};
+
+    // If we have field_mappings array (from analyze-form-pdf), convert it
+    if (form.field_mappings && Array.isArray(form.field_mappings) && form.field_mappings.length > 0) {
+      detected_fields = form.field_mappings.map(m => m.pdf_field || m.pdf_field_name);
+      field_mapping = {};
+      form.field_mappings.forEach(m => {
+        const fieldName = m.pdf_field || m.pdf_field_name;
+        if (fieldName && m.universal_field) {
+          field_mapping[fieldName] = m.universal_field;
+        }
+      });
+    }
+
     setStagingMapperModal({
       ...form,
-      detected_fields: form.detected_fields || [],
-      field_mapping: form.field_mapping || {},
+      detected_fields,
+      field_mapping,
     });
   };
 
@@ -561,9 +643,18 @@ export default function DevConsolePage() {
       const totalFields = stagingMapperModal.detected_fields?.length || 1;
       const confidence = Math.round((mappedCount / totalFields) * 100);
 
+      // Convert back to field_mappings array format (for analyze-form-pdf compatibility)
+      const field_mappings = stagingMapperModal.detected_fields.map(field => ({
+        pdf_field: field,
+        universal_field: stagingMapperModal.field_mapping?.[field] || null,
+        confidence: stagingMapperModal.field_mapping?.[field] ? 1.0 : 0,
+      }));
+
       await supabase.from('form_staging').update({
-        field_mapping: stagingMapperModal.field_mapping,
+        field_mappings: field_mappings,
+        field_mapping: stagingMapperModal.field_mapping, // Keep legacy format too
         mapping_confidence: confidence,
+        mapping_status: confidence >= 99 ? 'human_verified' : 'ai_suggested',
       }).eq('id', stagingMapperModal.id);
 
       showToast(`Mapping saved - ${confidence}% complete`);
@@ -583,6 +674,53 @@ export default function DevConsolePage() {
         [fieldName]: contextPath
       }
     }));
+  };
+
+  // Inline upload handler for staging forms
+  const handleInlineUpload = async (form, file) => {
+    if (!file) return;
+    setInlineUploadingId(form.id);
+    try {
+      const fileName = `${form.state}/${form.form_name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('form-pdfs')
+        .upload(fileName, file, { contentType: 'application/pdf' });
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('form-pdfs')
+        .getPublicUrl(fileName);
+
+      await supabase.from('form_staging').update({
+        source_url: publicUrl,
+        pdf_validated: true,
+        url_validated: true,
+        url_validated_at: new Date().toISOString(),
+        workflow_status: form.form_number_confirmed ? 'staging' : 'needs_form_number'
+      }).eq('id', form.id);
+
+      showToast(`PDF uploaded for ${form.form_name}`);
+      loadAllData();
+    } catch (err) {
+      showToast(`Upload error: ${err.message}`, 'error');
+    }
+    setInlineUploadingId(null);
+  };
+
+  // Update form number and confirm it
+  const updateFormNumber = async (form, newNumber) => {
+    if (!newNumber.trim()) return;
+    try {
+      await supabase.from('form_staging').update({
+        form_number: newNumber.trim().toUpperCase(),
+        form_number_confirmed: true,
+        workflow_status: form.source_url ? 'staging' : 'needs_upload'
+      }).eq('id', form.id);
+      showToast(`Form number updated to ${newNumber.toUpperCase()}`);
+      loadAllData();
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error');
+    }
   };
 
   const promoteToLibrary = async (form, selectedLibrary) => {
@@ -826,7 +964,11 @@ export default function DevConsolePage() {
 
     // Then apply status filter
     if (stagingFilter === 'all') return filtered;
-    if (stagingFilter === 'ready') return filtered.filter(f => (f.mapping_confidence || 0) >= 99);
+    if (stagingFilter === 'needs_number') return filtered.filter(f => !f.form_number_confirmed);
+    if (stagingFilter === 'needs_pdf') return filtered.filter(f => !f.source_url || f.workflow_status === 'needs_upload');
+    if (stagingFilter === 'needs_mapping') return filtered.filter(f => f.source_url && !f.field_mappings?.length && (f.mapping_confidence || 0) < 99);
+    if (stagingFilter === 'ready') return filtered.filter(f => ((f.field_mappings?.length > 0) || (f.mapping_confidence || 0) >= 99) && f.form_number_confirmed && f.source_url && f.workflow_status !== 'production' && f.status !== 'approved');
+    if (stagingFilter === 'production') return filtered.filter(f => f.workflow_status === 'production' || f.status === 'approved');
     return filtered.filter(f => f.status === stagingFilter);
   };
 
@@ -922,16 +1064,17 @@ export default function DevConsolePage() {
   // Get unique states from library for filter dropdown
   const libraryStates = [...new Set(formLibrary.map(f => f.state))].sort();
 
-  // === FIELD MAPPER ===
+  // === FIELD MAPPER - Universal Fields (matches analyze-form-pdf output) ===
   const fieldContextOptions = [
-    { group: 'Dealer', fields: ['dealer.dealer_name', 'dealer.address', 'dealer.city', 'dealer.state', 'dealer.zip', 'dealer.phone', 'dealer.license_number', 'dealer.ein', 'dealer.email'] },
-    { group: 'Vehicle', fields: ['vehicle.vin', 'vehicle.year', 'vehicle.make', 'vehicle.model', 'vehicle.trim', 'vehicle.color', 'vehicle.mileage', 'vehicle.stock_number', 'vehicle.body_type', 'vehicle.engine', 'vehicle.transmission', 'vehicle.fuel_type'] },
-    { group: 'Deal', fields: ['deal.purchaser_name', 'deal.purchaser_address', 'deal.purchaser_city', 'deal.purchaser_state', 'deal.purchaser_zip', 'deal.purchaser_phone', 'deal.purchaser_email', 'deal.purchaser_dl', 'deal.co_buyer_name', 'deal.co_buyer_address', 'deal.date_of_sale', 'deal.sale_price', 'deal.trade_value', 'deal.trade_payoff', 'deal.down_payment', 'deal.sales_tax', 'deal.doc_fee', 'deal.registration_fee', 'deal.title_fee', 'deal.total_price', 'deal.salesperson'] },
-    { group: 'Financing', fields: ['financing.amount_financed', 'financing.apr', 'financing.interest_rate', 'financing.term_months', 'financing.monthly_payment', 'financing.first_payment_date', 'financing.final_payment_date', 'financing.total_of_payments', 'financing.finance_charge'] },
-    { group: 'Lien', fields: ['lien.holder_name', 'lien.holder_address', 'lien.holder_city', 'lien.holder_state', 'lien.holder_zip', 'lien.amount', 'lien.release_date'] },
-    { group: 'Trade-in', fields: ['trade.vin', 'trade.year', 'trade.make', 'trade.model', 'trade.mileage'] },
-    { group: 'Signatures', fields: ['signature.buyer', 'signature.co_buyer', 'signature.dealer', 'signature.date'] },
-    { group: 'Odometer', fields: ['odometer.reading', 'odometer.status', 'odometer.date'] },
+    { group: 'Buyer', fields: ['buyer_name', 'buyer_first_name', 'buyer_last_name', 'buyer_address', 'buyer_address2', 'buyer_city', 'buyer_state', 'buyer_zip', 'buyer_county', 'buyer_phone', 'buyer_phone_alt', 'buyer_email', 'buyer_dl_number', 'buyer_dl_state', 'buyer_dl_exp', 'buyer_dob', 'buyer_ssn', 'buyer_ssn_last4', 'buyer_employer', 'buyer_employer_phone', 'buyer_income', 'buyer_signature', 'buyer_signature_date'] },
+    { group: 'Co-Buyer', fields: ['co_buyer_name', 'co_buyer_first_name', 'co_buyer_last_name', 'co_buyer_address', 'co_buyer_city', 'co_buyer_state', 'co_buyer_zip', 'co_buyer_phone', 'co_buyer_dl_number', 'co_buyer_dl_state', 'co_buyer_dob', 'co_buyer_ssn', 'co_buyer_signature', 'co_buyer_signature_date'] },
+    { group: 'Dealer', fields: ['dealer_name', 'dealer_dba', 'dealer_address', 'dealer_city', 'dealer_state', 'dealer_zip', 'dealer_county', 'dealer_phone', 'dealer_fax', 'dealer_email', 'dealer_license', 'dealer_ein', 'dealer_sales_tax_id', 'dealer_signature', 'dealer_signature_date', 'salesperson_name', 'salesperson_number'] },
+    { group: 'Vehicle', fields: ['vehicle_year', 'vehicle_make', 'vehicle_model', 'vehicle_trim', 'vehicle_body', 'vehicle_vin', 'vehicle_stock', 'vehicle_miles', 'vehicle_miles_exempt', 'vehicle_miles_exceeds', 'vehicle_miles_not_actual', 'vehicle_color', 'vehicle_interior_color', 'vehicle_engine', 'vehicle_cylinders', 'vehicle_transmission', 'vehicle_drive', 'vehicle_fuel', 'vehicle_title_number', 'vehicle_title_state', 'vehicle_plate', 'vehicle_weight', 'vehicle_new_used', 'vehicle_warranty'] },
+    { group: 'Deal', fields: ['sale_date', 'delivery_date', 'deal_number', 'sale_price', 'msrp', 'trade_allowance', 'trade_payoff', 'net_trade', 'down_payment', 'rebate', 'doc_fee', 'title_fee', 'registration_fee', 'smog_fee', 'other_fees', 'other_fees_desc', 'total_fees', 'subtotal', 'tax_rate', 'tax_amount', 'total_price', 'amount_financed', 'balance_due'] },
+    { group: 'Financing', fields: ['apr', 'term_months', 'monthly_payment', 'payment_frequency', 'num_payments', 'first_payment_date', 'final_payment_date', 'final_payment_amount', 'total_of_payments', 'finance_charge', 'total_sale_price', 'deferred_price', 'late_fee', 'late_days', 'prepayment_penalty'] },
+    { group: 'Trade-In', fields: ['trade_year', 'trade_make', 'trade_model', 'trade_vin', 'trade_miles', 'trade_color', 'trade_title_number', 'trade_plate', 'trade_lienholder', 'trade_lienholder_address', 'trade_payoff_good_thru'] },
+    { group: 'Lienholder', fields: ['lienholder_name', 'lienholder_address', 'lienholder_city', 'lienholder_state', 'lienholder_zip', 'lienholder_elt'] },
+    { group: 'Insurance', fields: ['insurance_company', 'insurance_policy', 'insurance_agent', 'insurance_phone', 'insurance_exp'] },
   ];
 
   const saveFieldMapping = async () => {
@@ -1261,7 +1404,7 @@ export default function DevConsolePage() {
 
         {/* FORM LIBRARY - 3 Tab System */}
         {activeSection === 'forms' && (
-          <div>
+          <div style={{ paddingBottom: '180px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
               <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Form Library</h2>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1447,20 +1590,21 @@ export default function DevConsolePage() {
                   <div style={{ borderLeft: '1px solid #3f3f46', height: '24px' }} />
 
                   {/* Status Filters */}
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {[
-                      { id: 'all', label: 'All' },
-                      { id: 'pending', label: 'Pending' },
-                      { id: 'analyzed', label: 'Analyzed' },
-                      { id: 'ready', label: 'Ready (99%+)' },
-                      { id: 'approved', label: 'Promoted' },
+                      { id: 'all', label: 'All', color: '#f97316' },
+                      { id: 'needs_number', label: 'Needs Form #', color: '#ef4444' },
+                      { id: 'needs_pdf', label: 'Needs PDF', color: '#eab308' },
+                      { id: 'needs_mapping', label: 'Needs Mapping', color: '#8b5cf6' },
+                      { id: 'ready', label: 'Ready', color: '#3b82f6' },
+                      { id: 'production', label: 'Production', color: '#22c55e' },
                     ].map(filter => (
                       <button
                         key={filter.id}
                         onClick={() => setStagingFilter(filter.id)}
                         style={{
-                          padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '12px', cursor: 'pointer',
-                          backgroundColor: stagingFilter === filter.id ? '#f97316' : '#3f3f46',
+                          padding: '5px 10px', borderRadius: '6px', border: 'none', fontSize: '11px', cursor: 'pointer',
+                          backgroundColor: stagingFilter === filter.id ? filter.color : '#3f3f46',
                           color: '#fff'
                         }}
                       >
@@ -1471,110 +1615,272 @@ export default function DevConsolePage() {
                 </div>
 
                 {/* Staging Stats */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total{stagingStateFilter !== 'all' ? ` (${stagingStateFilter})` : ''}</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{stagingStateFilter !== 'all' ? formStaging.filter(f => f.state === stagingStateFilter).length : formStaging.length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>{stagingStates.length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Pending</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>{formStaging.filter(f => f.status === 'pending' && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Analyzed</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.status === 'analyzed' && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready (99%+)</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.mapping_confidence || 0) >= 99 && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '10px', marginBottom: '20px' }}>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Total{stagingStateFilter !== 'all' ? ` (${stagingStateFilter})` : ''}</div><div style={{ fontSize: '22px', fontWeight: '700' }}>{stagingStateFilter !== 'all' ? formStaging.filter(f => f.state === stagingStateFilter).length : formStaging.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Form # OK</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => f.form_number_confirmed && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Has PDF</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.source_url && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Mapped</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#8b5cf6' }}>{formStaging.filter(f => ((f.field_mappings?.length || 0) > 0 || (f.mapping_confidence || 0) > 0) && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Production</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.workflow_status === 'production' || f.status === 'approved') && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                 </div>
+
+                {/* Hidden file input for inline uploads */}
+                <input
+                  type="file"
+                  ref={stagingFileInputRef}
+                  accept="application/pdf"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    if (inlineUploadingId && e.target.files[0]) {
+                      const form = formStaging.find(f => f.id === inlineUploadingId);
+                      if (form) handleInlineUpload(form, e.target.files[0]);
+                    }
+                    e.target.value = ''; // Reset for next upload
+                  }}
+                />
 
                 {/* Staging Table */}
                 <div style={cardStyle}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid #3f3f46' }}>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form #</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa', width: '120px' }}>Form #</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form Name</th>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa', minWidth: '200px' }}>Rules / Compliance</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Mapping</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Status</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa', width: '60px' }}>State</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa', width: '120px' }}>Deal Types</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa', width: '80px' }}>PDF</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa', width: '90px' }}>Mapping</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa', width: '200px' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {getFilteredStaging().map(f => {
-                        const mappingScore = f.mapping_confidence || 0;
-                        const hasMapping = (f.detected_fields?.length || 0) > 0;
-                        const isReadyToPromote = mappingScore >= 99;
-                        const isCurrentVersion = f.ai_is_current_version === true;
+                        // field_mappings is from analyze-form-pdf, detected_fields is from old analyze-form
+                        const mappingsCount = f.field_mappings?.length || 0;
+                        const detectedCount = f.detected_fields?.length || 0;
+                        const hasMapping = mappingsCount > 0 || detectedCount > 0;
+                        // Calculate score - if we have field_mappings array, count high confidence ones
+                        const highConfidenceCount = f.field_mappings?.filter(m => m.confidence >= 0.9).length || 0;
+                        const mappingScore = f.mapping_confidence || (mappingsCount > 0 ? Math.round((highConfidenceCount / mappingsCount) * 100) : 0);
+                        const isMapped = f.mapping_status === 'ai_suggested' || f.mapping_status === 'human_verified' || mappingScore >= 50;
+                        const isReadyToPromote = (f.mapping_status === 'human_verified' || mappingScore >= 99) && f.form_number_confirmed && f.source_url;
+                        const needsNumber = !f.form_number_confirmed;
+                        const needsPdf = !f.source_url;
+                        const isProduction = f.workflow_status === 'production' || f.status === 'approved';
+                        const dealTypeColors = { cash: '#22c55e', bhph: '#8b5cf6', traditional: '#3b82f6', wholesale: '#eab308' };
                         return (
                           <tr key={f.id} style={{
                             borderBottom: '1px solid #3f3f46',
-                            opacity: f.status === 'rejected' ? 0.5 : 1,
-                            borderLeft: isCurrentVersion ? '3px solid #22c55e' : (f.ai_is_current_version === false ? '3px solid #eab308' : 'none'),
-                            backgroundColor: isCurrentVersion ? 'rgba(34, 197, 94, 0.05)' : 'transparent'
+                            backgroundColor: isProduction ? 'rgba(34, 197, 94, 0.05)' : needsNumber ? 'rgba(239, 68, 68, 0.05)' : needsPdf ? 'rgba(234, 179, 8, 0.03)' : 'transparent'
                           }}>
-                            <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontWeight: '600' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                {f.form_number}
-                                {isCurrentVersion ? (
-                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#22c55e', color: '#000', fontWeight: '600' }}>LATEST</span>
-                                ) : f.ai_is_current_version === false ? (
-                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#eab308', color: '#000', fontWeight: '600' }}>OUTDATED</span>
-                                ) : null}
-                              </div>
-                            </td>
+                            {/* Form # - Inline editable if not confirmed */}
                             <td style={{ padding: '10px 8px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                <span>{f.form_name}</span>
-                                {f.doc_type && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' }[f.doc_type] || '#3f3f46', textTransform: 'uppercase' }}>{f.doc_type}</span>}
-                                {f.has_deadline && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#ef4444', color: '#fff' }}>{f.deadline_days}d</span>}
-                                {f.cadence && f.cadence !== 'per_transaction' && <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#3b82f6' }}>{f.cadence}</span>}
-                              </div>
-                              {f.source_url && <a href={f.source_url} target="_blank" rel="noreferrer" style={{ color: '#71717a', fontSize: '11px' }}>View Source</a>}
-                            </td>
-                            <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span></td>
-                            <td style={{ padding: '10px 8px', fontSize: '11px' }}>
-                              {/* Rules/Compliance blurb */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                {f.doc_type && (
-                                  <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' }[f.doc_type] || '#3f3f46', color: '#fff', alignSelf: 'flex-start', textTransform: 'uppercase' }}>{f.doc_type} DOC</span>
-                                )}
-                                {f.deadline_description ? (
-                                  <div style={{ color: '#ef4444', fontWeight: '500' }}>⏰ {f.deadline_description}</div>
-                                ) : f.has_deadline && f.deadline_days ? (
-                                  <div style={{ color: '#ef4444', fontWeight: '500' }}>⏰ Due within {f.deadline_days} days</div>
-                                ) : null}
-                                {f.cadence && (
-                                  <div style={{ color: '#3b82f6' }}>📅 {f.cadence === 'per_transaction' ? 'Required per sale' : f.cadence === 'monthly' ? 'Monthly filing' : f.cadence === 'quarterly' ? 'Quarterly filing' : f.cadence === 'annually' ? 'Annual filing' : f.cadence}</div>
-                                )}
-                                {f.compliance_notes && <div style={{ color: '#a1a1aa', fontSize: '10px' }}>{f.compliance_notes}</div>}
-                                {!f.doc_type && !f.has_deadline && !f.cadence && <span style={{ color: '#71717a' }}>Run Analyze to detect</span>}
-                              </div>
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              {hasMapping ? (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                  <span style={{
-                                    padding: '4px 10px',
-                                    borderRadius: '12px',
-                                    fontSize: '12px',
-                                    fontWeight: '600',
-                                    backgroundColor: isReadyToPromote ? '#22c55e' : mappingScore >= 50 ? '#eab308' : '#ef4444',
-                                    color: '#000'
-                                  }}>
-                                    {mappingScore}% mapped
-                                  </span>
+                              {f.form_number_confirmed ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontFamily: 'monospace', fontWeight: '600' }}>{f.form_number || '—'}</span>
+                                  {f.form_number === 'FEDERAL' && (
+                                    <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '9px', backgroundColor: '#3b82f6', color: '#fff' }}>FED</span>
+                                  )}
                                 </div>
                               ) : (
-                                <span style={{ color: '#71717a', fontSize: '12px' }}>Not analyzed</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="Form #"
+                                    defaultValue={f.form_number || ''}
+                                    onBlur={(e) => e.target.value !== (f.form_number || '') && updateFormNumber(f, e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && updateFormNumber(f, e.target.value)}
+                                    style={{ width: '70px', padding: '4px 6px', backgroundColor: '#3f3f46', border: '1px solid #ef4444', borderRadius: '4px', color: '#fff', fontSize: '11px', fontFamily: 'monospace' }}
+                                  />
+                                  <span style={{ color: '#ef4444', fontSize: '14px' }} title="Form number not confirmed">⚠</span>
+                                </div>
                               )}
                             </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: f.status === 'approved' ? '#22c55e' : f.status === 'rejected' ? '#ef4444' : f.status === 'analyzed' ? '#3b82f6' : '#eab308', textTransform: 'uppercase' }}>{f.status}</span>
+
+                            {/* Form Name */}
+                            <td style={{ padding: '10px 8px' }}>
+                              <div style={{ fontWeight: '500' }}>{f.form_name}</div>
+                              {f.description && <div style={{ color: '#71717a', fontSize: '11px', marginTop: '2px' }}>{f.description.length > 50 ? f.description.substring(0, 50) + '...' : f.description}</div>}
                             </td>
+
+                            {/* State */}
+                            <td style={{ padding: '10px 8px' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{f.state}</span>
+                            </td>
+
+                            {/* Deal Types */}
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                <button onClick={() => analyzeForm(f)} style={{ background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer', fontSize: '11px' }}>Analyze</button>
-                                {hasMapping && (
-                                  <button onClick={() => openStagingMapper(f)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '11px' }}>View Mapping</button>
+                              <div style={{ display: 'flex', gap: '3px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                {f.deal_types?.length > 0 ? f.deal_types.map(dt => (
+                                  <span key={dt} style={{
+                                    padding: '2px 5px',
+                                    borderRadius: '3px',
+                                    fontSize: '9px',
+                                    backgroundColor: dealTypeColors[dt] || '#71717a',
+                                    color: dt === 'cash' || dt === 'wholesale' ? '#000' : '#fff',
+                                    textTransform: 'uppercase',
+                                    fontWeight: '600'
+                                  }}>
+                                    {dt}
+                                  </span>
+                                )) : <span style={{ color: '#71717a', fontSize: '10px' }}>—</span>}
+                              </div>
+                            </td>
+
+                            {/* PDF Status */}
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              {f.source_url ? (
+                                <a
+                                  href={f.source_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '4px 10px',
+                                    borderRadius: '4px',
+                                    backgroundColor: f.pdf_validated ? '#22c55e' : '#3b82f6',
+                                    color: '#fff',
+                                    fontSize: '10px',
+                                    textDecoration: 'none',
+                                    fontWeight: '600'
+                                  }}
+                                >
+                                  {f.pdf_validated ? '✓ View PDF' : '🔗 Link'}
+                                </a>
+                              ) : (
+                                <span style={{ padding: '4px 10px', borderRadius: '4px', backgroundColor: '#ef4444', color: '#fff', fontSize: '10px', fontWeight: '600' }}>No PDF</span>
+                              )}
+                            </td>
+
+                            {/* Mapping */}
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              {hasMapping ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                                  <span style={{
+                                    padding: '3px 8px',
+                                    borderRadius: '10px',
+                                    fontSize: '11px',
+                                    fontWeight: '600',
+                                    backgroundColor: f.mapping_status === 'human_verified' ? '#22c55e' : isMapped ? '#8b5cf6' : '#eab308',
+                                    color: '#000'
+                                  }}>
+                                    {mappingsCount || detectedCount} fields
+                                  </span>
+                                  {f.mapping_status && (
+                                    <span style={{ fontSize: '9px', color: f.mapping_status === 'human_verified' ? '#22c55e' : '#a1a1aa' }}>
+                                      {f.mapping_status === 'ai_suggested' ? 'AI' : f.mapping_status === 'human_verified' ? '✓ Verified' : f.mapping_status}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span style={{ color: '#71717a', fontSize: '11px' }}>—</span>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                {/* Upload Button */}
+                                <button
+                                  onClick={() => {
+                                    setInlineUploadingId(f.id);
+                                    stagingFileInputRef.current?.click();
+                                  }}
+                                  disabled={inlineUploadingId === f.id}
+                                  style={{
+                                    background: 'none',
+                                    border: '1px solid #3b82f6',
+                                    color: '#3b82f6',
+                                    padding: '3px 8px',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    fontSize: '10px'
+                                  }}
+                                >
+                                  {inlineUploadingId === f.id ? '...' : f.source_url ? '↑' : 'Upload'}
+                                </button>
+
+                                {/* Analyze Button */}
+                                {f.source_url && !isProduction && (
+                                  <button
+                                    onClick={() => analyzeForm(f)}
+                                    style={{
+                                      background: 'none',
+                                      border: '1px solid #8b5cf6',
+                                      color: '#8b5cf6',
+                                      padding: '3px 8px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '10px'
+                                    }}
+                                  >
+                                    Analyze
+                                  </button>
                                 )}
+                                {/* View/Map Button - show if has PDF or has mapping */}
+                                {(f.source_url || hasMapping) && (
+                                  <button
+                                    onClick={() => openStagingMapper(f)}
+                                    style={{
+                                      background: 'none',
+                                      border: hasMapping ? '1px solid #8b5cf6' : '1px solid #71717a',
+                                      color: hasMapping ? '#8b5cf6' : '#a1a1aa',
+                                      padding: '3px 8px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '10px'
+                                    }}
+                                  >
+                                    {hasMapping ? 'Map' : 'View'}
+                                  </button>
+                                )}
+
+                                {/* Promote Button */}
                                 {isReadyToPromote && (
-                                  <button onClick={() => setPromoteModal({ form: f, selectedLibrary: f.doc_type || 'deal' })} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Promote</button>
+                                  <button
+                                    onClick={() => setPromoteModal({ form: f, selectedLibrary: f.doc_type || 'deal' })}
+                                    style={{
+                                      background: 'none',
+                                      border: '1px solid #22c55e',
+                                      color: '#22c55e',
+                                      padding: '3px 8px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '10px',
+                                      fontWeight: '600'
+                                    }}
+                                  >
+                                    Promote
+                                  </button>
                                 )}
-                                <button onClick={() => setDeleteStagedModal(f)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>Delete</button>
+
+                                {/* Production Badge */}
+                                {isProduction && (
+                                  <span style={{
+                                    padding: '3px 8px',
+                                    borderRadius: '4px',
+                                    fontSize: '10px',
+                                    backgroundColor: '#22c55e',
+                                    color: '#000',
+                                    fontWeight: '600'
+                                  }}>
+                                    ✓ Live
+                                  </span>
+                                )}
+
+                                {/* Delete */}
+                                <button
+                                  onClick={() => setDeleteStagedModal(f)}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#ef4444',
+                                    cursor: 'pointer',
+                                    fontSize: '10px',
+                                    padding: '3px 4px'
+                                  }}
+                                >
+                                  ✕
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -1778,6 +2084,7 @@ export default function DevConsolePage() {
                 </div>
               </div>
             )}
+
           </div>
         )}
 
@@ -2660,13 +2967,29 @@ export default function DevConsolePage() {
                   const totalFields = stagingMapperModal.detected_fields?.length || 0;
                   const unmapped = totalFields - mappedCount;
                   return unmapped > 0
-                    ? `${unmapped} field${unmapped > 1 ? 's' : ''} need${unmapped === 1 ? 's' : ''} mapping to reach 99%`
-                    : 'All fields mapped - ready to promote!';
+                    ? `${unmapped} field${unmapped > 1 ? 's' : ''} need${unmapped === 1 ? 's' : ''} mapping to reach 100%`
+                    : '✓ All fields mapped - ready to promote!';
                 })()}
               </div>
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={() => setStagingMapperModal(null)} style={btnSecondary}>Cancel</button>
-                <button onClick={saveStagingMapping} style={btnSuccess}>Save Mapping</button>
+                <button onClick={saveStagingMapping} style={{ ...btnPrimary }}>Save Mapping</button>
+                {(() => {
+                  const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
+                  const totalFields = stagingMapperModal.detected_fields?.length || 0;
+                  const isComplete = totalFields > 0 && mappedCount === totalFields;
+                  return isComplete && stagingMapperModal.form_number_confirmed && stagingMapperModal.source_url ? (
+                    <button
+                      onClick={() => {
+                        saveStagingMapping();
+                        setPromoteModal({ form: stagingMapperModal, selectedLibrary: stagingMapperModal.category || 'deal' });
+                      }}
+                      style={{ ...btnSuccess, fontWeight: '700' }}
+                    >
+                      Promote to Production
+                    </button>
+                  ) : null;
+                })()}
               </div>
             </div>
           </div>

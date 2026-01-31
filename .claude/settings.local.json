@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx supabase functions deploy:*)",
+      "Bash(curl:*)",
+      "Bash(npx eslint:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx supabase:*)",
+      "Bash(move:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(notepad:*)",
+      "Bash(python:*)",
+      "Bash(node -e:*)"
+    ]
+  }
+}
