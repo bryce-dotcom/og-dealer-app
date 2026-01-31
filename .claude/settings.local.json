@@ -11,7 +11,10 @@
       "Bash(python -m json.tool:*)",
       "Bash(notepad:*)",
       "Bash(python:*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(npm run dev:*)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(cd:*)"
     ]
   }
 }

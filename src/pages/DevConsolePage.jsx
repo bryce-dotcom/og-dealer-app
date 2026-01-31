@@ -36,6 +36,7 @@ export default function DevConsolePage() {
   const [stagingStateFilter, setStagingStateFilter] = useState('all');
   const [uploadFormModal, setUploadFormModal] = useState(null);
   const [inlineUploadingId, setInlineUploadingId] = useState(null); // Track which row is uploading
+  const [analyzingFormId, setAnalyzingFormId] = useState(null); // Track which form is being analyzed
   const stagingFileInputRef = useRef(null); // Ref for hidden file input
   const [libraryStateFilter, setLibraryStateFilter] = useState('all');
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(null);
@@ -43,6 +44,9 @@ export default function DevConsolePage() {
   const [discoverProgress, setDiscoverProgress] = useState('');
   const [promoteModal, setPromoteModal] = useState(null); // { form, selectedLibrary }
   const [templateGeneratorModal, setTemplateGeneratorModal] = useState(null); // { form } for HTML template generation
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateCheckModal, setUpdateCheckModal] = useState(null); // { new_forms, potential_updates, unchanged }
+  const [postUpdateForm, setPostUpdateForm] = useState(null); // { title, summary, update_type, importance, source_url }
   
   // Table browser
   const [selectedTable, setSelectedTable] = useState('inventory');
@@ -536,6 +540,7 @@ export default function DevConsolePage() {
       showToast('Please upload a PDF first before analyzing', 'error');
       return;
     }
+    setAnalyzingFormId(form.id);
     setLoading(true);
 
     try {
@@ -605,25 +610,39 @@ export default function DevConsolePage() {
     } catch (err) {
       showToast('Analysis failed: ' + err.message, 'error');
     }
+    setAnalyzingFormId(null);
     setLoading(false);
   };
 
   const openStagingMapper = (form) => {
     // Convert field_mappings (array from analyze-form-pdf) to the format the mapper expects
-    // field_mappings: [{ pdf_field, universal_field, confidence, ... }]
-    // detected_fields: [field names]
-    // field_mapping: { field_name: universal_field }
+    // New format: field_mappings: [{ pdf_field, universal_fields: [], separator, confidence }]
+    // Legacy format: field_mappings: [{ pdf_field, universal_field, confidence }]
+    // UI format: field_mapping: { field_name: { fields: [], separator } | string }
     let detected_fields = form.detected_fields || [];
     let field_mapping = form.field_mapping || {};
 
-    // If we have field_mappings array (from analyze-form-pdf), convert it
+    // If we have field_mappings array (from analyze-form-pdf or save), convert it to UI format
     if (form.field_mappings && Array.isArray(form.field_mappings) && form.field_mappings.length > 0) {
       detected_fields = form.field_mappings.map(m => m.pdf_field || m.pdf_field_name);
       field_mapping = {};
       form.field_mappings.forEach(m => {
         const fieldName = m.pdf_field || m.pdf_field_name;
-        if (fieldName && m.universal_field) {
-          field_mapping[fieldName] = m.universal_field;
+        if (!fieldName) return;
+
+        // Handle new multi-field format (universal_fields array)
+        if (m.universal_fields && Array.isArray(m.universal_fields) && m.universal_fields.length > 0) {
+          field_mapping[fieldName] = {
+            fields: m.universal_fields,
+            separator: m.separator || ' '
+          };
+        }
+        // Handle legacy single-field format (universal_field string)
+        else if (m.universal_field) {
+          field_mapping[fieldName] = {
+            fields: [m.universal_field],
+            separator: ' '
+          };
         }
       });
     }
@@ -639,20 +658,36 @@ export default function DevConsolePage() {
     if (!stagingMapperModal) return;
     setLoading(true);
     try {
-      const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
+      // Count mapped fields (fields with at least one mapping)
+      const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => {
+        if (!v) return false;
+        if (typeof v === 'string') return !!v;
+        return v.fields && v.fields.length > 0;
+      }).length;
       const totalFields = stagingMapperModal.detected_fields?.length || 1;
       const confidence = Math.round((mappedCount / totalFields) * 100);
 
-      // Convert back to field_mappings array format (for analyze-form-pdf compatibility)
-      const field_mappings = stagingMapperModal.detected_fields.map(field => ({
-        pdf_field: field,
-        universal_field: stagingMapperModal.field_mapping?.[field] || null,
-        confidence: stagingMapperModal.field_mapping?.[field] ? 1.0 : 0,
-      }));
+      // Convert to field_mappings array format - now supports multi-field mappings
+      const field_mappings = stagingMapperModal.detected_fields.map(field => {
+        const mapping = stagingMapperModal.field_mapping?.[field];
+        // Handle both old string format and new multi-field format
+        if (!mapping) {
+          return { pdf_field: field, universal_fields: [], separator: ' ', confidence: 0 };
+        }
+        if (typeof mapping === 'string') {
+          return { pdf_field: field, universal_fields: [mapping], separator: ' ', confidence: 1.0 };
+        }
+        return {
+          pdf_field: field,
+          universal_fields: mapping.fields || [],
+          separator: mapping.separator || ' ',
+          confidence: (mapping.fields?.length > 0) ? 1.0 : 0,
+        };
+      });
 
       await supabase.from('form_staging').update({
         field_mappings: field_mappings,
-        field_mapping: stagingMapperModal.field_mapping, // Keep legacy format too
+        field_mapping: stagingMapperModal.field_mapping, // Keep for UI state
         mapping_confidence: confidence,
         mapping_status: confidence >= 99 ? 'human_verified' : 'ai_suggested',
       }).eq('id', stagingMapperModal.id);
@@ -666,14 +701,77 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
+  // Helper to normalize mapping value - supports both old string format and new multi-field format
+  const getMappingFields = (mapping) => {
+    if (!mapping) return [];
+    if (typeof mapping === 'string') return mapping ? [mapping] : [];
+    if (Array.isArray(mapping?.fields)) return mapping.fields;
+    return [];
+  };
+
+  const getMappingSeparator = (mapping) => {
+    if (!mapping || typeof mapping === 'string') return ' ';
+    return mapping?.separator ?? ' ';
+  };
+
+  // Update single field mapping (replaces all fields with one)
   const updateStagingFieldMapping = (fieldName, contextPath) => {
     setStagingMapperModal(prev => ({
       ...prev,
       field_mapping: {
         ...prev.field_mapping,
-        [fieldName]: contextPath
+        [fieldName]: contextPath ? { fields: [contextPath], separator: ' ' } : null
       }
     }));
+  };
+
+  // Add additional field to existing mapping
+  const addStagingFieldMapping = (fieldName, contextPath) => {
+    setStagingMapperModal(prev => {
+      const existing = prev.field_mapping?.[fieldName];
+      const currentFields = getMappingFields(existing);
+      const separator = getMappingSeparator(existing);
+      if (!contextPath || currentFields.includes(contextPath)) return prev;
+      return {
+        ...prev,
+        field_mapping: {
+          ...prev.field_mapping,
+          [fieldName]: { fields: [...currentFields, contextPath], separator }
+        }
+      };
+    });
+  };
+
+  // Remove a field from multi-field mapping
+  const removeStagingFieldMapping = (fieldName, contextPath) => {
+    setStagingMapperModal(prev => {
+      const existing = prev.field_mapping?.[fieldName];
+      const currentFields = getMappingFields(existing);
+      const separator = getMappingSeparator(existing);
+      const newFields = currentFields.filter(f => f !== contextPath);
+      return {
+        ...prev,
+        field_mapping: {
+          ...prev.field_mapping,
+          [fieldName]: newFields.length > 0 ? { fields: newFields, separator } : null
+        }
+      };
+    });
+  };
+
+  // Update separator for multi-field mapping
+  const updateStagingSeparator = (fieldName, separator) => {
+    setStagingMapperModal(prev => {
+      const existing = prev.field_mapping?.[fieldName];
+      const currentFields = getMappingFields(existing);
+      return {
+        ...prev,
+        field_mapping: {
+          ...prev.field_mapping,
+          [fieldName]: { fields: currentFields, separator }
+        }
+      };
+    });
   };
 
   // Inline upload handler for staging forms
@@ -952,6 +1050,224 @@ export default function DevConsolePage() {
       showToast('AI Research failed: ' + err.message, 'error');
     }
     setAiResearching(false);
+  };
+
+  // Check for updates to existing forms
+  const checkForUpdates = async () => {
+    const stateToCheck = discoverState === 'all' ? (dealer?.state || 'UT') : discoverState;
+    setCheckingUpdates(true);
+    setDiscoverProgress(`Checking ${stateToCheck} for updates...`);
+
+    try {
+      const response = await supabase.functions.invoke('check-form-updates', {
+        body: { state: stateToCheck, dealer_id: dealerId }
+      });
+
+      if (response.error) throw new Error(response.error.message);
+      if (response.data?.error) throw new Error(response.data.error);
+
+      setDiscoverProgress('');
+      setUpdateCheckModal({
+        state: stateToCheck,
+        ...response.data.scan_results,
+        summary: response.data.summary
+      });
+    } catch (err) {
+      setDiscoverProgress('');
+      showToast('Check failed: ' + err.message, 'error');
+    }
+    setCheckingUpdates(false);
+  };
+
+  // Add new form from update check results
+  const addFormFromCheck = async (form) => {
+    try {
+      const { error } = await supabase.from('form_staging').insert({
+        form_name: form.form_name,
+        form_number: form.form_number,
+        state: updateCheckModal.state,
+        source_url: form.source_url,
+        category: form.category,
+        description: form.description,
+        workflow_status: 'staging',
+        ai_discovered: true,
+        url_validated: form.is_pdf,
+        dealer_id: dealerId
+      });
+      if (error) throw error;
+
+      // Create state_updates record for tracking
+      const stateUpdateData = {
+        state: updateCheckModal.state,
+        title: 'New Form Added: ' + (form.form_name || form.form_number),
+        summary: 'Form ' + (form.form_number || form.form_name) + ' was discovered and added to the library.',
+        update_type: 'new_form',
+        source_url: form.source_url,
+        forms_affected: [form.form_number].filter(Boolean),
+        importance: 'normal',
+        is_read: false
+      };
+      console.log('Inserting to state_updates:', stateUpdateData);
+      const { data: stateData, error: stateError } = await supabase.from('state_updates').insert(stateUpdateData).select();
+      console.log('state_updates insert result:', { data: stateData, error: stateError });
+      if (stateError) {
+        console.error('state_updates insert failed:', stateError);
+        alert('Failed to create state update: ' + stateError.message);
+      }
+
+      // Remove from modal list
+      setUpdateCheckModal(prev => ({
+        ...prev,
+        new_forms: prev.new_forms.filter(f => f.source_url !== form.source_url)
+      }));
+      showToast(`Added ${form.form_name || form.form_number}`);
+      loadAllData();
+    } catch (err) {
+      showToast('Failed to add: ' + err.message, 'error');
+    }
+  };
+
+  // Update existing form URL from check results
+  const updateFormFromCheck = async (update) => {
+    try {
+      const { error } = await supabase.from('form_staging').update({
+        source_url: update.found.source_url,
+        url_validated: update.found.is_pdf,
+        url_validated_at: new Date().toISOString()
+      }).eq('id', update.existing.id);
+      if (error) throw error;
+
+      // Create state_updates record for tracking
+      const reason = update.reason || 'URL or content may have changed.';
+      const stateUpdateData = {
+        state: updateCheckModal.state,
+        title: 'Form Updated: ' + (update.existing.form_name || update.existing.form_number),
+        summary: 'Form ' + (update.existing.form_number || update.existing.form_name) + ' has a new version. ' + reason,
+        update_type: 'form_update',
+        source_url: update.found.source_url,
+        forms_affected: [update.existing.form_number].filter(Boolean),
+        importance: 'normal',
+        is_read: false
+      };
+      console.log('Inserting to state_updates:', stateUpdateData);
+      const { data: stateData, error: stateError } = await supabase.from('state_updates').insert(stateUpdateData).select();
+      console.log('state_updates insert result:', { data: stateData, error: stateError });
+      if (stateError) {
+        console.error('state_updates insert failed:', stateError);
+        alert('Failed to create state update: ' + stateError.message);
+      }
+
+      // Remove from modal list
+      setUpdateCheckModal(prev => ({
+        ...prev,
+        potential_updates: prev.potential_updates.filter(u => u.existing.id !== update.existing.id)
+      }));
+      showToast(`Updated ${update.existing.form_name || update.existing.form_number}`);
+      loadAllData();
+    } catch (err) {
+      showToast('Failed to update: ' + err.message, 'error');
+    }
+  };
+
+  // Ignore update (just remove from UI)
+  const ignoreUpdate = (update) => {
+    setUpdateCheckModal(prev => ({
+      ...prev,
+      potential_updates: prev.potential_updates.filter(u => u.existing.id !== update.existing.id)
+    }));
+  };
+
+  // Open post update form with pre-filled data
+  const openPostUpdateForm = () => {
+    const state = updateCheckModal?.state || 'Unknown';
+    const newCount = updateCheckModal?.new_forms?.length || 0;
+    const updateCount = updateCheckModal?.potential_updates?.length || 0;
+    const date = new Date().toLocaleDateString();
+
+    // Build summary from results
+    let summary = `Scan completed for ${state}.\n`;
+    if (newCount > 0) summary += `- ${newCount} new form${newCount > 1 ? 's' : ''} discovered\n`;
+    if (updateCount > 0) summary += `- ${updateCount} form${updateCount > 1 ? 's' : ''} may have updates available\n`;
+    if (newCount === 0 && updateCount === 0) summary += '- All forms are up to date';
+
+    // Collect affected form numbers
+    const formsAffected = [
+      ...(updateCheckModal?.new_forms || []).map(f => f.form_number).filter(Boolean),
+      ...(updateCheckModal?.potential_updates || []).map(u => u.existing.form_number).filter(Boolean)
+    ];
+
+    setPostUpdateForm({
+      title: `Form Updates for ${state} - ${date}`,
+      summary: summary.trim(),
+      update_type: newCount > 0 ? 'new_form' : 'form_update',
+      importance: (newCount + updateCount) > 5 ? 'high' : 'normal',
+      source_url: '',
+      forms_affected: formsAffected
+    });
+  };
+
+  // Post to state_updates table
+  const postStateUpdate = async () => {
+    if (!postUpdateForm?.title) {
+      showToast('Title is required', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('state_updates').insert({
+        state: updateCheckModal?.state,
+        title: postUpdateForm.title,
+        summary: postUpdateForm.summary,
+        update_type: postUpdateForm.update_type,
+        importance: postUpdateForm.importance,
+        source_url: postUpdateForm.source_url || null,
+        forms_affected: postUpdateForm.forms_affected || [],
+        is_read: false,
+        dealer_id: dealerId
+      });
+      if (error) throw error;
+      showToast('Update posted to State Updates');
+      setPostUpdateForm(null);
+    } catch (err) {
+      showToast('Failed to post: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  // Save newsletter or regulatory update to state_updates
+  const saveNewsItem = async (item, type) => {
+    try {
+      const stateUpdateData = {
+        state: updateCheckModal?.state,
+        title: item.title,
+        summary: item.snippet || item.title,
+        update_type: type, // 'newsletter' or 'regulation_change'
+        source_url: item.url,
+        importance: item.keywords_found?.length > 2 ? 'high' : 'normal',
+        is_read: false
+      };
+      console.log('Saving news item to state_updates:', stateUpdateData);
+      const { data, error } = await supabase.from('state_updates').insert(stateUpdateData).select();
+      console.log('Save result:', { data, error });
+      if (error) throw error;
+      showToast(`Saved: ${item.title.substring(0, 40)}...`);
+
+      // Remove from modal list
+      if (type === 'newsletter') {
+        setUpdateCheckModal(prev => ({
+          ...prev,
+          newsletters: prev.newsletters?.filter(n => n.url !== item.url)
+        }));
+      } else {
+        setUpdateCheckModal(prev => ({
+          ...prev,
+          regulatory_updates: prev.regulatory_updates?.filter(r => r.url !== item.url)
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to save news item:', err);
+      alert('Failed to save: ' + err.message);
+    }
   };
 
   const getFilteredStaging = () => {
@@ -1439,10 +1755,31 @@ export default function DevConsolePage() {
                     ))}
                   </optgroup>
                 </select>
-                <button onClick={runAIResearch} disabled={aiResearching} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
+                <button onClick={runAIResearch} disabled={aiResearching || checkingUpdates} style={{ ...btnPrimary, opacity: aiResearching ? 0.6 : 1 }}>
                   {aiResearching ? 'Discovering...' : 'AI Discover Forms'}
                 </button>
-                {/* Fix Missing PDFs button removed - URL validation now done during AI Discover */}
+                <button
+                  onClick={checkForUpdates}
+                  disabled={checkingUpdates || aiResearching}
+                  style={{
+                    ...btnSecondary,
+                    opacity: checkingUpdates ? 0.6 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {checkingUpdates ? (
+                    <>
+                      <span style={{
+                        display: 'inline-block', width: '12px', height: '12px',
+                        border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff',
+                        borderRadius: '50%', animation: 'spin 1s linear infinite'
+                      }} />
+                      Checking...
+                    </>
+                  ) : 'Check for Updates'}
+                </button>
                 <HelpButton />
               </div>
             </div>
@@ -1802,18 +2139,38 @@ export default function DevConsolePage() {
                                 {/* Analyze Button */}
                                 {f.source_url && !isProduction && (
                                   <button
-                                    onClick={() => analyzeForm(f)}
+                                    onClick={() => !analyzingFormId && analyzeForm(f)}
+                                    disabled={analyzingFormId === f.id}
                                     style={{
                                       background: 'none',
                                       border: '1px solid #8b5cf6',
                                       color: '#8b5cf6',
                                       padding: '3px 8px',
                                       borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '10px'
+                                      cursor: analyzingFormId === f.id ? 'wait' : 'pointer',
+                                      fontSize: '10px',
+                                      opacity: analyzingFormId && analyzingFormId !== f.id ? 0.5 : 1,
+                                      minWidth: '52px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '4px'
                                     }}
                                   >
-                                    Analyze
+                                    {analyzingFormId === f.id ? (
+                                      <>
+                                        <span style={{
+                                          display: 'inline-block',
+                                          width: '10px',
+                                          height: '10px',
+                                          border: '2px solid rgba(139,92,246,0.3)',
+                                          borderTopColor: '#8b5cf6',
+                                          borderRadius: '50%',
+                                          animation: 'spin 1s linear infinite'
+                                        }} />
+                                        <span>...</span>
+                                      </>
+                                    ) : 'Analyze'}
                                   </button>
                                 )}
                                 {/* View/Map Button - show if has PDF or has mapping */}
@@ -2916,36 +3273,90 @@ export default function DevConsolePage() {
                 <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600', display: 'flex', justifyContent: 'space-between' }}>
                   <span>PDF Fields ({stagingMapperModal.detected_fields?.length || 0})</span>
                   <span style={{ color: '#a1a1aa' }}>
-                    {Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length} mapped
+                    {Object.values(stagingMapperModal.field_mapping || {}).filter(v => {
+                      if (!v) return false;
+                      if (typeof v === 'string') return !!v;
+                      return v.fields && v.fields.length > 0;
+                    }).length} mapped
                   </span>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
                   {(stagingMapperModal.detected_fields || []).map((field, idx) => {
-                    const isMapped = !!stagingMapperModal.field_mapping?.[field];
+                    const mapping = stagingMapperModal.field_mapping?.[field];
+                    const mappedFields = getMappingFields(mapping);
+                    const separator = getMappingSeparator(mapping);
+                    const isMapped = mappedFields.length > 0;
+                    const isMulti = mappedFields.length > 1;
                     return (
                       <div key={idx} style={{ marginBottom: '12px', padding: '12px', backgroundColor: '#27272a', borderRadius: '8px', border: isMapped ? '1px solid #22c55e' : '1px solid #ef4444' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                           <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600' }}>{field}</span>
-                          {isMapped ? (
-                            <span style={{ fontSize: '14px', color: '#22c55e' }}>✓</span>
-                          ) : (
-                            <span style={{ fontSize: '14px', color: '#ef4444' }}>⚠</span>
-                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {isMulti && <span style={{ fontSize: '10px', color: '#8b5cf6', padding: '2px 6px', backgroundColor: 'rgba(139,92,246,0.2)', borderRadius: '4px' }}>MULTI</span>}
+                            {isMapped ? (
+                              <span style={{ fontSize: '14px', color: '#22c55e' }}>✓</span>
+                            ) : (
+                              <span style={{ fontSize: '14px', color: '#ef4444' }}>⚠</span>
+                            )}
+                          </div>
                         </div>
-                        <select
-                          value={stagingMapperModal.field_mapping?.[field] || ''}
-                          onChange={(e) => updateStagingFieldMapping(field, e.target.value)}
-                          style={{ ...inputStyle, fontSize: '12px', borderColor: isMapped ? '#22c55e' : '#ef4444' }}
-                        >
-                          <option value="">-- Select mapping --</option>
-                          {fieldContextOptions.map(group => (
-                            <optgroup key={group.group} label={group.group}>
-                              {group.fields.map(f => (
-                                <option key={f} value={f}>{f}</option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
+
+                        {/* Show currently mapped fields as removable chips */}
+                        {mappedFields.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                            {mappedFields.map((mf, mfIdx) => (
+                              <span key={mfIdx} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                padding: '3px 8px', backgroundColor: '#3f3f46', borderRadius: '4px', fontSize: '11px'
+                              }}>
+                                {mf}
+                                <button onClick={() => removeStagingFieldMapping(field, mf)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0', fontSize: '14px', lineHeight: 1 }}>×</button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Separator input when multiple fields */}
+                        {isMulti && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '11px', color: '#a1a1aa' }}>Join with:</span>
+                            <select
+                              value={separator}
+                              onChange={(e) => updateStagingSeparator(field, e.target.value)}
+                              style={{ ...inputStyle, fontSize: '11px', padding: '4px 8px', width: 'auto' }}
+                            >
+                              <option value=" ">Space</option>
+                              <option value=", ">Comma + Space</option>
+                              <option value=" - ">Dash</option>
+                              <option value="">No separator</option>
+                            </select>
+                            <span style={{ fontSize: '10px', color: '#71717a' }}>Preview: {mappedFields.join(separator || '')}</span>
+                          </div>
+                        )}
+
+                        {/* Add field dropdown */}
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              if (mappedFields.length === 0) {
+                                updateStagingFieldMapping(field, e.target.value);
+                              } else {
+                                addStagingFieldMapping(field, e.target.value);
+                              }
+                            }}
+                            style={{ ...inputStyle, fontSize: '12px', borderColor: isMapped ? '#22c55e' : '#ef4444', flex: 1 }}
+                          >
+                            <option value="">{mappedFields.length === 0 ? '-- Select field --' : '+ Add another field...'}</option>
+                            {fieldContextOptions.map(group => (
+                              <optgroup key={group.group} label={group.group}>
+                                {group.fields.filter(f => !mappedFields.includes(f)).map(f => (
+                                  <option key={f} value={f}>{f}</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     );
                   })}
@@ -2963,7 +3374,11 @@ export default function DevConsolePage() {
             <div style={{ padding: '16px 24px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ color: '#71717a', fontSize: '12px' }}>
                 {(() => {
-                  const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
+                  const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => {
+                    if (!v) return false;
+                    if (typeof v === 'string') return !!v;
+                    return v.fields && v.fields.length > 0;
+                  }).length;
                   const totalFields = stagingMapperModal.detected_fields?.length || 0;
                   const unmapped = totalFields - mappedCount;
                   return unmapped > 0
@@ -3010,6 +3425,320 @@ export default function DevConsolePage() {
           }}
           onClose={() => setTemplateGeneratorModal(null)}
         />
+      )}
+
+      {/* UPDATE CHECK RESULTS MODAL */}
+      {updateCheckModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '900px', width: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>Update Check Results - {updateCheckModal.state}</h3>
+                <p style={{ color: '#a1a1aa', fontSize: '13px', margin: '4px 0 0 0' }}>
+                  {updateCheckModal.summary?.new_forms_count || 0} new forms, {updateCheckModal.summary?.potential_updates_count || 0} updates, {updateCheckModal.summary?.unchanged_count || 0} up to date
+                  {(updateCheckModal.summary?.newsletters_count > 0 || updateCheckModal.summary?.regulatory_updates_count > 0) && (
+                    <span> | {updateCheckModal.summary?.newsletters_count || 0} news, {updateCheckModal.summary?.regulatory_updates_count || 0} regulatory</span>
+                  )}
+                </p>
+              </div>
+              <button onClick={() => setUpdateCheckModal(null)} style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer', fontSize: '24px' }}>×</button>
+            </div>
+
+            {/* Content */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+
+              {/* NEW FORMS SECTION */}
+              {updateCheckModal.new_forms?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#22c55e', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>✨</span>
+                    New Forms Found ({updateCheckModal.new_forms.length})
+                  </h4>
+                  <div style={{ backgroundColor: '#27272a', borderRadius: '8px', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <th style={{ textAlign: 'left', padding: '10px 12px', color: '#a1a1aa' }}>Form Name</th>
+                          <th style={{ textAlign: 'left', padding: '10px 12px', color: '#a1a1aa', width: '80px' }}>Form #</th>
+                          <th style={{ textAlign: 'center', padding: '10px 12px', color: '#a1a1aa', width: '60px' }}>Source</th>
+                          <th style={{ textAlign: 'center', padding: '10px 12px', color: '#a1a1aa', width: '80px' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {updateCheckModal.new_forms.map((form, idx) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid #3f3f46' }}>
+                            <td style={{ padding: '10px 12px' }}>
+                              <div style={{ fontWeight: '500', marginBottom: '2px' }}>{form.form_name?.substring(0, 60)}{form.form_name?.length > 60 ? '...' : ''}</div>
+                              {form.description && <div style={{ color: '#71717a', fontSize: '11px' }}>{form.description?.substring(0, 80)}...</div>}
+                            </td>
+                            <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: '#8b5cf6' }}>{form.form_number || '-'}</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                                {form.is_gov && <span style={{ padding: '2px 6px', backgroundColor: '#166534', borderRadius: '4px', fontSize: '10px' }}>.gov</span>}
+                                {form.is_pdf && <span style={{ padding: '2px 6px', backgroundColor: '#1e40af', borderRadius: '4px', fontSize: '10px' }}>PDF</span>}
+                              </div>
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <button onClick={() => addFormFromCheck(form)} style={{ padding: '4px 12px', backgroundColor: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>Add</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* POTENTIAL UPDATES SECTION */}
+              {updateCheckModal.potential_updates?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#eab308', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>🔄</span>
+                    Potential Updates ({updateCheckModal.potential_updates.length})
+                  </h4>
+                  <div style={{ backgroundColor: '#27272a', borderRadius: '8px', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <th style={{ textAlign: 'left', padding: '10px 12px', color: '#a1a1aa' }}>Form</th>
+                          <th style={{ textAlign: 'left', padding: '10px 12px', color: '#a1a1aa' }}>Reason</th>
+                          <th style={{ textAlign: 'center', padding: '10px 12px', color: '#a1a1aa', width: '140px' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {updateCheckModal.potential_updates.map((update, idx) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid #3f3f46' }}>
+                            <td style={{ padding: '10px 12px' }}>
+                              <div style={{ fontWeight: '500', marginBottom: '2px' }}>{update.existing.form_name?.substring(0, 50)}</div>
+                              <div style={{ fontFamily: 'monospace', color: '#8b5cf6', fontSize: '11px' }}>{update.existing.form_number}</div>
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <div style={{ color: '#eab308', fontSize: '11px', marginBottom: '4px' }}>{update.reason}</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '10px', color: '#71717a' }}>
+                                <span>Current: {update.existing.source_url?.substring(0, 40)}...</span>
+                                <span>New: {update.found.source_url?.substring(0, 40)}...</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                <button onClick={() => updateFormFromCheck(update)} style={{ padding: '4px 10px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>Update</button>
+                                <button onClick={() => ignoreUpdate(update)} style={{ padding: '4px 10px', backgroundColor: '#3f3f46', color: '#a1a1aa', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Ignore</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* UP TO DATE SECTION */}
+              {(updateCheckModal.unchanged > 0 || (!updateCheckModal.new_forms?.length && !updateCheckModal.potential_updates?.length)) && (
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ backgroundColor: '#27272a', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '8px' }}>✅</div>
+                    <div style={{ fontSize: '16px', fontWeight: '600', color: '#22c55e', marginBottom: '4px' }}>
+                      {updateCheckModal.unchanged || 0} Forms Up to Date
+                    </div>
+                    <div style={{ color: '#71717a', fontSize: '13px' }}>
+                      These forms have valid URLs and no updates were found.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* NEWSLETTERS SECTION */}
+              {updateCheckModal.newsletters?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <span style={{ fontSize: '18px' }}>📰</span>
+                    <span style={{ fontWeight: '600', fontSize: '14px' }}>Newsletters & News ({updateCheckModal.newsletters.length})</span>
+                  </div>
+                  <div style={{ backgroundColor: '#27272a', borderRadius: '8px', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#18181b' }}>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: '500', color: '#a1a1aa' }}>Title</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: '500', color: '#a1a1aa', width: '120px' }}>Source</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: '500', color: '#a1a1aa', width: '90px' }}>Date</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '500', color: '#a1a1aa', width: '140px' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {updateCheckModal.newsletters.map((item, idx) => (
+                          <tr key={idx} style={{ borderTop: '1px solid #3f3f46' }}>
+                            <td style={{ padding: '10px 12px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {item.is_gov && <span style={{ fontSize: '10px', backgroundColor: '#166534', padding: '2px 6px', borderRadius: '3px' }}>GOV</span>}
+                                <span style={{ color: '#fff' }}>{item.title.substring(0, 60)}{item.title.length > 60 ? '...' : ''}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '10px 12px', color: '#a1a1aa' }}>{item.source?.substring(0, 15) || '-'}</td>
+                            <td style={{ padding: '10px 12px', color: '#a1a1aa' }}>{item.date || '-'}</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                              <button
+                                onClick={() => window.open(item.url, '_blank')}
+                                style={{ padding: '4px 8px', backgroundColor: '#3f3f46', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', marginRight: '4px' }}
+                              >View</button>
+                              <button
+                                onClick={() => saveNewsItem(item, 'newsletter')}
+                                style={{ padding: '4px 8px', backgroundColor: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
+                              >Save</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* REGULATORY UPDATES SECTION */}
+              {updateCheckModal.regulatory_updates?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <span style={{ fontSize: '18px' }}>⚖️</span>
+                    <span style={{ fontWeight: '600', fontSize: '14px' }}>Regulatory Changes ({updateCheckModal.regulatory_updates.length})</span>
+                  </div>
+                  <div style={{ backgroundColor: '#27272a', borderRadius: '8px', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#18181b' }}>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: '500', color: '#a1a1aa' }}>Title</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: '500', color: '#a1a1aa', width: '120px' }}>Source</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: '500', color: '#a1a1aa', width: '90px' }}>Date</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '500', color: '#a1a1aa', width: '140px' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {updateCheckModal.regulatory_updates.map((item, idx) => (
+                          <tr key={idx} style={{ borderTop: '1px solid #3f3f46' }}>
+                            <td style={{ padding: '10px 12px' }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                  {item.is_gov && <span style={{ fontSize: '10px', backgroundColor: '#166534', padding: '2px 6px', borderRadius: '3px' }}>GOV</span>}
+                                  <span style={{ color: '#fff' }}>{item.title.substring(0, 55)}{item.title.length > 55 ? '...' : ''}</span>
+                                </div>
+                                {item.keywords_found?.length > 0 && (
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                    {item.keywords_found.slice(0, 3).map((kw, ki) => (
+                                      <span key={ki} style={{ fontSize: '10px', backgroundColor: '#c2410c', padding: '1px 5px', borderRadius: '3px' }}>{kw}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ padding: '10px 12px', color: '#a1a1aa' }}>{item.source?.substring(0, 15) || '-'}</td>
+                            <td style={{ padding: '10px 12px', color: '#a1a1aa' }}>{item.date || '-'}</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                              <button
+                                onClick={() => window.open(item.url, '_blank')}
+                                style={{ padding: '4px 8px', backgroundColor: '#3f3f46', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', marginRight: '4px' }}
+                              >View</button>
+                              <button
+                                onClick={() => saveNewsItem(item, 'regulation_change')}
+                                style={{ padding: '4px 8px', backgroundColor: '#c2410c', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
+                              >Save</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* No results */}
+              {!updateCheckModal.new_forms?.length && !updateCheckModal.potential_updates?.length && !updateCheckModal.unchanged && (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
+                  <p>No forms found to check. Run "AI Discover Forms" first to populate your form library.</p>
+                </div>
+              )}
+
+              {/* POST UPDATE FORM */}
+              {postUpdateForm && (
+                <div style={{ backgroundColor: '#27272a', borderRadius: '8px', padding: '16px', marginTop: '16px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#8b5cf6', marginBottom: '12px' }}>Post to State Updates</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>Title</label>
+                      <input
+                        value={postUpdateForm.title}
+                        onChange={(e) => setPostUpdateForm(p => ({ ...p, title: e.target.value }))}
+                        style={{ ...inputStyle, fontSize: '13px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>Summary</label>
+                      <textarea
+                        value={postUpdateForm.summary}
+                        onChange={(e) => setPostUpdateForm(p => ({ ...p, summary: e.target.value }))}
+                        rows={3}
+                        style={{ ...inputStyle, fontSize: '13px', resize: 'vertical' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>Update Type</label>
+                        <select
+                          value={postUpdateForm.update_type}
+                          onChange={(e) => setPostUpdateForm(p => ({ ...p, update_type: e.target.value }))}
+                          style={{ ...inputStyle, fontSize: '13px' }}
+                        >
+                          <option value="new_form">New Form</option>
+                          <option value="form_update">Form Update</option>
+                          <option value="regulation_change">Regulation Change</option>
+                          <option value="deadline_change">Deadline Change</option>
+                          <option value="info">Info</option>
+                        </select>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>Importance</label>
+                        <select
+                          value={postUpdateForm.importance}
+                          onChange={(e) => setPostUpdateForm(p => ({ ...p, importance: e.target.value }))}
+                          style={{ ...inputStyle, fontSize: '13px' }}
+                        >
+                          <option value="low">Low</option>
+                          <option value="normal">Normal</option>
+                          <option value="high">High</option>
+                          <option value="critical">Critical</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>Source URL (optional)</label>
+                      <input
+                        value={postUpdateForm.source_url}
+                        onChange={(e) => setPostUpdateForm(p => ({ ...p, source_url: e.target.value }))}
+                        placeholder="https://..."
+                        style={{ ...inputStyle, fontSize: '13px' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <button onClick={() => setPostUpdateForm(null)} style={btnSecondary}>Cancel</button>
+                      <button onClick={postStateUpdate} style={btnPrimary}>Post Update</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                {(updateCheckModal.new_forms?.length > 0 || updateCheckModal.potential_updates?.length > 0) && !postUpdateForm && (
+                  <button onClick={openPostUpdateForm} style={{ ...btnSecondary, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '14px' }}>📋</span> Post to State Updates
+                  </button>
+                )}
+              </div>
+              <button onClick={() => { setUpdateCheckModal(null); setPostUpdateForm(null); }} style={btnSecondary}>Close</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

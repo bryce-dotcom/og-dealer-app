@@ -51,7 +51,7 @@ export default function FeedbackButton() {
         style={{
           position: 'fixed',
           bottom: '160px',
-          right: '24px',
+          left: '24px',
           zIndex: 30,
           display: 'flex',
           alignItems: 'center',

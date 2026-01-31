@@ -19,6 +19,7 @@ import AdminDevConsole from './pages/AdminDevConsole';
 import TimeClockPage from './pages/TimeClockPage';
 import PayrollPage from './pages/PayrollPage';
 import DevConsolePage from './pages/DevConsolePage';
+import StateUpdatesPage from './pages/StateUpdatesPage';
 
 export default function App() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/dev" element={<DevConsolePage />} />
           <Route path="/admin/dev-console" element={<AdminDevConsole />} />
+          <Route path="/admin/state-updates" element={<StateUpdatesPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -201,31 +201,61 @@ function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
 }
 
 // ============================================
+// RESOLVE MULTI-FIELD MAPPING VALUE
+// Supports: string (single field), array of strings, or { fields: [], separator: ' ' }
+// ============================================
+function resolveFieldMapping(
+  mapping: any,
+  rawData: { deal: any, vehicle: any, dealer: any, customer: any },
+  context: Record<string, any>
+): string {
+  if (!mapping) return '';
+
+  // Handle legacy string format (single field)
+  if (typeof mapping === 'string') {
+    let value = getNestedValue(rawData, mapping);
+    if (value === undefined || value === null) {
+      const flatKey = mapping.split('.').pop() || mapping;
+      value = context[flatKey];
+    }
+    return value !== undefined && value !== null ? String(value) : '';
+  }
+
+  // Handle new multi-field format: { fields: [], separator: ' ' } or { universal_fields: [], separator: ' ' }
+  const fields = mapping.fields || mapping.universal_fields || [];
+  const separator = mapping.separator ?? ' ';
+
+  if (!Array.isArray(fields) || fields.length === 0) return '';
+
+  const values = fields.map((field: string) => {
+    let value = getNestedValue(rawData, field);
+    if (value === undefined || value === null) {
+      const flatKey = field.split('.').pop() || field;
+      value = context[flatKey];
+    }
+    return value !== undefined && value !== null ? String(value) : '';
+  });
+
+  return values.filter(v => v).join(separator).trim();
+}
+
+// ============================================
 // FILL HTML TEMPLATE WITH DATA
 // ============================================
 function fillHtmlTemplate(
   html: string,
-  fieldMapping: Record<string, string>,
+  fieldMapping: Record<string, any>,
   rawData: { deal: any, vehicle: any, dealer: any, customer: any },
   context: Record<string, any>
 ): string {
   let filled = html;
 
   // Replace {{field_name}} placeholders using field mapping
-  for (const [fieldName, dbColumn] of Object.entries(fieldMapping || {})) {
-    if (!dbColumn) continue;
+  for (const [fieldName, mapping] of Object.entries(fieldMapping || {})) {
+    if (!mapping) continue;
 
-    // Get value from raw data using dotted path
-    let value = getNestedValue(rawData, dbColumn);
-
-    // If not found, try the flat context
-    if (value === undefined || value === null) {
-      const flatKey = dbColumn.split('.').pop() || dbColumn;
-      value = context[flatKey];
-    }
-
-    // Format the value
-    const strValue = value !== undefined && value !== null ? String(value) : '';
+    // Resolve value using multi-field aware function
+    const strValue = resolveFieldMapping(mapping, rawData, context);
 
     // Replace {{fieldName}} style placeholders
     filled = filled.replace(new RegExp(`\\{\\{\\s*${fieldName}\\s*\\}\\}`, 'gi'), strValue);
@@ -466,7 +496,7 @@ interface FillResult {
 
 async function fillPdfForm(
   pdfBytes: ArrayBuffer,
-  fieldMapping: Record<string, string>,
+  fieldMapping: Record<string, any>,
   context: Record<string, any>,
   rawData: { deal: any, vehicle: any, dealer: any, customer: any }
 ): Promise<FillResult> {
@@ -488,16 +518,12 @@ async function fillPdfForm(
 
     console.log(`PDF has ${fields.length} fillable fields:`, debug.pdfFieldNames.slice(0, 10));
 
-    for (const [pdfFieldName, sourcePath] of Object.entries(fieldMapping || {})) {
+    for (const [pdfFieldName, mapping] of Object.entries(fieldMapping || {})) {
       try {
-        let value = resolvePath(rawData, sourcePath);
+        // Use multi-field aware resolution
+        const value = resolveFieldMapping(mapping, rawData, context);
 
-        if (value === undefined || value === null) {
-          const flatKey = sourcePath.split('.').pop() || sourcePath;
-          value = context[flatKey];
-        }
-
-        if (value === undefined || value === null || value === '') continue;
+        if (!value) continue;
 
         try {
           const field = form.getTextField(pdfFieldName);
@@ -507,7 +533,7 @@ async function fillPdfForm(
         } catch {
           try {
             const checkbox = form.getCheckBox(pdfFieldName);
-            if (value === 'X' || value === true || value === 'true') {
+            if (value === 'X' || value === 'true' || value === '1') {
               checkbox.check();
               debug.filledCount++;
               debug.filledFields.push(`${pdfFieldName}=checked`);

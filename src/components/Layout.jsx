@@ -105,6 +105,7 @@ export default function Layout() {
       label: 'ADMIN',
       items: [
         { to: '/document-rules', label: 'Doc Rules', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+        { to: '/admin/state-updates', label: 'State Updates', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8' },
         { to: '/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
       ]
     },
@@ -134,17 +135,13 @@ export default function Layout() {
   const SidebarContent = ({ onNavClick }) => (
     <>
       <div style={{ padding: '16px', borderBottom: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {dealer?.logo_url ? (
-          <img src={dealer.logo_url} alt="Logo" style={{ height: '40px', width: '40px', borderRadius: '8px', objectFit: 'cover' }} />
-        ) : (
-          <div style={{ height: '40px', width: '40px', borderRadius: '8px', backgroundColor: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '700', fontSize: '16px' }}>
-            {(dealer?.dealer_name || 'OG')[0]}
-          </div>
-        )}
+        <div style={{ backgroundColor: '#000', borderRadius: '8px', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <img src="/favicon.png" alt="OG Dealer" style={{ height: '28px', width: 'auto' }} />
+        </div>
         {(sidebarOpen || isMobile) && (
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {dealer?.dealer_name || 'OG Dealer'}
+              {dealer?.dealer_name || ''}
             </div>
             <div style={{ color: theme.textMuted, fontSize: '12px' }}>
               {dealer?.subscription_status === 'trial' ? '14-day trial' : dealer?.state || 'UT'}
@@ -363,14 +360,10 @@ export default function Layout() {
               borderBottom: `1px solid ${theme.border}`
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {dealer?.logo_url ? (
-                  <img src={dealer.logo_url} alt="Logo" style={{ height: '32px', width: '32px', borderRadius: '6px', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ height: '32px', width: '32px', borderRadius: '6px', backgroundColor: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '700', fontSize: '14px' }}>
-                    {(dealer?.dealer_name || 'OG')[0]}
-                  </div>
-                )}
-                <span style={{ fontWeight: '600', fontSize: '15px' }}>{dealer?.dealer_name || 'OG Dealer'}</span>
+                <div style={{ backgroundColor: '#000', borderRadius: '8px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <img src="/favicon.png" alt="OG Dealer" style={{ height: '28px', width: 'auto' }} />
+                </div>
+                <span style={{ fontWeight: '600', fontSize: '15px' }}>{dealer?.dealer_name || ''}</span>
               </div>
               <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={{ background: 'none', border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '8px', cursor: 'pointer' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '20px' }}>
@@ -392,7 +385,7 @@ export default function Layout() {
           </>
         )}
 
-        <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 35, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+        <div style={{ position: 'fixed', bottom: '24px', left: '24px', zIndex: 35, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', color: theme.text, boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span style={{ color: theme.accent }}>✨</span>Ask Arnie
           </div>
