@@ -148,15 +148,38 @@ serve(async (req) => {
 
     console.log(`[MAP] Starting field mapping for form: ${form_id}`);
 
-    // Get form from registry
-    const { data: form, error: formError } = await supabase
-      .from("form_registry")
+    // Get form from staging table first, then fall back to registry
+    let form: any = null;
+    let formError: any = null;
+
+    // Try form_staging first (where discovered forms go)
+    const { data: stagingForm, error: stagingError } = await supabase
+      .from("form_staging")
       .select("*")
       .eq("id", form_id)
       .single();
 
-    if (formError || !form) {
-      throw new Error(`Form not found: ${formError?.message || form_id}`);
+    if (stagingForm) {
+      form = stagingForm;
+      console.log(`[MAP] Found form in form_staging`);
+    } else {
+      // Fall back to form_registry (production forms)
+      const { data: registryForm, error: registryError } = await supabase
+        .from("form_registry")
+        .select("*")
+        .eq("id", form_id)
+        .single();
+
+      if (registryForm) {
+        form = registryForm;
+        console.log(`[MAP] Found form in form_registry`);
+      } else {
+        formError = stagingError || registryError;
+      }
+    }
+
+    if (!form) {
+      throw new Error(`Form not found in staging or registry: ${formError?.message || form_id}`);
     }
 
     console.log(`[MAP] Form: ${form.form_name} (${form.state})`);
