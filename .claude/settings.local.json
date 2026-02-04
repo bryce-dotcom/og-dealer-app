@@ -14,7 +14,10 @@
       "Bash(node -e:*)",
       "Bash(npm run dev:*)",
       "Bash(supabase functions deploy:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(git -C C:/OGDealer push)",
+      "Bash(dir:*)",
+      "Bash(python3:*)"
     ]
   }
 }

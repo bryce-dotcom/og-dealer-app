@@ -266,7 +266,7 @@ export default function DevConsolePage() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [dealers, users, feedback, audit, promos, templates, rules, staging] = await Promise.all([
+      const [dealers, users, feedback, audit, promos, templates, rules, staging, library] = await Promise.all([
         supabase.from('dealer_settings').select('*').order('id'),
         supabase.from('employees').select('*').order('name'),
         supabase.from('feedback').select('*').order('created_at', { ascending: false }),
@@ -275,6 +275,7 @@ export default function DevConsolePage() {
         supabase.from('message_templates').select('*').order('name'),
         supabase.from('compliance_rules').select('*').order('state, category'),
         supabase.from('form_staging').select('*').order('created_at', { ascending: false }),
+        supabase.from('form_library').select('*').order('created_at', { ascending: false }),
       ]);
       if (dealers.data) setAllDealers(dealers.data);
       if (users.data) setAllUsers(users.data);
@@ -284,9 +285,16 @@ export default function DevConsolePage() {
       if (templates.data) setMessageTemplates(templates.data);
       if (rules.data) setComplianceRules(rules.data);
       if (staging.data) {
+        console.log('[DevConsole] Loaded form_staging:', staging.data.length, 'forms');
         setFormStaging(staging.data);
-        // Library is just approved forms from staging - no separate table needed
-        setFormLibrary(staging.data.filter(f => f.status === 'approved'));
+      } else {
+        console.log('[DevConsole] No staging data returned, error:', staging.error);
+      }
+      if (library.data) {
+        console.log('[DevConsole] Loaded form_library:', library.data.length, 'forms');
+        setFormLibrary(library.data);
+      } else {
+        console.log('[DevConsole] No library data returned, error:', library.error);
       }
     } catch (err) { console.error(err); }
     setLoading(false);
@@ -616,19 +624,67 @@ export default function DevConsolePage() {
 
   const openStagingMapper = (form) => {
     // Convert field_mappings (array from analyze-form-pdf) to the format the mapper expects
-    // New format: field_mappings: [{ pdf_field, universal_fields: [], separator, confidence }]
+    // New format: field_mappings: [{ pdf_field, universal_fields: [], separator, confidence, status }]
     // Legacy format: field_mappings: [{ pdf_field, universal_field, confidence }]
     // UI format: field_mapping: { field_name: { fields: [], separator } | string }
     let detected_fields = form.detected_fields || [];
     let field_mapping = form.field_mapping || {};
+    let dismissed_fields = form.dismissed_fields || {};
+
+    console.log('[MAPPER DEBUG] Opening mapper for:', form.form_name);
+    console.log('[MAPPER DEBUG] form.field_mappings count:', form.field_mappings?.length || 0);
+    console.log('[MAPPER DEBUG] form.detected_fields count:', form.detected_fields?.length || 0);
 
     // If we have field_mappings array (from analyze-form-pdf or save), convert it to UI format
     if (form.field_mappings && Array.isArray(form.field_mappings) && form.field_mappings.length > 0) {
-      detected_fields = form.field_mappings.map(m => m.pdf_field || m.pdf_field_name);
-      field_mapping = {};
+      // Log all fields from field_mappings
+      console.log('[MAPPER DEBUG] All field_mappings:', form.field_mappings.map(m => ({
+        pdf_field: m.pdf_field || m.pdf_field_name,
+        matched: m.matched,
+        status: m.status,
+        has_universal_field: !!m.universal_field,
+        has_universal_fields: m.universal_fields?.length > 0
+      })));
+
+      // Count by status
+      const statusCounts = {};
       form.field_mappings.forEach(m => {
-        const fieldName = m.pdf_field || m.pdf_field_name;
-        if (!fieldName) return;
+        const status = m.status || (m.universal_field || m.universal_fields?.length > 0 ? 'mapped' : 'unmapped');
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
+      });
+      console.log('[MAPPER DEBUG] Status counts:', statusCounts);
+
+      // Extract detected_fields, generating names for any fields missing them
+      let unnamedCount = 0;
+      detected_fields = form.field_mappings.map((m, idx) => {
+        const name = m.pdf_field || m.pdf_field_name;
+        if (!name || (typeof name === 'string' && name.trim() === '')) {
+          unnamedCount++;
+          return `Unnamed_Field_${idx + 1}`;
+        }
+        return name;
+      });
+
+      if (unnamedCount > 0) {
+        console.log(`[MAPPER DEBUG] Warning: ${unnamedCount} fields had missing names and were auto-named`);
+      }
+      console.log('[MAPPER DEBUG] Extracted detected_fields count:', detected_fields.length);
+
+      field_mapping = {};
+      dismissed_fields = {};
+
+      form.field_mappings.forEach((m, idx) => {
+        // Use same naming logic as above
+        let fieldName = m.pdf_field || m.pdf_field_name;
+        if (!fieldName || (typeof fieldName === 'string' && fieldName.trim() === '')) {
+          fieldName = `Unnamed_Field_${idx + 1}`;
+        }
+
+        // Track dismissed fields
+        if (m.status === 'dismissed') {
+          dismissed_fields[fieldName] = true;
+          return;
+        }
 
         // Handle new multi-field format (universal_fields array)
         if (m.universal_fields && Array.isArray(m.universal_fields) && m.universal_fields.length > 0) {
@@ -644,13 +700,20 @@ export default function DevConsolePage() {
             separator: ' '
           };
         }
+        // Unmapped fields - no entry in field_mapping, but they're still in detected_fields
       });
+
+      console.log('[MAPPER DEBUG] Final field_mapping count:', Object.keys(field_mapping).length);
+      console.log('[MAPPER DEBUG] Final dismissed_fields count:', Object.keys(dismissed_fields).length);
     }
+
+    console.log('[MAPPER DEBUG] Setting modal with detected_fields:', detected_fields.length);
 
     setStagingMapperModal({
       ...form,
       detected_fields,
       field_mapping,
+      dismissed_fields,
     });
   };
 
@@ -658,41 +721,116 @@ export default function DevConsolePage() {
     if (!stagingMapperModal) return;
     setLoading(true);
     try {
-      // Count mapped fields (fields with at least one mapping)
-      const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => {
+      const dismissedFields = stagingMapperModal.dismissed_fields || {};
+      const dismissedCount = Object.keys(dismissedFields).length;
+
+      // Count mapped fields (fields with at least one mapping, excluding dismissed)
+      const mappedCount = Object.entries(stagingMapperModal.field_mapping || {}).filter(([field, v]) => {
+        if (dismissedFields[field]) return false; // Don't count dismissed
         if (!v) return false;
         if (typeof v === 'string') return !!v;
         return v.fields && v.fields.length > 0;
       }).length;
-      const totalFields = stagingMapperModal.detected_fields?.length || 1;
-      const confidence = Math.round((mappedCount / totalFields) * 100);
 
-      // Convert to field_mappings array format - now supports multi-field mappings
+      // Total fields excluding dismissed
+      const totalFields = (stagingMapperModal.detected_fields?.length || 1) - dismissedCount;
+      const confidence = totalFields > 0 ? Math.round((mappedCount / totalFields) * 100) : 100;
+
+      // Convert to field_mappings array format - now includes status
       const field_mappings = stagingMapperModal.detected_fields.map(field => {
+        const isDismissed = dismissedFields[field];
         const mapping = stagingMapperModal.field_mapping?.[field];
+
+        // Dismissed field
+        if (isDismissed) {
+          return {
+            pdf_field: field,
+            universal_fields: [],
+            separator: ' ',
+            confidence: 0,
+            status: 'dismissed',
+            matched: false
+          };
+        }
+
         // Handle both old string format and new multi-field format
         if (!mapping) {
-          return { pdf_field: field, universal_fields: [], separator: ' ', confidence: 0 };
+          return {
+            pdf_field: field,
+            universal_fields: [],
+            separator: ' ',
+            confidence: 0,
+            status: 'unmapped',
+            matched: false
+          };
         }
         if (typeof mapping === 'string') {
-          return { pdf_field: field, universal_fields: [mapping], separator: ' ', confidence: 1.0 };
+          return {
+            pdf_field: field,
+            universal_fields: [mapping],
+            separator: ' ',
+            confidence: 1.0,
+            status: 'mapped',
+            matched: true
+          };
         }
+        const hasMappings = mapping.fields?.length > 0;
         return {
           pdf_field: field,
           universal_fields: mapping.fields || [],
           separator: mapping.separator || ' ',
-          confidence: (mapping.fields?.length > 0) ? 1.0 : 0,
+          confidence: hasMappings ? 1.0 : 0,
+          status: hasMappings ? 'mapped' : 'unmapped',
+          matched: hasMappings
         };
       });
 
-      await supabase.from('form_staging').update({
+      // DEBUG: Log what we're about to save
+      const savePayload = {
         field_mappings: field_mappings,
-        field_mapping: stagingMapperModal.field_mapping, // Keep for UI state
+        field_mapping: stagingMapperModal.field_mapping,
+        dismissed_fields: dismissedFields,
         mapping_confidence: confidence,
         mapping_status: confidence >= 99 ? 'human_verified' : 'ai_suggested',
-      }).eq('id', stagingMapperModal.id);
+      };
+      console.log('[SAVE DEBUG] Form ID:', stagingMapperModal.id);
+      console.log('[SAVE DEBUG] Saving payload:', JSON.stringify(savePayload, null, 2));
+      console.log('[SAVE DEBUG] field_mappings count:', field_mappings.length);
+      console.log('[SAVE DEBUG] Mapped fields:', field_mappings.filter(f => f.matched).length);
+      console.log('[SAVE DEBUG] Unmapped fields:', field_mappings.filter(f => !f.matched && f.status !== 'dismissed').length);
 
-      showToast(`Mapping saved - ${confidence}% complete`);
+      const { data: saveResult, error: saveError } = await supabase
+        .from('form_staging')
+        .update(savePayload)
+        .eq('id', stagingMapperModal.id)
+        .select();
+
+      console.log('[SAVE DEBUG] Save result:', saveResult);
+      console.log('[SAVE DEBUG] Save error:', saveError);
+
+      if (saveError) {
+        throw new Error(`Database save failed: ${saveError.message}`);
+      }
+
+      // Verify the save by re-fetching the record
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('form_staging')
+        .select('id, form_name, field_mappings, field_mapping, mapping_confidence')
+        .eq('id', stagingMapperModal.id)
+        .single();
+
+      console.log('[SAVE DEBUG] Verification fetch:', verifyData);
+      if (verifyError) {
+        console.error('[SAVE DEBUG] Verification error:', verifyError);
+      } else {
+        const verifyMapped = verifyData.field_mappings?.filter(f => f.matched)?.length || 0;
+        console.log('[SAVE DEBUG] Verified mapped count:', verifyMapped);
+        if (verifyMapped !== field_mappings.filter(f => f.matched).length) {
+          console.error('[SAVE DEBUG] MISMATCH! Saved:', field_mappings.filter(f => f.matched).length, 'but DB has:', verifyMapped);
+        }
+      }
+
+      showToast(`Mapping saved - ${confidence}% complete (${dismissedCount} dismissed)`);
       setStagingMapperModal(null);
       loadAllData();
     } catch (err) {
@@ -716,27 +854,38 @@ export default function DevConsolePage() {
 
   // Update single field mapping (replaces all fields with one)
   const updateStagingFieldMapping = (fieldName, contextPath) => {
-    setStagingMapperModal(prev => ({
-      ...prev,
-      field_mapping: {
-        ...prev.field_mapping,
-        [fieldName]: contextPath ? { fields: [contextPath], separator: ' ' } : null
-      }
-    }));
+    console.log('[MAPPING DEBUG] updateStagingFieldMapping called:', fieldName, '->', contextPath);
+    setStagingMapperModal(prev => {
+      const newMapping = {
+        ...prev,
+        field_mapping: {
+          ...prev.field_mapping,
+          [fieldName]: contextPath ? { fields: [contextPath], separator: ' ' } : null
+        }
+      };
+      console.log('[MAPPING DEBUG] New field_mapping for', fieldName, ':', newMapping.field_mapping[fieldName]);
+      return newMapping;
+    });
   };
 
   // Add additional field to existing mapping
   const addStagingFieldMapping = (fieldName, contextPath) => {
+    console.log('[MAPPING DEBUG] addStagingFieldMapping called:', fieldName, '+', contextPath);
     setStagingMapperModal(prev => {
       const existing = prev.field_mapping?.[fieldName];
       const currentFields = getMappingFields(existing);
       const separator = getMappingSeparator(existing);
-      if (!contextPath || currentFields.includes(contextPath)) return prev;
+      if (!contextPath || currentFields.includes(contextPath)) {
+        console.log('[MAPPING DEBUG] Skipping - already exists or empty');
+        return prev;
+      }
+      const newFields = [...currentFields, contextPath];
+      console.log('[MAPPING DEBUG] New fields for', fieldName, ':', newFields);
       return {
         ...prev,
         field_mapping: {
           ...prev.field_mapping,
-          [fieldName]: { fields: [...currentFields, contextPath], separator }
+          [fieldName]: { fields: newFields, separator }
         }
       };
     });
@@ -774,22 +923,59 @@ export default function DevConsolePage() {
     });
   };
 
+  // Dismiss an unmapped field (excludes from 100% calculation)
+  const dismissField = (fieldName) => {
+    setStagingMapperModal(prev => ({
+      ...prev,
+      dismissed_fields: {
+        ...prev.dismissed_fields,
+        [fieldName]: true
+      },
+      // Also clear any mapping for this field
+      field_mapping: {
+        ...prev.field_mapping,
+        [fieldName]: null
+      }
+    }));
+  };
+
+  // Restore a dismissed field
+  const restoreField = (fieldName) => {
+    setStagingMapperModal(prev => {
+      const { [fieldName]: _, ...restDismissed } = prev.dismissed_fields || {};
+      return {
+        ...prev,
+        dismissed_fields: restDismissed
+      };
+    });
+  };
+
   // Inline upload handler for staging forms
   const handleInlineUpload = async (form, file) => {
     if (!file) return;
+    console.log('[INLINE UPLOAD] Starting upload for form:', form.id, form.form_name);
+    console.log('[INLINE UPLOAD] File:', { name: file.name, type: file.type, size: file.size });
+
     setInlineUploadingId(form.id);
     try {
       const fileName = `${form.state}/${form.form_name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.pdf`;
-      const { error: uploadError } = await supabase.storage
+      console.log('[INLINE UPLOAD] Uploading to form-pdfs/', fileName);
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('form-pdfs')
-        .upload(fileName, file, { contentType: 'application/pdf' });
+        .upload(fileName, file, { contentType: 'application/pdf', upsert: true });
+
+      console.log('[INLINE UPLOAD] Storage result:', { uploadData, uploadError });
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: urlData } = supabase.storage
         .from('form-pdfs')
         .getPublicUrl(fileName);
 
-      await supabase.from('form_staging').update({
+      const publicUrl = urlData.publicUrl;
+      console.log('[INLINE UPLOAD] Public URL:', publicUrl);
+
+      const { error: updateError } = await supabase.from('form_staging').update({
         source_url: publicUrl,
         pdf_validated: true,
         url_validated: true,
@@ -797,9 +983,13 @@ export default function DevConsolePage() {
         workflow_status: form.form_number_confirmed ? 'staging' : 'needs_form_number'
       }).eq('id', form.id);
 
+      console.log('[INLINE UPLOAD] DB update error:', updateError);
+      if (updateError) throw updateError;
+
       showToast(`PDF uploaded for ${form.form_name}`);
       loadAllData();
     } catch (err) {
+      console.error('[INLINE UPLOAD] Error:', err);
       showToast(`Upload error: ${err.message}`, 'error');
     }
     setInlineUploadingId(null);
@@ -822,37 +1012,48 @@ export default function DevConsolePage() {
   };
 
   const promoteToLibrary = async (form, selectedLibrary) => {
-    // Only allow promotion if mapping_confidence >= 99
-    const confidence = form.mapping_confidence || 0;
-    if (confidence < 99) {
-      showToast(`Cannot promote - mapping confidence is ${confidence}%, needs 99%+`, 'error');
-      return;
-    }
-
     // Check if already promoted
-    if (form.status === 'approved') {
-      showToast(`Form ${form.form_number} (${form.state}) is already in library`, 'error');
+    if (form.status === 'promoted') {
+      showToast(`Form ${form.form_number || form.form_name} (${form.state}) is already promoted`, 'error');
       return;
     }
 
     setLoading(true);
     try {
-      // Call edge function to download PDF and promote form
-      showToast('Downloading and storing PDF template...', 'info');
+      showToast('Promoting form to library...', 'info');
 
-      const { data, error } = await supabase.functions.invoke('promote-form', {
-        body: {
-          form_id: form.id,
-          doc_type: selectedLibrary
-        }
-      });
+      // Insert into form_library
+      const { data: insertedForm, error: insertError } = await supabase.from('form_library').insert({
+        state: form.state,
+        form_number: form.form_number,
+        form_name: form.form_name,
+        category: form.category || selectedLibrary || 'deal',
+        source_url: form.source_url,
+        download_url: form.download_url,
+        storage_bucket: form.storage_bucket,
+        storage_path: form.storage_path,
+        is_fillable: form.is_fillable || false,
+        detected_fields: form.detected_fields || [],
+        field_mappings: form.field_mappings || {},
+        mapping_confidence: form.mapping_confidence || 0,
+        mapping_status: form.mapping_status || 'unmapped',
+        status: 'active',
+        promoted_from: form.id
+      }).select().single();
 
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Promotion failed');
+      if (insertError) throw insertError;
 
-      const libraryLabels = { deal: 'Deal Docs', finance: 'Finance Docs', licensing: 'Licensing Docs', tax: 'Tax Docs', reporting: 'Reporting Docs' };
-      await logAudit('PROMOTE', 'form_staging', form.id, { status: 'pending' }, { status: 'approved', doc_type: selectedLibrary, storage_path: data.storage_path });
-      showToast(`Form promoted to ${libraryLabels[selectedLibrary] || selectedLibrary} library - PDF stored`);
+      // Update form_staging status to 'promoted'
+      const { error: updateError } = await supabase.from('form_staging').update({
+        status: 'promoted',
+        promoted_at: new Date().toISOString()
+      }).eq('id', form.id);
+
+      if (updateError) throw updateError;
+
+      const libraryLabels = { deal: 'Deal Docs', finance: 'Finance Docs', licensing: 'Licensing Docs', tax: 'Tax Docs', reporting: 'Reporting Docs', title: 'Title Docs', financing: 'Finance Docs', disclosure: 'Disclosures', registration: 'Registration', compliance: 'Compliance' };
+      await logAudit('PROMOTE', 'form_library', insertedForm.id, null, { promoted_from: form.id, category: selectedLibrary });
+      showToast(`Form promoted to ${libraryLabels[selectedLibrary] || selectedLibrary} library`);
       setPromoteModal(null);
       loadAllData();
     } catch (err) {
@@ -861,16 +1062,71 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
+  // Promote all pending staging forms to library
+  const promoteAllForms = async () => {
+    const pendingForms = formStaging.filter(f => f.status === 'pending');
+    if (pendingForms.length === 0) {
+      showToast('No pending forms to promote', 'info');
+      return;
+    }
+
+    if (!confirm(`Promote all ${pendingForms.length} pending forms to library?`)) return;
+
+    setLoading(true);
+    let promoted = 0;
+    let failed = 0;
+
+    for (const form of pendingForms) {
+      try {
+        // Insert into form_library
+        const { error: insertError } = await supabase.from('form_library').insert({
+          state: form.state,
+          form_number: form.form_number,
+          form_name: form.form_name,
+          category: form.category || 'deal',
+          source_url: form.source_url,
+          download_url: form.download_url,
+          storage_bucket: form.storage_bucket,
+          storage_path: form.storage_path,
+          is_fillable: form.is_fillable || false,
+          detected_fields: form.detected_fields || [],
+          field_mappings: form.field_mappings || {},
+          mapping_confidence: form.mapping_confidence || 0,
+          mapping_status: form.mapping_status || 'unmapped',
+          status: 'active',
+          promoted_from: form.id
+        });
+
+        if (insertError) throw insertError;
+
+        // Update form_staging status
+        await supabase.from('form_staging').update({
+          status: 'promoted',
+          promoted_at: new Date().toISOString()
+        }).eq('id', form.id);
+
+        promoted++;
+      } catch (err) {
+        console.error(`Failed to promote ${form.form_name}:`, err);
+        failed++;
+      }
+    }
+
+    showToast(`Promoted ${promoted} forms${failed > 0 ? `, ${failed} failed` : ''}`);
+    loadAllData();
+    setLoading(false);
+  };
+
   const [deleteStagedModal, setDeleteStagedModal] = useState(null);
 
   const deleteStagedForm = async (form) => {
     setLoading(true);
     try {
-      // Delete from form_staging (Library is just a view, so this removes from both)
+      // Delete from form_staging
       await supabase.from('form_staging').delete().eq('id', form.id);
 
       await logAudit('DELETE', 'form_staging', form.id, { form_number: form.form_number, form_name: form.form_name });
-      showToast('Form deleted');
+      showToast('Form deleted from staging');
       setDeleteStagedModal(null);
       loadAllData();
     } catch (err) {
@@ -889,35 +1145,67 @@ export default function DevConsolePage() {
     setLoading(true);
     try {
       let sourceUrl = uploadFormModal.source_url || null;
+      let pdfValidated = false;
+      let urlValidated = false;
 
       // If a file was uploaded, upload it to Supabase storage
       if (uploadFormModal.file) {
-        const fileExt = uploadFormModal.file.name.split('.').pop();
-        const fileName = `${uploadFormModal.state.toUpperCase()}_${uploadFormModal.form_number.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.${fileExt}`;
+        console.log('[UPLOAD] Starting file upload:', {
+          name: uploadFormModal.file.name,
+          type: uploadFormModal.file.type,
+          size: uploadFormModal.file.size
+        });
+
+        const fileExt = uploadFormModal.file.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const state = uploadFormModal.state.toUpperCase();
+        const safeFormNumber = uploadFormModal.form_number.replace(/[^a-zA-Z0-9-]/g, '_');
+        // Store in state subfolder for organization
+        const fileName = `${state}/${safeFormNumber}_${Date.now()}.${fileExt}`;
+
+        console.log('[UPLOAD] Uploading to form-pdfs/', fileName);
 
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('form-pdfs')
-          .upload(fileName, uploadFormModal.file);
+          .upload(fileName, uploadFormModal.file, {
+            contentType: 'application/pdf',
+            upsert: true
+          });
+
+        console.log('[UPLOAD] Storage result:', { uploadData, uploadError });
 
         if (uploadError) {
-          console.error('Upload error:', uploadError);
-          // Continue without file if upload fails - user can add URL manually later
-          showToast('PDF upload failed, saving form without file', 'error');
+          console.error('[UPLOAD] Upload error:', uploadError);
+          showToast('PDF upload failed: ' + uploadError.message, 'error');
         } else {
-          const { data: { publicUrl } } = supabase.storage.from('form-pdfs').getPublicUrl(fileName);
-          sourceUrl = publicUrl;
+          const { data: urlData } = supabase.storage.from('form-pdfs').getPublicUrl(fileName);
+          sourceUrl = urlData.publicUrl;
+          pdfValidated = true; // We uploaded it ourselves, so it's valid
+          urlValidated = true;
+          console.log('[UPLOAD] Public URL:', sourceUrl);
         }
       }
+
+      console.log('[UPLOAD] Inserting form_staging record:', {
+        form_number: uploadFormModal.form_number.toUpperCase().trim(),
+        source_url: sourceUrl,
+        pdf_validated: pdfValidated
+      });
 
       const { data: newForm, error: insertError } = await supabase.from('form_staging').insert({
         form_number: uploadFormModal.form_number.toUpperCase().trim(),
         form_name: uploadFormModal.form_name.trim(),
         state: uploadFormModal.state.toUpperCase(),
         source_url: sourceUrl,
+        pdf_validated: pdfValidated,
+        url_validated: urlValidated,
+        url_validated_at: pdfValidated ? new Date().toISOString() : null,
         status: 'pending',
+        workflow_status: 'staging',
         ai_confidence: null, // Manual upload - no AI confidence
         ai_is_current_version: true, // Assume manual uploads are current
       }).select().single();
+
+      console.log('[UPLOAD] DB insert result:', { newForm, insertError });
 
       if (insertError) throw insertError;
 
@@ -1059,18 +1347,34 @@ export default function DevConsolePage() {
     setDiscoverProgress(`Checking ${stateToCheck} for updates...`);
 
     try {
-      const response = await supabase.functions.invoke('check-form-updates', {
-        body: { state: stateToCheck, dealer_id: dealerId }
-      });
+      // Get session for auth token
+      const { data: { session } } = await supabase.auth.getSession();
 
-      if (response.error) throw new Error(response.error.message);
-      if (response.data?.error) throw new Error(response.data.error);
+      const response = await fetch(
+        import.meta.env.VITE_SUPABASE_URL + '/functions/v1/check-form-updates',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + (session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY)
+          },
+          body: JSON.stringify({ state: stateToCheck, dealer_id: dealerId })
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
 
       setDiscoverProgress('');
       setUpdateCheckModal({
         state: stateToCheck,
-        ...response.data.scan_results,
-        summary: response.data.summary
+        ...data.scan_results,
+        summary: data.summary
       });
     } catch (err) {
       setDiscoverProgress('');
@@ -1284,7 +1588,7 @@ export default function DevConsolePage() {
     if (stagingFilter === 'needs_pdf') return filtered.filter(f => !f.source_url || f.workflow_status === 'needs_upload');
     if (stagingFilter === 'needs_mapping') return filtered.filter(f => f.source_url && !f.field_mappings?.length && (f.mapping_confidence || 0) < 99);
     if (stagingFilter === 'ready') return filtered.filter(f => ((f.field_mappings?.length > 0) || (f.mapping_confidence || 0) >= 99) && f.form_number_confirmed && f.source_url && f.workflow_status !== 'production' && f.status !== 'approved');
-    if (stagingFilter === 'production') return filtered.filter(f => f.workflow_status === 'production' || f.status === 'approved');
+    if (stagingFilter === 'production') return filtered.filter(f => f.workflow_status === 'production' || f.status === 'active');
     return filtered.filter(f => f.status === stagingFilter);
   };
 
@@ -1297,7 +1601,7 @@ export default function DevConsolePage() {
     try {
       const formsToDelete = formStaging.filter(f => f.state === state);
 
-      // Delete all staging forms for this state (Library is a view, so this removes from both)
+      // Delete all staging forms for this state
       await supabase.from('form_staging').delete().eq('state', state);
 
       await logAudit('BULK_DELETE', 'form_staging', `state:${state}`, { count: formsToDelete.length });
@@ -1348,13 +1652,22 @@ export default function DevConsolePage() {
   };
 
   const removeFromLibrary = async (id) => {
-    if (!confirm('Remove this form from the library? It will return to staging.')) return;
+    if (!confirm('Remove this form from the library?')) return;
     setLoading(true);
     try {
-      // Library is a view of staging - "removing" just changes status back to analyzed
-      await supabase.from('form_staging').update({ status: 'analyzed', promoted_at: null }).eq('id', id);
-      await logAudit('DEMOTE', 'form_staging', id, { status: 'approved' }, { status: 'analyzed' });
-      showToast('Form removed from library (returned to staging)');
+      // Get the library form first to find its promoted_from id
+      const { data: libForm } = await supabase.from('form_library').select('promoted_from').eq('id', id).single();
+
+      // Delete from form_library
+      await supabase.from('form_library').delete().eq('id', id);
+
+      // If it was promoted from staging, update the staging record back to pending
+      if (libForm?.promoted_from) {
+        await supabase.from('form_staging').update({ status: 'pending', promoted_at: null }).eq('id', libForm.promoted_from);
+      }
+
+      await logAudit('DEMOTE', 'form_library', id, { status: 'active' }, { status: 'deleted' });
+      showToast('Form removed from library');
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -1380,17 +1693,130 @@ export default function DevConsolePage() {
   // Get unique states from library for filter dropdown
   const libraryStates = [...new Set(formLibrary.map(f => f.state))].sort();
 
-  // === FIELD MAPPER - Universal Fields (matches analyze-form-pdf output) ===
+  // === FIELD MAPPER - Maps to ACTUAL database columns ===
+  // These field names match what buildFormContext() creates in fill-deal-documents
   const fieldContextOptions = [
-    { group: 'Buyer', fields: ['buyer_name', 'buyer_first_name', 'buyer_last_name', 'buyer_address', 'buyer_address2', 'buyer_city', 'buyer_state', 'buyer_zip', 'buyer_county', 'buyer_phone', 'buyer_phone_alt', 'buyer_email', 'buyer_dl_number', 'buyer_dl_state', 'buyer_dl_exp', 'buyer_dob', 'buyer_ssn', 'buyer_ssn_last4', 'buyer_employer', 'buyer_employer_phone', 'buyer_income', 'buyer_signature', 'buyer_signature_date'] },
-    { group: 'Co-Buyer', fields: ['co_buyer_name', 'co_buyer_first_name', 'co_buyer_last_name', 'co_buyer_address', 'co_buyer_city', 'co_buyer_state', 'co_buyer_zip', 'co_buyer_phone', 'co_buyer_dl_number', 'co_buyer_dl_state', 'co_buyer_dob', 'co_buyer_ssn', 'co_buyer_signature', 'co_buyer_signature_date'] },
-    { group: 'Dealer', fields: ['dealer_name', 'dealer_dba', 'dealer_address', 'dealer_city', 'dealer_state', 'dealer_zip', 'dealer_county', 'dealer_phone', 'dealer_fax', 'dealer_email', 'dealer_license', 'dealer_ein', 'dealer_sales_tax_id', 'dealer_signature', 'dealer_signature_date', 'salesperson_name', 'salesperson_number'] },
-    { group: 'Vehicle', fields: ['vehicle_year', 'vehicle_make', 'vehicle_model', 'vehicle_trim', 'vehicle_body', 'vehicle_vin', 'vehicle_stock', 'vehicle_miles', 'vehicle_miles_exempt', 'vehicle_miles_exceeds', 'vehicle_miles_not_actual', 'vehicle_color', 'vehicle_interior_color', 'vehicle_engine', 'vehicle_cylinders', 'vehicle_transmission', 'vehicle_drive', 'vehicle_fuel', 'vehicle_title_number', 'vehicle_title_state', 'vehicle_plate', 'vehicle_weight', 'vehicle_new_used', 'vehicle_warranty'] },
-    { group: 'Deal', fields: ['sale_date', 'delivery_date', 'deal_number', 'sale_price', 'msrp', 'trade_allowance', 'trade_payoff', 'net_trade', 'down_payment', 'rebate', 'doc_fee', 'title_fee', 'registration_fee', 'smog_fee', 'other_fees', 'other_fees_desc', 'total_fees', 'subtotal', 'tax_rate', 'tax_amount', 'total_price', 'amount_financed', 'balance_due'] },
-    { group: 'Financing', fields: ['apr', 'term_months', 'monthly_payment', 'payment_frequency', 'num_payments', 'first_payment_date', 'final_payment_date', 'final_payment_amount', 'total_of_payments', 'finance_charge', 'total_sale_price', 'deferred_price', 'late_fee', 'late_days', 'prepayment_penalty'] },
-    { group: 'Trade-In', fields: ['trade_year', 'trade_make', 'trade_model', 'trade_vin', 'trade_miles', 'trade_color', 'trade_title_number', 'trade_plate', 'trade_lienholder', 'trade_lienholder_address', 'trade_payoff_good_thru'] },
-    { group: 'Lienholder', fields: ['lienholder_name', 'lienholder_address', 'lienholder_city', 'lienholder_state', 'lienholder_zip', 'lienholder_elt'] },
-    { group: 'Insurance', fields: ['insurance_company', 'insurance_policy', 'insurance_agent', 'insurance_phone', 'insurance_exp'] },
+    {
+      group: 'Buyer (from deals table)',
+      fields: [
+        'buyer_name',        // deal.purchaser_name
+        'buyer_first',       // parsed from purchaser_name
+        'buyer_last',        // parsed from purchaser_name
+        'buyer_address',     // deal.address
+        'buyer_city',        // deal.city
+        'buyer_state',       // deal.state
+        'buyer_zip',         // deal.zip
+        'buyer_phone',       // deal.phone
+        'buyer_email',       // deal.email
+        'buyer_dl_number',   // customer.dl_number
+        'buyer_dl_state',    // customer.dl_state
+        'purchaser_name',    // alias
+        'customer_name',     // alias
+      ]
+    },
+    {
+      group: 'Vehicle (from inventory)',
+      fields: [
+        'vehicle_year',      // inventory.year
+        'vehicle_make',      // inventory.make
+        'vehicle_model',     // inventory.model
+        'vehicle_vin',       // inventory.vin
+        'vin',               // alias
+        'vehicle_miles',     // inventory.miles
+        'odometer',          // alias for miles
+        'mileage',           // alias for miles
+        'vehicle_color',     // inventory.color
+        'color',             // alias
+        'vehicle_stock',     // inventory.stock_number
+        'stock_number',      // alias
+        'year',              // alias
+        'make',              // alias
+        'model',             // alias
+      ]
+    },
+    {
+      group: 'Dealer (from dealer_settings)',
+      fields: [
+        'dealer_name',       // dealer_settings.dealer_name
+        'dealer_address',    // dealer_settings.address
+        'dealer_city',       // dealer_settings.city
+        'dealer_state',      // dealer_settings.state
+        'dealer_zip',        // dealer_settings.zip
+        'dealer_phone',      // dealer_settings.phone
+        'dealer_license',    // dealer_settings.dealer_license
+        'seller_name',       // alias for dealer_name
+        'seller_address',    // alias
+      ]
+    },
+    {
+      group: 'Pricing (from deals)',
+      fields: [
+        'sale_price',        // deal.sale_price or deal.price
+        'price',             // deal.price
+        'down_payment',      // deal.down_payment
+        'doc_fee',           // deal.doc_fee
+        'sales_tax',         // deal.sales_tax
+        'total_price',       // deal.total_price
+        'total_sale',        // deal.total_sale
+        'balance_due',       // deal.balance_due
+      ]
+    },
+    {
+      group: 'Financing (from deals)',
+      fields: [
+        'amount_financed',   // deal.amount_financed
+        'apr',               // deal.apr
+        'interest_rate',     // deal.interest_rate
+        'term_months',       // deal.term_months
+        'monthly_payment',   // deal.monthly_payment
+        'first_payment_date',// deal.first_payment_date
+        'total_of_payments', // deal.total_of_payments
+        'finance_charge',    // calculated
+        'credit_score',      // deal.credit_score
+      ]
+    },
+    {
+      group: 'Trade-In (from deals)',
+      fields: [
+        'trade_description', // deal.trade_description
+        'trade_value',       // deal.trade_value
+        'trade_acv',         // deal.trade_acv
+        'trade_allowance',   // deal.trade_allowance
+        'trade_payoff',      // deal.trade_payoff
+        'trade_vin',         // deal.trade_vin
+        'negative_equity',   // deal.negative_equity
+        'net_trade',         // calculated: trade_value - trade_payoff
+      ]
+    },
+    {
+      group: 'Add-Ons (from deals)',
+      fields: [
+        'gap_insurance',     // deal.gap_insurance
+        'extended_warranty', // deal.extended_warranty
+        'protection_package',// deal.protection_package
+        'tire_wheel',        // deal.tire_wheel
+        'accessory_1_desc',  // deal.accessory_1_desc
+        'accessory_1_price', // deal.accessory_1_price
+        'accessory_2_desc',  // deal.accessory_2_desc
+        'accessory_2_price', // deal.accessory_2_price
+        'accessory_3_desc',  // deal.accessory_3_desc
+        'accessory_3_price', // deal.accessory_3_price
+      ]
+    },
+    {
+      group: 'Other',
+      fields: [
+        'date_of_sale',      // deal.date_of_sale
+        'sale_date',         // alias
+        'today',             // current date
+        'salesman',          // deal.salesman
+        'deal_type',         // deal.deal_type
+        'deal_status',       // deal.deal_status
+        'deal_number',       // deal.id
+        'lienholder_name',   // dealer for BHPH
+        'lienholder_address',// dealer address for BHPH
+      ]
+    },
   ];
 
   const saveFieldMapping = async () => {
@@ -1888,15 +2314,24 @@ export default function DevConsolePage() {
             {/* === STAGING TAB === */}
             {formLibraryTab === 'staging' && (
               <div>
-                {/* Header with Upload button */}
+                {/* Header with Upload and Promote All buttons */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                   <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Developer tooling to maintain form freshness across all states.</p>
-                  <button
-                    onClick={() => setUploadFormModal({ state: stagingStateFilter !== 'all' ? stagingStateFilter : '', form_number: '', form_name: '', source_url: '', file: null })}
-                    style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#22c55e', color: '#fff', fontWeight: '600' }}
-                  >
-                    + Upload Form
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={promoteAllForms}
+                      disabled={formStaging.filter(f => f.status === 'pending').length === 0}
+                      style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#3b82f6', color: '#fff', fontWeight: '600', opacity: formStaging.filter(f => f.status === 'pending').length === 0 ? 0.5 : 1 }}
+                    >
+                      Promote All ({formStaging.filter(f => f.status === 'pending').length})
+                    </button>
+                    <button
+                      onClick={() => setUploadFormModal({ state: stagingStateFilter !== 'all' ? stagingStateFilter : '', form_number: '', form_name: '', source_url: '', file: null })}
+                      style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#22c55e', color: '#fff', fontWeight: '600' }}
+                    >
+                      + Upload Form
+                    </button>
+                  </div>
                 </div>
 
                 {/* State Filter & Status Filters */}
@@ -1957,7 +2392,7 @@ export default function DevConsolePage() {
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Form # OK</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => f.form_number_confirmed && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Has PDF</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.source_url && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Mapped</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#8b5cf6' }}>{formStaging.filter(f => ((f.field_mappings?.length || 0) > 0 || (f.mapping_confidence || 0) > 0) && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Production</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.workflow_status === 'production' || f.status === 'approved') && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Production</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.workflow_status === 'production' || f.status === 'active') && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                 </div>
 
                 {/* Hidden file input for inline uploads */}
@@ -1999,10 +2434,10 @@ export default function DevConsolePage() {
                         const highConfidenceCount = f.field_mappings?.filter(m => m.confidence >= 0.9).length || 0;
                         const mappingScore = f.mapping_confidence || (mappingsCount > 0 ? Math.round((highConfidenceCount / mappingsCount) * 100) : 0);
                         const isMapped = f.mapping_status === 'ai_suggested' || f.mapping_status === 'human_verified' || mappingScore >= 50;
-                        const isReadyToPromote = (f.mapping_status === 'human_verified' || mappingScore >= 99) && f.form_number_confirmed && f.source_url;
+                        const isReadyToPromote = f.status !== 'promoted' && f.status !== 'active' && f.workflow_status !== 'production';
                         const needsNumber = !f.form_number_confirmed;
                         const needsPdf = !f.source_url;
-                        const isProduction = f.workflow_status === 'production' || f.status === 'approved';
+                        const isProduction = f.workflow_status === 'production' || f.status === 'active' || f.status === 'promoted';
                         const dealTypeColors = { cash: '#22c55e', bhph: '#8b5cf6', traditional: '#3b82f6', wholesale: '#eab308' };
                         return (
                           <tr key={f.id} style={{
@@ -2397,7 +2832,7 @@ export default function DevConsolePage() {
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        await supabase.from('form_staging').update({ workflow_status: 'production', status: 'approved' }).eq('id', f.id);
+                                        await supabase.from('form_library').update({ workflow_status: 'production', status: 'active' }).eq('id', f.id);
                                         showToast(`${f.form_name} promoted to production`);
                                         loadAllData();
                                       }}
@@ -2418,7 +2853,7 @@ export default function DevConsolePage() {
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        await supabase.from('form_staging').update({ workflow_status: 'mapped' }).eq('id', f.id);
+                                        await supabase.from('form_library').update({ workflow_status: 'mapped' }).eq('id', f.id);
                                         showToast(`${f.form_name} demoted to mapped for editing`);
                                         loadAllData();
                                       }}
@@ -3040,12 +3475,12 @@ export default function DevConsolePage() {
               This will permanently delete <strong style={{ color: '#fff' }}>{formStaging.filter(f => f.state === confirmBulkDelete).length} forms</strong> for {confirmBulkDelete} from staging.
             </p>
             <p style={{ color: '#71717a', fontSize: '13px', marginBottom: '16px' }}>
-              {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'approved').length > 0 && (
+              {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'active').length > 0 && (
                 <span style={{ color: '#eab308' }}>
-                  {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'approved').length} promoted forms will also be removed from the library.
+                  {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'active').length} promoted forms will also be removed from the library.
                 </span>
               )}
-              {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'approved').length === 0 && (
+              {formStaging.filter(f => f.state === confirmBulkDelete && f.status === 'active').length === 0 && (
                 'This allows fresh AI discovery for this state.'
               )}
             </p>
@@ -3123,7 +3558,7 @@ export default function DevConsolePage() {
               Delete <strong style={{ color: '#fff' }}>{deleteStagedModal.form_name}</strong> ({deleteStagedModal.form_number})?
             </p>
             <p style={{ color: '#71717a', fontSize: '13px', marginBottom: '16px' }}>
-              This will permanently remove it from staging{deleteStagedModal.status === 'approved' ? ' and the library' : ''}.
+              This will permanently remove it from staging{deleteStagedModal.status === 'active' ? ' and the library' : ''}.
             </p>
             <p style={{ color: '#ef4444', fontSize: '13px', fontWeight: '600', marginBottom: '20px' }}>This cannot be undone.</p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -3234,13 +3669,19 @@ export default function DevConsolePage() {
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '12px', color: '#a1a1aa' }}>Mapping Score</div>
                   {(() => {
-                    const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => v).length;
-                    const totalFields = stagingMapperModal.detected_fields?.length || 1;
-                    const score = Math.round((mappedCount / totalFields) * 100);
+                    const dismissedFields = stagingMapperModal.dismissed_fields || {};
+                    const dismissedCount = Object.keys(dismissedFields).length;
+                    const mappedCount = Object.entries(stagingMapperModal.field_mapping || {}).filter(([field, v]) => {
+                      if (dismissedFields[field]) return false;
+                      return v && (typeof v === 'string' ? !!v : v.fields?.length > 0);
+                    }).length;
+                    const totalFields = (stagingMapperModal.detected_fields?.length || 1) - dismissedCount;
+                    const score = totalFields > 0 ? Math.round((mappedCount / totalFields) * 100) : 100;
                     const isReady = score >= 99;
                     return (
                       <div style={{ fontSize: '24px', fontWeight: '700', color: isReady ? '#22c55e' : '#eab308' }}>
                         {score}%
+                        {dismissedCount > 0 && <span style={{ fontSize: '11px', marginLeft: '6px', color: '#71717a' }}>({dismissedCount} dismissed)</span>}
                         {isReady && <span style={{ fontSize: '12px', marginLeft: '8px', color: '#22c55e' }}>Ready!</span>}
                       </div>
                     );
@@ -3270,51 +3711,81 @@ export default function DevConsolePage() {
 
               {/* Field Mapping (right) */}
               <div style={{ width: '450px', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>PDF Fields ({stagingMapperModal.detected_fields?.length || 0})</span>
-                  <span style={{ color: '#a1a1aa' }}>
-                    {Object.values(stagingMapperModal.field_mapping || {}).filter(v => {
-                      if (!v) return false;
-                      if (typeof v === 'string') return !!v;
-                      return v.fields && v.fields.length > 0;
-                    }).length} mapped
-                  </span>
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-                  {(stagingMapperModal.detected_fields || []).map((field, idx) => {
+                {(() => {
+                  // Sort fields: unmapped first, then mapped, dismissed at bottom
+                  const allFields = stagingMapperModal.detected_fields || [];
+                  const dismissedFields = stagingMapperModal.dismissed_fields || {};
+
+                  const unmappedFields = allFields.filter(field => {
+                    if (dismissedFields[field]) return false;
                     const mapping = stagingMapperModal.field_mapping?.[field];
-                    const mappedFields = getMappingFields(mapping);
+                    const mappedFieldsArr = getMappingFields(mapping);
+                    return mappedFieldsArr.length === 0;
+                  });
+                  const mappedFieldsList = allFields.filter(field => {
+                    if (dismissedFields[field]) return false;
+                    const mapping = stagingMapperModal.field_mapping?.[field];
+                    const mappedFieldsArr = getMappingFields(mapping);
+                    return mappedFieldsArr.length > 0;
+                  });
+                  const dismissedFieldsList = allFields.filter(field => dismissedFields[field]);
+
+                  const renderFieldRow = (field, idx, isDismissed = false) => {
+                    const mapping = stagingMapperModal.field_mapping?.[field];
+                    const mappedFieldsArr = getMappingFields(mapping);
                     const separator = getMappingSeparator(mapping);
-                    const isMapped = mappedFields.length > 0;
-                    const isMulti = mappedFields.length > 1;
+                    const isMapped = mappedFieldsArr.length > 0 && !isDismissed;
+                    const isMulti = mappedFieldsArr.length > 1;
                     return (
-                      <div key={idx} style={{ marginBottom: '12px', padding: '12px', backgroundColor: '#27272a', borderRadius: '8px', border: isMapped ? '1px solid #22c55e' : '1px solid #ef4444' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600' }}>{field}</span>
+                      <div key={idx} style={{
+                        marginBottom: '12px',
+                        padding: '12px',
+                        backgroundColor: isDismissed ? 'rgba(113,113,122,0.1)' : (isMapped ? '#27272a' : 'rgba(239,68,68,0.1)'),
+                        borderRadius: '8px',
+                        borderLeft: isDismissed ? '4px solid #71717a' : (isMapped ? '4px solid #22c55e' : '4px solid #ef4444'),
+                        opacity: isDismissed ? 0.6 : 1
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isDismissed ? '0' : '8px' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', textDecoration: isDismissed ? 'line-through' : 'none' }}>{field}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            {isMulti && <span style={{ fontSize: '10px', color: '#8b5cf6', padding: '2px 6px', backgroundColor: 'rgba(139,92,246,0.2)', borderRadius: '4px' }}>MULTI</span>}
-                            {isMapped ? (
-                              <span style={{ fontSize: '14px', color: '#22c55e' }}>✓</span>
+                            {isDismissed ? (
+                              <>
+                                <span style={{ fontSize: '10px', color: '#71717a', padding: '2px 6px', backgroundColor: 'rgba(113,113,122,0.2)', borderRadius: '4px' }}>Dismissed</span>
+                                <button onClick={() => restoreField(field)} style={{ fontSize: '10px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Restore</button>
+                              </>
                             ) : (
-                              <span style={{ fontSize: '14px', color: '#ef4444' }}>⚠</span>
+                              <>
+                                {isMulti && <span style={{ fontSize: '10px', color: '#8b5cf6', padding: '2px 6px', backgroundColor: 'rgba(139,92,246,0.2)', borderRadius: '4px' }}>MULTI</span>}
+                                {isMapped ? (
+                                  <span style={{ fontSize: '10px', color: '#22c55e', padding: '2px 6px', backgroundColor: 'rgba(34,197,94,0.2)', borderRadius: '4px' }}>✓ Mapped</span>
+                                ) : (
+                                  <>
+                                    <span style={{ fontSize: '10px', color: '#ef4444', padding: '2px 6px', backgroundColor: 'rgba(239,68,68,0.2)', borderRadius: '4px' }}>Not Mapped</span>
+                                    <button onClick={() => dismissField(field)} style={{ fontSize: '10px', color: '#71717a', background: 'none', border: 'none', cursor: 'pointer' }} title="Mark as not needed">Dismiss</button>
+                                  </>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
 
-                        {/* Show currently mapped fields as removable chips */}
-                        {mappedFields.length > 0 && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                            {mappedFields.map((mf, mfIdx) => (
-                              <span key={mfIdx} style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                padding: '3px 8px', backgroundColor: '#3f3f46', borderRadius: '4px', fontSize: '11px'
-                              }}>
-                                {mf}
-                                <button onClick={() => removeStagingFieldMapping(field, mf)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0', fontSize: '14px', lineHeight: 1 }}>×</button>
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        {/* Only show mapping UI for non-dismissed fields */}
+                        {!isDismissed && (
+                          <>
+                            {/* Show currently mapped fields as removable chips */}
+                            {mappedFieldsArr.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                                {mappedFieldsArr.map((mf, mfIdx) => (
+                                  <span key={mfIdx} style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                    padding: '3px 8px', backgroundColor: '#3f3f46', borderRadius: '4px', fontSize: '11px'
+                                  }}>
+                                    {mf}
+                                    <button onClick={() => removeStagingFieldMapping(field, mf)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0', fontSize: '14px', lineHeight: 1 }}>×</button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
 
                         {/* Separator input when multiple fields */}
                         {isMulti && (
@@ -3330,43 +3801,133 @@ export default function DevConsolePage() {
                               <option value=" - ">Dash</option>
                               <option value="">No separator</option>
                             </select>
-                            <span style={{ fontSize: '10px', color: '#71717a' }}>Preview: {mappedFields.join(separator || '')}</span>
+                            <span style={{ fontSize: '10px', color: '#71717a' }}>Preview: {mappedFieldsArr.join(separator || '')}</span>
                           </div>
                         )}
 
-                        {/* Add field dropdown */}
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <select
-                            value=""
-                            onChange={(e) => {
-                              if (mappedFields.length === 0) {
-                                updateStagingFieldMapping(field, e.target.value);
-                              } else {
-                                addStagingFieldMapping(field, e.target.value);
-                              }
-                            }}
-                            style={{ ...inputStyle, fontSize: '12px', borderColor: isMapped ? '#22c55e' : '#ef4444', flex: 1 }}
-                          >
-                            <option value="">{mappedFields.length === 0 ? '-- Select field --' : '+ Add another field...'}</option>
-                            {fieldContextOptions.map(group => (
-                              <optgroup key={group.group} label={group.group}>
-                                {group.fields.filter(f => !mappedFields.includes(f)).map(f => (
-                                  <option key={f} value={f}>{f}</option>
+                            {/* Add field dropdown */}
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  if (mappedFieldsArr.length === 0) {
+                                    updateStagingFieldMapping(field, e.target.value);
+                                  } else {
+                                    addStagingFieldMapping(field, e.target.value);
+                                  }
+                                }}
+                                style={{ ...inputStyle, fontSize: '12px', borderColor: isMapped ? '#22c55e' : '#ef4444', flex: 1 }}
+                              >
+                                <option value="">{mappedFieldsArr.length === 0 ? '-- Select field --' : '+ Add another field...'}</option>
+                                {fieldContextOptions.map(group => (
+                                  <optgroup key={group.group} label={group.group}>
+                                    {group.fields.filter(f => !mappedFieldsArr.includes(f)).map(f => (
+                                      <option key={f} value={f}>{f}</option>
+                                    ))}
+                                  </optgroup>
                                 ))}
-                              </optgroup>
-                            ))}
-                          </select>
-                        </div>
+                              </select>
+                            </div>
+                          </>
+                        )}
                       </div>
                     );
-                  })}
-                  {(!stagingMapperModal.detected_fields || stagingMapperModal.detected_fields.length === 0) && (
-                    <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
-                      <p>No fields detected.</p>
-                      <p style={{ fontSize: '12px' }}>Click "Analyze" to detect PDF fields.</p>
-                    </div>
-                  )}
-                </div>
+                  };
+
+                  return (
+                    <>
+                      <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>PDF Fields ({allFields.length})</span>
+                        <span style={{ color: '#a1a1aa' }}>
+                          <span style={{ color: '#ef4444' }}>{unmappedFields.length} unmapped</span>
+                          {' / '}
+                          <span style={{ color: '#22c55e' }}>{mappedFieldsList.length} mapped</span>
+                          {dismissedFieldsList.length > 0 && (
+                            <span style={{ color: '#71717a' }}> / {dismissedFieldsList.length} dismissed</span>
+                          )}
+                        </span>
+                      </div>
+                      <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                        {/* UNMAPPED SECTION */}
+                        {unmappedFields.length > 0 && (
+                          <>
+                            <div style={{
+                              padding: '8px 12px',
+                              marginBottom: '12px',
+                              backgroundColor: 'rgba(239,68,68,0.15)',
+                              borderRadius: '6px',
+                              borderLeft: '4px solid #ef4444',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}>
+                              <span style={{ fontSize: '16px' }}>⚠️</span>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#ef4444' }}>
+                                UNMAPPED ({unmappedFields.length})
+                              </span>
+                              <span style={{ fontSize: '11px', color: '#a1a1aa' }}>— needs attention</span>
+                            </div>
+                            {unmappedFields.map((field, idx) => renderFieldRow(field, `unmapped-${idx}`))}
+                          </>
+                        )}
+
+                        {/* MAPPED SECTION */}
+                        {mappedFieldsList.length > 0 && (
+                          <>
+                            <div style={{
+                              padding: '8px 12px',
+                              marginBottom: '12px',
+                              marginTop: unmappedFields.length > 0 ? '20px' : '0',
+                              backgroundColor: 'rgba(34,197,94,0.15)',
+                              borderRadius: '6px',
+                              borderLeft: '4px solid #22c55e',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}>
+                              <span style={{ fontSize: '16px' }}>✅</span>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#22c55e' }}>
+                                MAPPED ({mappedFieldsList.length})
+                              </span>
+                            </div>
+                            {mappedFieldsList.map((field, idx) => renderFieldRow(field, `mapped-${idx}`))}
+                          </>
+                        )}
+
+                        {/* DISMISSED SECTION */}
+                        {dismissedFieldsList.length > 0 && (
+                          <>
+                            <div style={{
+                              padding: '8px 12px',
+                              marginBottom: '12px',
+                              marginTop: '20px',
+                              backgroundColor: 'rgba(113,113,122,0.15)',
+                              borderRadius: '6px',
+                              borderLeft: '4px solid #71717a',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}>
+                              <span style={{ fontSize: '16px' }}>🚫</span>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#71717a' }}>
+                                DISMISSED ({dismissedFieldsList.length})
+                              </span>
+                              <span style={{ fontSize: '11px', color: '#52525b' }}>— excluded from score</span>
+                            </div>
+                            {dismissedFieldsList.map((field, idx) => renderFieldRow(field, `dismissed-${idx}`, true))}
+                          </>
+                        )}
+
+                        {allFields.length === 0 && (
+                          <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
+                            <p>No fields detected.</p>
+                            <p style={{ fontSize: '12px' }}>Click "Analyze" to detect PDF fields.</p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 

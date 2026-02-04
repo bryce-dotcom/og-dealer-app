@@ -72,6 +72,14 @@ const INITIAL_DEAL_FORM = {
   vehicle_id: '',
   customer_id: '',
   purchaser_name: '',
+  // Buyer address fields
+  address: '',
+  city: '',
+  state: '',
+  zip: '',
+  phone: '',
+  email: '',
+  // Legacy buyer fields
   customer_email: '',
   customer_phone: '',
   deal_type: 'Cash',
@@ -299,7 +307,14 @@ export default function DealsPage() {
       ltv: 0,
       negativeEquity: 0,
       warnings: [],
-      suggestions: []
+      suggestions: [],
+      // Calculated values for database
+      totalSale: 0,
+      amountFinanced: 0,
+      monthlyPayment: 0,
+      totalOfPayments: 0,
+      salesTax: 0,
+      financeCharge: 0,
     };
 
     const price = parseFloat(dealForm.price) || 0;
@@ -315,14 +330,29 @@ export default function DealsPage() {
     const warranty = dealForm.extended_warranty ? 1495 : 0;
     const protection = dealForm.protection_package ? 895 : 0;
 
+    // Sales tax calculation (on price minus trade, typical rate 6.85%)
+    const taxableAmount = Math.max(0, price - tradeValue);
+    const salesTaxRate = 0.0685;
+    const salesTax = taxableAmount * salesTaxRate;
+
     const negativeEquity = Math.max(0, tradePayoff - tradeValue);
     const backEndProducts = gap + warranty + protection + docFee + accessoryTotal;
-    const totalSale = price + backEndProducts - tradeValue + negativeEquity;
+    const totalSale = price + backEndProducts + salesTax - tradeValue + negativeEquity;
     const amountFinanced = totalSale - downPayment;
     const monthlyRate = interestRate / 100 / 12;
     const monthlyPayment = amountFinanced > 0 && monthlyRate > 0 && termMonths > 0
       ? (amountFinanced * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1)
       : 0;
+    const totalOfPayments = monthlyPayment * termMonths;
+    const financeCharge = totalOfPayments - amountFinanced;
+
+    // Store calculated values for database
+    analysis.totalSale = totalSale;
+    analysis.amountFinanced = amountFinanced;
+    analysis.monthlyPayment = monthlyPayment;
+    analysis.totalOfPayments = totalOfPayments;
+    analysis.salesTax = salesTax;
+    analysis.financeCharge = financeCharge;
 
     analysis.monthly = monthlyPayment;
     analysis.negativeEquity = negativeEquity;
@@ -478,18 +508,26 @@ export default function DealsPage() {
       vehicle_id: deal.vehicle_id || '',
       customer_id: deal.customer_id || '',
       purchaser_name: deal.purchaser_name || '',
-      customer_email: deal.customer_email || '',
-      customer_phone: deal.customer_phone || '',
+      // Buyer address fields
+      address: deal.address || '',
+      city: deal.city || '',
+      state: deal.state || '',
+      zip: deal.zip || '',
+      phone: deal.phone || deal.customer_phone || '',
+      email: deal.email || deal.customer_email || '',
+      // Legacy fields
+      customer_email: deal.customer_email || deal.email || '',
+      customer_phone: deal.customer_phone || deal.phone || '',
       deal_type: deal.deal_type || 'Cash',
       stage: deal.stage || 'Lead',
-      price: deal.price || '',
+      price: deal.price || deal.sale_price || '',
       down_payment: deal.down_payment || '',
       trade_value: deal.trade_value || '',
       trade_payoff: deal.trade_payoff || '',
       trade_acv: deal.trade_acv || '',
       trade_description: deal.trade_description || '',
       term_months: deal.term_months || '48',
-      interest_rate: deal.interest_rate || '18',
+      interest_rate: deal.interest_rate || deal.apr || '18',
       doc_fee: deal.doc_fee || '299',
       salesman: deal.salesman || '',
       credit_score: deal.credit_score || '',
@@ -526,23 +564,48 @@ export default function DealsPage() {
         vehicle_id: dealForm.vehicle_id,
         customer_id: dealForm.customer_id || null,
         purchaser_name: dealForm.purchaser_name,
-        customer_email: dealForm.customer_email || null,
-        customer_phone: dealForm.customer_phone || null,
+        // Buyer address fields (from form if available)
+        address: dealForm.address || null,
+        city: dealForm.city || null,
+        state: dealForm.state || null,
+        zip: dealForm.zip || null,
+        phone: dealForm.phone || dealForm.customer_phone || null,
+        email: dealForm.email || dealForm.customer_email || null,
+        // Legacy fields for backwards compatibility
+        customer_email: dealForm.customer_email || dealForm.email || null,
+        customer_phone: dealForm.customer_phone || dealForm.phone || null,
         deal_type: dealForm.deal_type,
         stage: dealForm.stage,
+        // Input prices
         price: parseFloat(dealForm.price) || 0,
+        sale_price: parseFloat(dealForm.price) || 0,
         down_payment: parseFloat(dealForm.down_payment) || 0,
         doc_fee: parseFloat(dealForm.doc_fee) || 299,
+        // CALCULATED VALUES from dealAnalysis
+        sales_tax: Math.round(dealAnalysis.salesTax * 100) / 100,
+        total_sale: Math.round(dealAnalysis.totalSale * 100) / 100,
+        total_price: Math.round(dealAnalysis.totalSale * 100) / 100,
+        amount_financed: Math.round(dealAnalysis.amountFinanced * 100) / 100,
+        monthly_payment: Math.round(dealAnalysis.monthlyPayment * 100) / 100,
+        total_of_payments: Math.round(dealAnalysis.totalOfPayments * 100) / 100,
+        balance_due: Math.round(dealAnalysis.amountFinanced * 100) / 100,
+        negative_equity: Math.round(dealAnalysis.negativeEquity * 100) / 100,
+        // Other deal info
         salesman: dealForm.salesman || null,
         date_of_sale: dealForm.date_of_sale,
         notes: dealForm.notes || null,
+        // Trade-in
         trade_value: parseFloat(dealForm.trade_value) || 0,
         trade_payoff: parseFloat(dealForm.trade_payoff) || 0,
         trade_acv: parseFloat(dealForm.trade_acv) || 0,
+        trade_allowance: parseFloat(dealForm.trade_value) || 0,
         trade_description: dealForm.trade_description || null,
+        // Financing terms
         term_months: parseInt(dealForm.term_months) || 48,
         interest_rate: parseFloat(dealForm.interest_rate) || 18,
+        apr: parseFloat(dealForm.interest_rate) || 18,
         credit_score: dealForm.credit_score ? parseInt(dealForm.credit_score) : null,
+        // Products/Add-ons
         gap_insurance: dealForm.gap_insurance ? 595 : 0,
         extended_warranty: dealForm.extended_warranty ? 1495 : 0,
         protection_package: dealForm.protection_package ? 895 : 0,
@@ -757,7 +820,14 @@ export default function DealsPage() {
 
   // ============ RENDER ============
   return (
-    <div style={{ padding: '24px', maxWidth: '1800px', margin: '0 auto' }}>
+    <>
+      {/* Spinner animation for document generation */}
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+      <div style={{ padding: '24px', maxWidth: '1800px', margin: '0 auto' }}>
       {/* HEADER */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -1086,8 +1156,31 @@ export default function DealsPage() {
                 {/* Create Documents Button */}
                 {editingDeal ? (
                   <button onClick={executeDeal} disabled={generating}
-                    style={{ ...buttonStyle, width: '100%', backgroundColor: '#22c55e', opacity: generating ? 0.7 : 1 }}>
-                    {generating ? 'Generating Documents...' : 'Create Deal Documents'}
+                    style={{
+                      ...buttonStyle,
+                      width: '100%',
+                      backgroundColor: generating ? '#1e7a3d' : '#22c55e',
+                      opacity: generating ? 0.9 : 1,
+                      cursor: generating ? 'wait' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}>
+                    {generating ? (
+                      <>
+                        <span style={{
+                          display: 'inline-block',
+                          width: '16px',
+                          height: '16px',
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          borderTopColor: '#fff',
+                          borderRadius: '50%',
+                          animation: 'spin 1s linear infinite'
+                        }} />
+                        Generating Documents...
+                      </>
+                    ) : '📄 Create Deal Documents'}
                   </button>
                 ) : (
                   <div style={{ color: theme.textMuted, fontSize: '11px', textAlign: 'center', padding: '10px' }}>
@@ -1414,5 +1507,6 @@ export default function DealsPage() {
         <div style={{ position: 'fixed', bottom: '24px', right: '24px', backgroundColor: toast.type === 'error' ? '#ef4444' : '#22c55e', color: '#fff', padding: '12px 20px', borderRadius: '8px', zIndex: 2000, fontSize: '14px', fontWeight: '500' }}>{toast.message}</div>
       )}
     </div>
+    </>
   );
 }

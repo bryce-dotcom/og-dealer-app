@@ -28,557 +28,205 @@ function formatNumber(value: number | string | null): string {
 }
 
 // ============================================
-// FINANCING CALCULATOR
+// BUILD FORM CONTEXT FROM DEAL DATA
+// Maps our schema to form context values
 // ============================================
-function calculateFinancing(deal: any) {
-  const price = parseFloat(deal.price) || 0;
-  const downPayment = parseFloat(deal.down_payment) || 0;
-  const tradeValue = parseFloat(deal.trade_value) || 0;
-  const tradePayoff = parseFloat(deal.trade_payoff) || 0;
-  const docFee = parseFloat(deal.doc_fee) || 299;
-  const termMonths = parseInt(deal.term_months) || 48;
-  const interestRate = parseFloat(deal.interest_rate) || 18;
-
-  const gap = deal.gap_insurance ? 595 : 0;
-  const warranty = deal.extended_warranty ? 1495 : 0;
-  const protection = deal.protection_package ? 895 : 0;
-  const accessories = (parseFloat(deal.accessory_1_price) || 0) +
-                      (parseFloat(deal.accessory_2_price) || 0) +
-                      (parseFloat(deal.accessory_3_price) || 0);
-
-  const negativeEquity = Math.max(0, tradePayoff - tradeValue);
-  const totalSale = price + docFee + gap + warranty + protection + accessories - tradeValue + negativeEquity;
-  const amountFinanced = totalSale - downPayment;
-
-  const monthlyRate = interestRate / 100 / 12;
-  const monthlyPayment = amountFinanced > 0 && monthlyRate > 0
-    ? (amountFinanced * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1)
-    : amountFinanced / termMonths;
-
-  const totalOfPayments = monthlyPayment * termMonths;
-  const financeCharge = totalOfPayments - amountFinanced;
-
-  const firstPaymentDate = new Date();
-  firstPaymentDate.setMonth(firstPaymentDate.getMonth() + 1);
-  firstPaymentDate.setDate(15);
+function buildFormContext(deal: any, vehicle: any, dealer: any) {
+  const nameParts = (deal.purchaser_name || '').trim().split(' ');
+  const firstName = nameParts[0] || '';
+  const lastName = nameParts.slice(1).join(' ') || '';
+  const today = formatDate(new Date().toISOString());
 
   return {
-    amountFinanced,
-    termMonths,
-    interestRate,
-    apr: interestRate,
-    monthlyPayment,
-    totalOfPayments,
-    financeCharge,
-    downPayment,
-    firstPaymentDate: firstPaymentDate.toISOString().split('T')[0]
-  };
-}
-
-// ============================================
-// GET NESTED VALUE FROM OBJECT
-// ============================================
-function getNestedValue(obj: any, path: string): any {
-  if (!path) return null;
-  const parts = path.split('.');
-  let value = obj;
-  for (const part of parts) {
-    if (value === undefined || value === null) return null;
-    value = value[part];
-  }
-  return value;
-}
-
-// ============================================
-// BUILD FORM CONTEXT - Flat object with all values
-// ============================================
-function buildFormContext(deal: any, vehicle: any, dealer: any, customer: any) {
-  const financing = (deal.deal_type === 'BHPH' || deal.deal_type === 'Financing') ? calculateFinancing(deal) : null;
-
-  const salesTaxRate = 0.0685;
-  const salePrice = parseFloat(deal.price) || 0;
-  const tradeValue = parseFloat(deal.trade_value) || 0;
-  const salesTax = Math.max(0, (salePrice - tradeValue) * salesTaxRate);
-
-  return {
-    // Dealer
+    // === DEALER ===
+    'dealer.dealer_name': dealer?.dealer_name || dealer?.name || '',
+    'dealer.dealer_license': dealer?.dealer_license || dealer?.license_number || '',
+    'dealer.address': dealer?.address || '',
+    'dealer.city': dealer?.city || '',
+    'dealer.state': dealer?.state || '',
+    'dealer.zip': dealer?.zip || '',
+    'dealer.phone': dealer?.phone || '',
+    'dealer.email': dealer?.email || '',
+    // Aliases
     dealer_name: dealer?.dealer_name || dealer?.name || '',
-    dealer_number: dealer?.dealer_license || dealer?.license_number || '',
+    dealer_license: dealer?.dealer_license || '',
     dealer_address: dealer?.address || '',
     dealer_city: dealer?.city || '',
-    dealer_state: dealer?.state || 'UT',
+    dealer_state: dealer?.state || '',
     dealer_zip: dealer?.zip || '',
     dealer_phone: dealer?.phone || '',
-    dealer_license: dealer?.dealer_license || '',
 
-    // Buyer (multiple aliases for different forms)
-    buyer_name: deal.purchaser_name || customer?.name || '',
-    buyer_address: customer?.address || '',
-    buyer_city: customer?.city || '',
-    buyer_state: customer?.state || '',
-    buyer_zip: customer?.zip || '',
-    buyer_phone: deal.customer_phone || customer?.phone || '',
-    buyer_email: deal.customer_email || customer?.email || '',
-    buyer_dl_number: customer?.dl_number || '',
-    buyer_dl_state: customer?.dl_state || '',
-    owner_name: deal.purchaser_name || customer?.name || '',
-    borrower_name: deal.purchaser_name || customer?.name || '',
-    debtor_name: deal.purchaser_name || customer?.name || '',
-    purchaser_name: deal.purchaser_name || customer?.name || '',
-
-    // Seller = Dealer
-    seller_name: dealer?.dealer_name || dealer?.name || '',
-    seller_address: dealer?.address || '',
-    lender_name: dealer?.dealer_name || dealer?.name || '',
-    creditor_name: dealer?.dealer_name || dealer?.name || '',
-
-    // Vehicle
-    vehicle_year: vehicle?.year?.toString() || '',
-    year: vehicle?.year?.toString() || '',
-    vehicle_make: (vehicle?.make || '').toUpperCase(),
-    make: (vehicle?.make || '').toUpperCase(),
-    vehicle_model: (vehicle?.model || '').toUpperCase(),
-    model: (vehicle?.model || '').toUpperCase(),
-    trim: vehicle?.trim || '',
-    vin: (vehicle?.vin || '').toUpperCase(),
-    body_type: vehicle?.body_type || 'SEDAN',
-    body_style: vehicle?.body_style || vehicle?.body_type || '',
-    color: (vehicle?.color || '').toUpperCase(),
-    stock_number: vehicle?.stock_number || '',
+    // === VEHICLE ===
+    'vehicle.vin': vehicle?.vin || '',
+    'vehicle.year': String(vehicle?.year || ''),
+    'vehicle.make': vehicle?.make || '',
+    'vehicle.model': vehicle?.model || '',
+    'vehicle.trim': vehicle?.trim || '',
+    'vehicle.color': vehicle?.color || '',
+    'vehicle.mileage': formatNumber(vehicle?.miles || vehicle?.mileage || 0),
+    'vehicle.stock_number': vehicle?.stock_number || '',
+    // Aliases
+    vin: vehicle?.vin || '',
+    year: String(vehicle?.year || ''),
+    make: vehicle?.make || '',
+    model: vehicle?.model || '',
+    color: vehicle?.color || '',
     odometer: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
     mileage: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
-    miles: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
+    stock_number: vehicle?.stock_number || '',
 
-    // Sale
-    sale_date: formatDate(deal.date_of_sale),
+    // === DEAL (BUYER + PRICING) ===
+    'deal.purchaser_name': deal.purchaser_name || '',
+    'deal.purchaser_address': deal.address || '',
+    'deal.date_of_sale': formatDate(deal.date_of_sale),
+    'deal.price': formatCurrency(deal.price || deal.sale_price || 0),
+    'deal.down_payment': formatCurrency(deal.down_payment || 0),
+    'deal.sales_tax': formatCurrency(deal.sales_tax || 0),
+    'deal.total_price': formatCurrency(deal.total_price || deal.total_sale || 0),
+    // Aliases
+    purchaser_name: deal.purchaser_name || '',
+    buyer_name: deal.purchaser_name || '',
+    buyer_first_name: firstName,
+    buyer_last_name: lastName,
+    buyer_address: deal.address || '',
+    buyer_city: deal.city || '',
+    buyer_state: deal.state || '',
+    buyer_zip: deal.zip || '',
+    buyer_phone: deal.phone || '',
+    buyer_email: deal.email || '',
     date_of_sale: formatDate(deal.date_of_sale),
-    purchase_date: formatDate(deal.date_of_sale),
-    sale_price: formatCurrency(salePrice),
-    purchase_price: formatCurrency(salePrice),
-    price: formatCurrency(salePrice),
-    trade_allowance: formatCurrency(tradeValue),
-    trade_value: formatCurrency(tradeValue),
-    trade_payoff: formatCurrency(parseFloat(deal.trade_payoff) || 0),
-    sales_tax: formatCurrency(salesTax),
-    tax_amount: formatCurrency(salesTax),
-    doc_fee: formatCurrency(parseFloat(deal.doc_fee) || 299),
-    title_fee: formatCurrency(parseFloat(deal.title_fee) || 0),
-    registration_fee: formatCurrency(parseFloat(deal.registration_fee) || 0),
-    total_due: formatCurrency(salePrice + salesTax + (parseFloat(deal.doc_fee) || 299) - tradeValue),
-    down_payment: formatCurrency(parseFloat(deal.down_payment) || 0),
+    sale_date: formatDate(deal.date_of_sale),
+    price: formatCurrency(deal.price || deal.sale_price || 0),
+    sale_price: formatCurrency(deal.price || deal.sale_price || 0),
+    down_payment: formatCurrency(deal.down_payment || 0),
+    sales_tax: formatCurrency(deal.sales_tax || 0),
+    total_price: formatCurrency(deal.total_price || deal.total_sale || 0),
+    doc_fee: formatCurrency(deal.doc_fee || 0),
+    balance_due: formatCurrency(deal.balance_due || 0),
 
-    // Financing (BHPH/Financing)
-    ...(financing ? {
-      principal: formatCurrency(financing.amountFinanced),
-      amount_financed: formatCurrency(financing.amountFinanced),
-      apr: financing.apr.toFixed(2) + '%',
-      interest_rate: financing.interestRate.toFixed(2) + '%',
-      finance_charge: formatCurrency(financing.financeCharge),
-      total_payments: formatCurrency(financing.totalOfPayments),
-      total_of_payments: formatCurrency(financing.totalOfPayments),
-      monthly_payment: formatCurrency(financing.monthlyPayment),
-      payment_amount: formatCurrency(financing.monthlyPayment),
-      term_months: financing.termMonths.toString(),
-      number_of_payments: financing.termMonths.toString(),
-      first_payment_date: formatDate(financing.firstPaymentDate),
-      final_payment_date: '', // Would need to calculate
-    } : {}),
+    // === FINANCING ===
+    'financing.loan_amount': formatCurrency(deal.amount_financed || 0),
+    'financing.interest_rate': deal.interest_rate ? `${deal.interest_rate}%` : '',
+    'financing.term_months': String(deal.term_months || ''),
+    'financing.monthly_payment': formatCurrency(deal.monthly_payment || 0),
+    'financing.apr': deal.apr ? `${deal.apr}%` : '',
+    // Aliases
+    amount_financed: formatCurrency(deal.amount_financed || 0),
+    apr: deal.apr ? `${deal.apr}%` : '',
+    interest_rate: deal.interest_rate ? `${deal.interest_rate}%` : '',
+    term_months: String(deal.term_months || ''),
+    monthly_payment: formatCurrency(deal.monthly_payment || 0),
+    total_of_payments: formatCurrency(deal.total_of_payments || 0),
+    finance_charge: formatCurrency((deal.total_of_payments || 0) - (deal.amount_financed || 0)),
+    first_payment_date: formatDate(deal.first_payment_date),
 
-    // Lienholder (BHPH = dealer)
-    lienholder_name: deal.deal_type === 'BHPH' ? (dealer?.dealer_name || dealer?.name || '') : '',
-    lienholder_address: deal.deal_type === 'BHPH' ? (dealer?.address || '') : '',
+    // === TRADE ===
+    trade_description: deal.trade_description || '',
+    trade_value: formatCurrency(deal.trade_value || 0),
+    trade_payoff: formatCurrency(deal.trade_payoff || 0),
+    trade_vin: deal.trade_vin || '',
 
-    // Salesman
+    // === DATES ===
+    today: today,
+    current_date: today,
+    signature_date: formatDate(deal.date_of_sale) || today,
+
+    // === OTHER ===
     salesman: deal.salesman || '',
-    salesperson: deal.salesman || '',
-
-    // Signatures (placeholders)
-    buyer_signature: '',
-    seller_signature: '',
-    signature_date: formatDate(deal.date_of_sale),
-    co_buyer_signature: '',
+    deal_type: deal.deal_type || '',
+    deal_number: String(deal.id || ''),
   };
 }
 
 // ============================================
-// RESOLVE MULTI-FIELD MAPPING VALUE
-// Supports: string (single field), array of strings, or { fields: [], separator: ' ' }
+// RESOLVE FIELD VALUE FROM CONTEXT
 // ============================================
-function resolveFieldMapping(
-  mapping: any,
-  rawData: { deal: any, vehicle: any, dealer: any, customer: any },
-  context: Record<string, any>
-): string {
+function resolveFieldValue(mapping: any, context: Record<string, any>): string {
   if (!mapping) return '';
 
-  // Handle legacy string format (single field)
-  if (typeof mapping === 'string') {
-    let value = getNestedValue(rawData, mapping);
-    if (value === undefined || value === null) {
-      const flatKey = mapping.split('.').pop() || mapping;
-      value = context[flatKey];
-    }
-    return value !== undefined && value !== null ? String(value) : '';
+  const field = mapping.universal_field;
+  if (!field) return '';
+
+  // Try exact match first
+  if (context[field] !== undefined) {
+    return String(context[field] || '');
   }
 
-  // Handle new multi-field format: { fields: [], separator: ' ' } or { universal_fields: [], separator: ' ' }
-  const fields = mapping.fields || mapping.universal_fields || [];
-  const separator = mapping.separator ?? ' ';
+  // Try without category prefix
+  const fieldName = field.split('.').pop();
+  if (fieldName && context[fieldName] !== undefined) {
+    return String(context[fieldName] || '');
+  }
 
-  if (!Array.isArray(fields) || fields.length === 0) return '';
-
-  const values = fields.map((field: string) => {
-    let value = getNestedValue(rawData, field);
-    if (value === undefined || value === null) {
-      const flatKey = field.split('.').pop() || field;
-      value = context[flatKey];
-    }
-    return value !== undefined && value !== null ? String(value) : '';
-  });
-
-  return values.filter(v => v).join(separator).trim();
+  return '';
 }
 
 // ============================================
-// FILL HTML TEMPLATE WITH DATA
+// FILL PDF FORM FIELDS
 // ============================================
-function fillHtmlTemplate(
-  html: string,
-  fieldMapping: Record<string, any>,
-  rawData: { deal: any, vehicle: any, dealer: any, customer: any },
-  context: Record<string, any>
-): string {
-  let filled = html;
-
-  // Replace {{field_name}} placeholders using field mapping
-  for (const [fieldName, mapping] of Object.entries(fieldMapping || {})) {
-    if (!mapping) continue;
-
-    // Resolve value using multi-field aware function
-    const strValue = resolveFieldMapping(mapping, rawData, context);
-
-    // Replace {{fieldName}} style placeholders
-    filled = filled.replace(new RegExp(`\\{\\{\\s*${fieldName}\\s*\\}\\}`, 'gi'), strValue);
-
-    // Replace content inside elements with data-field attribute
-    // Matches: data-field="fieldName">...</ or data-field="fieldName" ...>
-    const dataFieldRegex = new RegExp(
-      `(data-field=["']${fieldName}["'][^>]*>)([^<]*)(<)`,
-      'gi'
-    );
-    filled = filled.replace(dataFieldRegex, `$1${strValue}$3`);
-  }
-
-  // Also replace any remaining {{context_key}} placeholders directly from context
-  for (const [key, value] of Object.entries(context)) {
-    const strValue = value !== undefined && value !== null ? String(value) : '';
-    filled = filled.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi'), strValue);
-  }
-
-  return filled;
-}
-
-// ============================================
-// CONVERT HTML TO PDF USING EXTERNAL API
-// ============================================
-async function htmlToPdfExternal(html: string): Promise<Uint8Array | null> {
-  // Try PDFShift API if key is available
-  const pdfshiftKey = Deno.env.get("PDFSHIFT_API_KEY");
-  if (pdfshiftKey) {
-    try {
-      console.log("Converting HTML to PDF via PDFShift...");
-      const response = await fetch("https://api.pdfshift.io/v3/convert/pdf", {
-        method: "POST",
-        headers: {
-          "Authorization": `Basic ${btoa(`api:${pdfshiftKey}`)}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          source: html,
-          landscape: false,
-          use_print: true,
-          format: "Letter"
-        })
-      });
-
-      if (response.ok) {
-        const pdfBuffer = await response.arrayBuffer();
-        console.log(`PDFShift returned ${pdfBuffer.byteLength} bytes`);
-        return new Uint8Array(pdfBuffer);
-      } else {
-        console.error("PDFShift error:", await response.text());
-      }
-    } catch (err) {
-      console.error("PDFShift failed:", err);
-    }
-  }
-
-  // Try html2pdf.app API if available
-  const html2pdfKey = Deno.env.get("HTML2PDF_API_KEY");
-  if (html2pdfKey) {
-    try {
-      console.log("Converting HTML to PDF via html2pdf.app...");
-      const response = await fetch("https://api.html2pdf.app/v1/generate", {
-        method: "POST",
-        headers: {
-          "Authorization": html2pdfKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          html: html,
-          format: "Letter",
-          marginTop: 10,
-          marginBottom: 10,
-          marginLeft: 10,
-          marginRight: 10
-        })
-      });
-
-      if (response.ok) {
-        const pdfBuffer = await response.arrayBuffer();
-        console.log(`html2pdf.app returned ${pdfBuffer.byteLength} bytes`);
-        return new Uint8Array(pdfBuffer);
-      } else {
-        console.error("html2pdf.app error:", await response.text());
-      }
-    } catch (err) {
-      console.error("html2pdf.app failed:", err);
-    }
-  }
-
-  return null;
-}
-
-// ============================================
-// CONVERT HTML TO PDF USING PDF-LIB (Fallback)
-// Creates a simple text-based PDF from HTML
-// ============================================
-async function htmlToPdfFallback(html: string, formName: string): Promise<Uint8Array> {
-  console.log("Using pdf-lib fallback for HTML to PDF conversion");
-
-  const pdfDoc = await PDFDocument.create();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  // Extract text content from HTML (basic parsing)
-  const textContent = html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '') // Remove style tags
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Remove script tags
-    .replace(/<[^>]+>/g, '\n') // Replace tags with newlines
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n\s*\n/g, '\n') // Remove empty lines
-    .trim();
-
-  const lines = textContent.split('\n').filter(line => line.trim());
-
-  let page = pdfDoc.addPage([612, 792]); // Letter size
-  const { width, height } = page.getSize();
-  let y = height - 50;
-  const lineHeight = 14;
-  const margin = 50;
-  const maxWidth = width - (margin * 2);
-
-  // Title
-  page.drawText(formName || 'Document', {
-    x: margin,
-    y,
-    size: 16,
-    font: boldFont,
-    color: rgb(0, 0, 0)
-  });
-  y -= 30;
-
-  // Add horizontal line
-  page.drawLine({
-    start: { x: margin, y },
-    end: { x: width - margin, y },
-    thickness: 1,
-    color: rgb(0.7, 0.7, 0.7)
-  });
-  y -= 20;
-
-  // Content
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    if (!trimmedLine) continue;
-
-    // Word wrap
-    const words = trimmedLine.split(' ');
-    let currentLine = '';
-
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const textWidth = font.widthOfTextAtSize(testLine, 10);
-
-      if (textWidth > maxWidth) {
-        if (currentLine) {
-          if (y < 50) {
-            page = pdfDoc.addPage([612, 792]);
-            y = height - 50;
-          }
-          page.drawText(currentLine, {
-            x: margin,
-            y,
-            size: 10,
-            font,
-            color: rgb(0, 0, 0)
-          });
-          y -= lineHeight;
-        }
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-    }
-
-    if (currentLine) {
-      if (y < 50) {
-        page = pdfDoc.addPage([612, 792]);
-        y = height - 50;
-      }
-      page.drawText(currentLine, {
-        x: margin,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0)
-      });
-      y -= lineHeight;
-    }
-  }
-
-  // Footer
-  const pages = pdfDoc.getPages();
-  for (let i = 0; i < pages.length; i++) {
-    pages[i].drawText(`Generated by OG Dealer - Page ${i + 1} of ${pages.length}`, {
-      x: margin,
-      y: 30,
-      size: 8,
-      font,
-      color: rgb(0.5, 0.5, 0.5)
-    });
-  }
-
-  return await pdfDoc.save();
-}
-
-// ============================================
-// RESOLVE DOTTED PATH (e.g., "vehicle.vin" -> value)
-// ============================================
-function resolvePath(obj: Record<string, any>, path: string): any {
-  const parts = path.split('.');
-  let value = obj;
-  for (const part of parts) {
-    if (value === undefined || value === null) return null;
-    value = value[part];
-  }
-  return value;
-}
-
-// ============================================
-// FILL PDF FORM (for fillable PDFs)
-// ============================================
-interface FillResult {
-  pdfBytes: Uint8Array;
-  debug: {
-    pdfFieldCount: number;
-    pdfFieldNames: string[];
-    mappingCount: number;
-    filledCount: number;
-    filledFields: string[];
-  };
-}
-
 async function fillPdfForm(
   pdfBytes: ArrayBuffer,
-  fieldMapping: Record<string, any>,
-  context: Record<string, any>,
-  rawData: { deal: any, vehicle: any, dealer: any, customer: any }
-): Promise<FillResult> {
+  fieldMappings: any[],
+  context: Record<string, any>
+): Promise<{ pdfBytes: Uint8Array; filledCount: number; totalFields: number }> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
-  const debug = {
-    pdfFieldCount: 0,
-    pdfFieldNames: [] as string[],
-    mappingCount: Object.keys(fieldMapping || {}).length,
-    filledCount: 0,
-    filledFields: [] as string[]
-  };
+  let filledCount = 0;
+  let totalFields = 0;
 
   try {
     const form = pdfDoc.getForm();
     const fields = form.getFields();
+    totalFields = fields.length;
 
-    debug.pdfFieldCount = fields.length;
-    debug.pdfFieldNames = fields.map(f => f.getName());
+    console.log(`[FILL] PDF has ${totalFields} fillable fields`);
 
-    console.log(`PDF has ${fields.length} fillable fields:`, debug.pdfFieldNames.slice(0, 10));
+    // Build mapping lookup: pdf_field -> universal_field
+    const mappingLookup = new Map<string, any>();
+    for (const mapping of fieldMappings) {
+      if (mapping.pdf_field && mapping.universal_field) {
+        mappingLookup.set(mapping.pdf_field, mapping);
+      }
+    }
 
-    for (const [pdfFieldName, mapping] of Object.entries(fieldMapping || {})) {
-      try {
-        // Use multi-field aware resolution
-        const value = resolveFieldMapping(mapping, rawData, context);
+    // Fill each field
+    for (const field of fields) {
+      const fieldName = field.getName();
+      const mapping = mappingLookup.get(fieldName);
 
-        if (!value) continue;
-
-        try {
-          const field = form.getTextField(pdfFieldName);
-          field.setText(String(value));
-          debug.filledCount++;
-          debug.filledFields.push(`${pdfFieldName}=${value}`);
-        } catch {
+      if (mapping) {
+        const value = resolveFieldValue(mapping, context);
+        if (value) {
           try {
-            const checkbox = form.getCheckBox(pdfFieldName);
-            if (value === 'X' || value === 'true' || value === '1') {
-              checkbox.check();
-              debug.filledCount++;
-              debug.filledFields.push(`${pdfFieldName}=checked`);
-            }
+            const textField = form.getTextField(fieldName);
+            textField.setText(value);
+            filledCount++;
+            console.log(`[FILL] ${fieldName} = "${value.substring(0, 40)}"`);
           } catch {
-            // Field not found
+            // Might be a checkbox or other type
+            try {
+              const checkbox = form.getCheckBox(fieldName);
+              if (value === 'X' || value === 'true' || value === '1') {
+                checkbox.check();
+                filledCount++;
+              }
+            } catch {
+              // Skip unsupported field types
+            }
           }
         }
-      } catch (err) {
-        console.warn(`Could not fill ${pdfFieldName}:`, err);
       }
     }
 
     form.flatten();
   } catch (err) {
-    console.warn('PDF may not have fillable fields:', err);
-    debug.pdfFieldCount = 0;
+    console.log(`[FILL] Error filling form: ${err}`);
   }
 
   return {
     pdfBytes: await pdfDoc.save(),
-    debug
+    filledCount,
+    totalFields
   };
-}
-
-// ============================================
-// FIND TEMPLATE BY KEYWORD
-// ============================================
-function findTemplateByKeyword(formName: string): ((data: any) => Promise<Uint8Array>) | null {
-  const lower = (formName || '').toLowerCase();
-
-  if (lower.includes('mvcs') || lower.includes('contract of sale') || lower.includes('motor vehicle contract')) {
-    return TEMPLATES['MVCS'];
-  }
-  if (lower.includes('odometer') || lower.includes('mileage disclosure')) {
-    return TEMPLATES['Odometer Disclosure'];
-  }
-  if (lower.includes('bill of sale') || lower.includes('tc-861')) {
-    return TEMPLATES['Bill of Sale'];
-  }
-  if (lower.includes('buyers guide') || lower.includes("buyer's guide") || lower.includes('as-is') || lower.includes('warranty disclosure')) {
-    return TEMPLATES['Buyers Guide'];
-  }
-
-  return null;
 }
 
 // ============================================
@@ -591,12 +239,9 @@ serve(async (req) => {
 
   try {
     const { deal_id } = await req.json();
+    if (!deal_id) throw new Error("deal_id is required");
 
-    if (!deal_id) {
-      throw new Error("deal_id is required");
-    }
-
-    console.log(`Generating documents for deal: ${deal_id}`);
+    console.log(`[DOCS] Generating documents for deal: ${deal_id}`);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -610,10 +255,10 @@ serve(async (req) => {
       .single();
 
     if (dealError || !deal) {
-      throw new Error(`Deal not found: ${dealError?.message || 'Unknown error'}`);
+      throw new Error(`Deal not found: ${dealError?.message || deal_id}`);
     }
 
-    console.log(`Deal found: ${deal.deal_type} for ${deal.purchaser_name}`);
+    console.log(`[DOCS] Deal: ${deal.deal_type} for ${deal.purchaser_name}`);
 
     // Get vehicle
     const { data: vehicle } = await supabase
@@ -622,7 +267,7 @@ serve(async (req) => {
       .eq('id', deal.vehicle_id)
       .single();
 
-    console.log(`Vehicle: ${vehicle?.year} ${vehicle?.make} ${vehicle?.model}`);
+    console.log(`[DOCS] Vehicle: ${vehicle?.year} ${vehicle?.make} ${vehicle?.model}`);
 
     // Get dealer
     const { data: dealer } = await supabase
@@ -631,23 +276,11 @@ serve(async (req) => {
       .eq('id', deal.dealer_id)
       .single();
 
-    console.log(`Dealer: ${dealer?.dealer_name || dealer?.name}`);
+    console.log(`[DOCS] Dealer: ${dealer?.dealer_name || dealer?.name}`);
 
-    // Get customer
-    let customer = null;
-    if (deal.customer_id) {
-      const { data } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('id', deal.customer_id)
-        .single();
-      customer = data;
-    }
-
-    // Build context
-    const context = buildFormContext(deal, vehicle, dealer, customer);
-    const rawData = { deal, vehicle, dealer, customer };
-    console.log('Context built with keys:', Object.keys(context).length);
+    // Build context for form filling
+    const context = buildFormContext(deal, vehicle, dealer);
+    console.log(`[DOCS] Context built with ${Object.keys(context).length} fields`);
 
     // Get document package for this deal type
     const { data: pkg } = await supabase
@@ -661,161 +294,84 @@ serve(async (req) => {
       throw new Error(`No document package configured for ${deal.deal_type} deals. Configure packages in Document Rules.`);
     }
 
-    console.log(`Package has ${pkg.form_ids.length} forms`);
+    console.log(`[DOCS] Package has ${pkg.form_ids.length} forms`);
 
-    // Get forms from form_staging - NOW INCLUDING html_template_url and template_status
+    // Get forms from form_registry
     const { data: forms, error: formsError } = await supabase
-      .from('form_staging')
-      .select('id, form_number, form_name, storage_path, storage_bucket, source_url, field_mapping, html_template_url, template_status')
+      .from('form_registry')
+      .select('id, form_number, form_name, download_url, source_url, field_mappings, is_fillable')
       .in('id', pkg.form_ids)
-      .eq('status', 'approved');
+      .eq('status', 'active');
 
     if (formsError || !forms?.length) {
-      throw new Error(`No approved forms found for this package: ${formsError?.message || 'Empty'}`);
+      throw new Error(`No active forms found for this package: ${formsError?.message || 'Empty'}`);
     }
 
-    console.log(`Found ${forms.length} approved forms to generate`);
+    console.log(`[DOCS] Found ${forms.length} active forms to generate`);
 
     const generated: any[] = [];
     const errors: any[] = [];
 
     for (const form of forms) {
       try {
-        console.log(`Processing: ${form.form_name} (${form.form_number})`);
+        console.log(`\n[DOCS] Processing: ${form.form_name} (${form.form_number || 'no number'})`);
 
-        let pdfBytes: Uint8Array;
+        let pdfBytes: Uint8Array | undefined;
         let debugInfo: any = {};
 
-        // ============================================
-        // PRIORITY 1: Check for HTML template
-        // ============================================
-        if (form.html_template_url && form.template_status === 'ready') {
-          console.log(`Using HTML template: ${form.html_template_url}`);
+        // Try to fill PDF if we have one with mappings
+        const pdfUrl = form.download_url || form.source_url;
 
-          // Fetch HTML template from storage
-          const { data: htmlData, error: htmlError } = await supabase.storage
-            .from('form-templates')
-            .download(form.html_template_url);
+        if (pdfUrl && form.is_fillable && form.field_mappings?.length > 0) {
+          console.log(`[DOCS] Filling PDF from: ${pdfUrl}`);
 
-          if (htmlData && !htmlError) {
-            const htmlTemplate = await htmlData.text();
-            console.log(`HTML template loaded: ${htmlTemplate.length} chars`);
+          // Download PDF
+          const pdfResponse = await fetch(pdfUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
 
-            // Fill the HTML template with data
-            const filledHtml = fillHtmlTemplate(htmlTemplate, form.field_mapping || {}, rawData, context);
-            console.log(`HTML filled with data`);
+          if (pdfResponse.ok) {
+            const templateBytes = await pdfResponse.arrayBuffer();
 
-            // Try external PDF conversion first
-            const externalPdf = await htmlToPdfExternal(filledHtml);
+            // Fill the PDF
+            const fillResult = await fillPdfForm(templateBytes, form.field_mappings, context);
+            pdfBytes = fillResult.pdfBytes;
 
-            if (externalPdf) {
-              pdfBytes = externalPdf;
-              debugInfo = {
-                generatedFrom: 'html_template',
-                htmlTemplateUrl: form.html_template_url,
-                pdfConverter: 'external_api'
-              };
-            } else {
-              // Fallback to pdf-lib based conversion
-              pdfBytes = await htmlToPdfFallback(filledHtml, form.form_name);
-              debugInfo = {
-                generatedFrom: 'html_template',
-                htmlTemplateUrl: form.html_template_url,
-                pdfConverter: 'pdf-lib_fallback'
-              };
-            }
+            debugInfo = {
+              generatedFrom: 'filled_pdf',
+              sourceUrl: pdfUrl,
+              totalFields: fillResult.totalFields,
+              filledCount: fillResult.filledCount
+            };
 
-            console.log(`PDF generated from HTML: ${pdfBytes.length} bytes`);
+            console.log(`[DOCS] Filled ${fillResult.filledCount}/${fillResult.totalFields} fields`);
           } else {
-            console.log(`Failed to load HTML template: ${htmlError?.message}`);
-            // Fall through to other methods
+            console.log(`[DOCS] Failed to download PDF: ${pdfResponse.status}`);
           }
         }
 
-        // ============================================
-        // PRIORITY 2: Try PDF template
-        // ============================================
-        if (!pdfBytes!) {
-          let templateBytes: ArrayBuffer | null = null;
-
-          // Try form-templates bucket
-          if (form.storage_path) {
-            console.log(`Trying form-templates/${form.storage_path}`);
-            const { data: templateData, error: downloadError } = await supabase.storage
-              .from('form-templates')
-              .download(form.storage_path);
-
-            if (templateData && !downloadError) {
-              templateBytes = await templateData.arrayBuffer();
-              console.log(`Downloaded from form-templates: ${templateBytes.byteLength} bytes`);
-            }
-          }
-
-          // Try form-pdfs bucket
-          if (!templateBytes && form.source_url?.includes('supabase.co/storage')) {
-            const match = form.source_url.match(/\/form-pdfs\/(.+)$/);
-            if (match) {
-              const pdfPath = match[1];
-              const { data: pdfData, error: pdfError } = await supabase.storage
-                .from('form-pdfs')
-                .download(pdfPath);
-
-              if (pdfData && !pdfError) {
-                templateBytes = await pdfData.arrayBuffer();
-              }
-            }
-          }
-
-          // Try external URL
-          if (!templateBytes && form.source_url && form.source_url.endsWith('.pdf')) {
-            try {
-              const response = await fetch(form.source_url, {
-                headers: { 'User-Agent': 'Mozilla/5.0' }
-              });
-              if (response.ok) {
-                templateBytes = await response.arrayBuffer();
-              }
-            } catch {}
-          }
-
-          if (templateBytes) {
-            // Fill the PDF form
-            const fillResult = await fillPdfForm(templateBytes, form.field_mapping || {}, context, rawData);
-
-            // If PDF has fillable fields, use it
-            if (fillResult.debug.pdfFieldCount > 0) {
-              pdfBytes = fillResult.pdfBytes;
-              debugInfo = fillResult.debug;
-            }
-          }
-        }
-
-        // ============================================
-        // PRIORITY 3: Use code-generated template
-        // ============================================
-        if (!pdfBytes!) {
+        // Fall back to code templates if no PDF
+        if (!pdfBytes) {
           const templateKey = form.form_name || form.form_number;
           const templateGenerator = TEMPLATES[templateKey] ||
-                                     TEMPLATES[form.form_number] ||
-                                     findTemplateByKeyword(templateKey);
+                                    TEMPLATES[form.form_number] ||
+                                    findTemplateByKeyword(templateKey);
 
           if (templateGenerator) {
-            console.log(`Using code generator for: ${templateKey}`);
-            pdfBytes = await templateGenerator({ deal, vehicle, dealer, customer });
+            console.log(`[DOCS] Using code template for: ${templateKey}`);
+            pdfBytes = await templateGenerator({ deal, vehicle, dealer, customer: null });
             debugInfo = { generatedFrom: 'code_template', templateKey };
           } else {
-            throw new Error(`No template available for ${form.form_number}`);
+            throw new Error(`No PDF or template available for ${form.form_name}`);
           }
         }
 
-        // Generate filename and path
+        // Upload generated PDF
         const timestamp = Date.now();
         const safeFormNumber = (form.form_number || 'DOC').replace(/[^a-zA-Z0-9-]/g, '_');
-        const dealIdStr = String(deal_id);
-        const fileName = `${safeFormNumber}_${dealIdStr.slice(0, 8)}_${timestamp}.pdf`;
+        const fileName = `${safeFormNumber}_${String(deal_id).slice(0, 8)}_${timestamp}.pdf`;
         const storagePath = `dealers/${deal.dealer_id}/deals/${deal_id}/${fileName}`;
 
-        // Upload to deal-documents bucket
         const { error: uploadError } = await supabase.storage
           .from('deal-documents')
           .upload(storagePath, pdfBytes, {
@@ -827,15 +383,13 @@ serve(async (req) => {
           throw new Error(`Upload failed: ${uploadError.message}`);
         }
 
-        console.log(`Uploaded to: ${storagePath}`);
-
         // Get signed URL
         const { data: urlData } = await supabase.storage
           .from('deal-documents')
           .createSignedUrl(storagePath, 86400);
 
         // Record in generated_documents
-        const insertData = {
+        await supabase.from('generated_documents').insert({
           deal_id: typeof deal_id === 'string' ? parseInt(deal_id) : deal_id,
           dealer_id: deal.dealer_id,
           form_number: form.form_number,
@@ -844,18 +398,7 @@ serve(async (req) => {
           storage_path: storagePath,
           public_url: urlData?.signedUrl || null,
           generated_by: 'system'
-        };
-
-        const { error: insertError } = await supabase.from('generated_documents').insert(insertData);
-
-        if (insertError) {
-          console.error(`DB insert failed: ${insertError.message}`);
-          errors.push({
-            form_number: form.form_number,
-            form_name: form.form_name,
-            error: `PDF created but DB insert failed: ${insertError.message}`
-          });
-        }
+        });
 
         generated.push({
           form_number: form.form_number,
@@ -866,10 +409,10 @@ serve(async (req) => {
           debug: debugInfo
         });
 
-        console.log(`Generated: ${form.form_name}`);
+        console.log(`[DOCS] Generated: ${form.form_name}`);
 
       } catch (err) {
-        console.error(`Failed to generate ${form.form_number}:`, err);
+        console.error(`[DOCS] Failed: ${form.form_name}:`, err);
         errors.push({
           form_number: form.form_number,
           form_name: form.form_name,
@@ -878,7 +421,7 @@ serve(async (req) => {
       }
     }
 
-    // Update deal with generated docs info
+    // Update deal
     await supabase.from('deals')
       .update({
         docs_generated: generated.map(g => g.form_number),
@@ -886,7 +429,7 @@ serve(async (req) => {
       })
       .eq('id', deal_id);
 
-    console.log(`Complete: ${generated.length} generated, ${errors.length} errors`);
+    console.log(`[DOCS] Complete: ${generated.length} generated, ${errors.length} errors`);
 
     return new Response(
       JSON.stringify({
@@ -899,7 +442,7 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('Document generation error:', error);
+    console.error('[DOCS] Error:', error);
     return new Response(
       JSON.stringify({
         success: false,
@@ -909,3 +452,25 @@ serve(async (req) => {
     );
   }
 });
+
+// ============================================
+// FIND TEMPLATE BY KEYWORD
+// ============================================
+function findTemplateByKeyword(formName: string): ((data: any) => Promise<Uint8Array>) | null {
+  const lower = (formName || '').toLowerCase();
+
+  if (lower.includes('contract of sale') || lower.includes('motor vehicle contract')) {
+    return TEMPLATES['MVCS'];
+  }
+  if (lower.includes('odometer') || lower.includes('mileage disclosure')) {
+    return TEMPLATES['Odometer Disclosure'];
+  }
+  if (lower.includes('bill of sale')) {
+    return TEMPLATES['Bill of Sale'];
+  }
+  if (lower.includes('buyers guide') || lower.includes("buyer's guide") || lower.includes('as-is')) {
+    return TEMPLATES['Buyers Guide'];
+  }
+
+  return null;
+}

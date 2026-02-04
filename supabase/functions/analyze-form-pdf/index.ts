@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,10 +13,8 @@ const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ============================================
-// UNIVERSAL FIELDS - for AI context
-// These are the standard fields we map to
+// UNIVERSAL FIELDS - for AI context and auto-mapping
 // ============================================
-
 const universalFieldCategories = {
   buyer: [
     "buyer_name", "buyer_first_name", "buyer_last_name", "buyer_address", "buyer_address2",
@@ -42,25 +41,26 @@ const universalFieldCategories = {
     "vehicle_miles_exceeds", "vehicle_miles_not_actual", "vehicle_color",
     "vehicle_interior_color", "vehicle_engine", "vehicle_cylinders", "vehicle_transmission",
     "vehicle_drive", "vehicle_fuel", "vehicle_title_number", "vehicle_title_state",
-    "vehicle_plate", "vehicle_weight", "vehicle_new_used", "vehicle_warranty"
+    "vehicle_plate", "vehicle_weight", "vehicle_new_used", "vehicle_warranty",
+    "year", "make", "model", "vin", "odometer", "color", "stock_number", "body_type"
   ],
   deal: [
     "sale_date", "delivery_date", "deal_number", "sale_price", "msrp",
     "trade_allowance", "trade_payoff", "net_trade", "down_payment", "rebate",
     "doc_fee", "title_fee", "registration_fee", "smog_fee", "other_fees",
     "other_fees_desc", "total_fees", "subtotal", "tax_rate", "tax_amount",
-    "total_price", "amount_financed", "balance_due"
+    "total_price", "amount_financed", "balance_due", "sales_tax", "total_sale"
   ],
   financing: [
     "apr", "term_months", "monthly_payment", "payment_frequency", "num_payments",
     "first_payment_date", "final_payment_date", "final_payment_amount",
     "total_of_payments", "finance_charge", "total_sale_price", "deferred_price",
-    "late_fee", "late_days", "prepayment_penalty"
+    "late_fee", "late_days", "prepayment_penalty", "interest_rate"
   ],
   trade: [
     "trade_year", "trade_make", "trade_model", "trade_vin", "trade_miles",
     "trade_color", "trade_title_number", "trade_plate", "trade_lienholder",
-    "trade_lienholder_address", "trade_payoff_good_thru"
+    "trade_lienholder_address", "trade_payoff_good_thru", "trade_value", "trade_description"
   ],
   lien: [
     "lienholder_name", "lienholder_address", "lienholder_city",
@@ -72,81 +72,195 @@ const universalFieldCategories = {
   ]
 };
 
-// Flatten for AI context
-const allUniversalFields = Object.entries(universalFieldCategories)
-  .map(([category, fields]) => fields.map(f => `${f} (${category})`))
-  .flat();
+// Flatten all fields for pattern matching
+const allUniversalFields = Object.values(universalFieldCategories).flat();
 
 // ============================================
-// PDF ANALYSIS PROMPT
+// AUTO-MAPPING: Pattern matching for PDF field names
 // ============================================
+function autoMapFieldName(pdfFieldName: string): { field: string | null; confidence: number } {
+  const nameLower = pdfFieldName.toLowerCase().trim();
 
+  // Direct matches first
+  const directMappings: Record<string, { field: string; confidence: number }> = {
+    // Vehicle fields
+    'year': { field: 'vehicle_year', confidence: 0.95 },
+    'make': { field: 'vehicle_make', confidence: 0.95 },
+    'model': { field: 'vehicle_model', confidence: 0.95 },
+    'vin': { field: 'vehicle_vin', confidence: 0.98 },
+    'color': { field: 'vehicle_color', confidence: 0.9 },
+    'body': { field: 'vehicle_body', confidence: 0.85 },
+    'body type': { field: 'vehicle_body', confidence: 0.9 },
+    'body_type': { field: 'vehicle_body', confidence: 0.95 },
+    'body style': { field: 'vehicle_body', confidence: 0.9 },
+    'odometer': { field: 'odometer', confidence: 0.95 },
+    'mileage': { field: 'odometer', confidence: 0.9 },
+    'miles': { field: 'odometer', confidence: 0.85 },
+    'units': { field: 'odometer', confidence: 0.7 },
+    'stock': { field: 'stock_number', confidence: 0.85 },
+    'stock number': { field: 'stock_number', confidence: 0.95 },
+    'stock #': { field: 'stock_number', confidence: 0.95 },
+
+    // Price fields
+    'price': { field: 'sale_price', confidence: 0.85 },
+    'sale price': { field: 'sale_price', confidence: 0.95 },
+    'selling price': { field: 'sale_price', confidence: 0.9 },
+    'purchase price': { field: 'sale_price', confidence: 0.9 },
+    'amount': { field: 'sale_price', confidence: 0.6 },
+
+    // Date fields
+    'date': { field: 'sale_date', confidence: 0.7 },
+    'date of sale': { field: 'sale_date', confidence: 0.98 },
+    'sale date': { field: 'sale_date', confidence: 0.98 },
+    'sold date': { field: 'sale_date', confidence: 0.95 },
+    'today': { field: 'sale_date', confidence: 0.7 },
+  };
+
+  // Check direct mappings
+  if (directMappings[nameLower]) {
+    return directMappings[nameLower];
+  }
+
+  // Pattern-based mappings
+  // VIN patterns
+  if (nameLower.includes('vin') || nameLower.includes('vehicle identification')) {
+    return { field: 'vehicle_vin', confidence: 0.95 };
+  }
+
+  // Odometer patterns
+  if (nameLower.includes('odometer') || nameLower.includes('mileage')) {
+    return { field: 'odometer', confidence: 0.9 };
+  }
+
+  // Buyer patterns - look for _2 suffix or "buyer" keyword
+  if (nameLower.includes('buyer') || nameLower.includes('purchaser') || nameLower.includes('customer')) {
+    if (nameLower.includes('name')) return { field: 'buyer_name', confidence: 0.95 };
+    if (nameLower.includes('address')) return { field: 'buyer_address', confidence: 0.9 };
+    if (nameLower.includes('city')) return { field: 'buyer_city', confidence: 0.9 };
+    if (nameLower.includes('state')) return { field: 'buyer_state', confidence: 0.9 };
+    if (nameLower.includes('zip')) return { field: 'buyer_zip', confidence: 0.9 };
+    if (nameLower.includes('phone')) return { field: 'buyer_phone', confidence: 0.9 };
+    if (nameLower.includes('email')) return { field: 'buyer_email', confidence: 0.9 };
+  }
+
+  // Fields with _2 suffix often indicate buyer (second party)
+  if (nameLower.endsWith('_2') || nameLower.includes('_2_')) {
+    const base = nameLower.replace(/_2/g, '').trim();
+    if (base.includes('address') || base === 'street address') return { field: 'buyer_address', confidence: 0.85 };
+    if (base.includes('city') || base === 'city') return { field: 'buyer_city', confidence: 0.85 };
+    if (base.includes('state') || base === 'state') return { field: 'buyer_state', confidence: 0.85 };
+    if (base.includes('zip') || base === 'zip') return { field: 'buyer_zip', confidence: 0.85 };
+  }
+
+  // Dealer/Seller patterns - fields without _2 suffix
+  if (nameLower.includes('dealer') || nameLower.includes('seller')) {
+    if (nameLower.includes('name')) return { field: 'dealer_name', confidence: 0.95 };
+    if (nameLower.includes('license')) return { field: 'dealer_license', confidence: 0.95 };
+    if (nameLower.includes('address')) return { field: 'dealer_address', confidence: 0.9 };
+    if (nameLower.includes('city')) return { field: 'dealer_city', confidence: 0.9 };
+    if (nameLower.includes('state')) return { field: 'dealer_state', confidence: 0.9 };
+    if (nameLower.includes('zip')) return { field: 'dealer_zip', confidence: 0.9 };
+    if (nameLower.includes('phone')) return { field: 'dealer_phone', confidence: 0.9 };
+  }
+
+  // Address fields without buyer/dealer context - assume dealer (first party)
+  if (!nameLower.includes('_2') && !nameLower.includes('buyer') && !nameLower.includes('purchaser')) {
+    if (nameLower === 'street address' || nameLower === 'address') return { field: 'dealer_address', confidence: 0.7 };
+    if (nameLower === 'city') return { field: 'dealer_city', confidence: 0.7 };
+    if (nameLower === 'state') return { field: 'dealer_state', confidence: 0.7 };
+    if (nameLower === 'zip' || nameLower === 'zip code') return { field: 'dealer_zip', confidence: 0.7 };
+  }
+
+  // Trade-in patterns
+  if (nameLower.includes('trade')) {
+    if (nameLower.includes('value') || nameLower.includes('allowance')) return { field: 'trade_value', confidence: 0.9 };
+    if (nameLower.includes('payoff')) return { field: 'trade_payoff', confidence: 0.9 };
+    if (nameLower.includes('vin')) return { field: 'trade_vin', confidence: 0.9 };
+  }
+
+  // Financing patterns
+  if (nameLower.includes('apr') || nameLower.includes('annual percentage')) {
+    return { field: 'apr', confidence: 0.95 };
+  }
+  if (nameLower.includes('monthly payment') || nameLower.includes('payment amount')) {
+    return { field: 'monthly_payment', confidence: 0.9 };
+  }
+  if (nameLower.includes('term') && nameLower.includes('month')) {
+    return { field: 'term_months', confidence: 0.9 };
+  }
+  if (nameLower.includes('down payment')) {
+    return { field: 'down_payment', confidence: 0.95 };
+  }
+  if (nameLower.includes('amount financed')) {
+    return { field: 'amount_financed', confidence: 0.95 };
+  }
+  if (nameLower.includes('finance charge')) {
+    return { field: 'finance_charge', confidence: 0.95 };
+  }
+  if (nameLower.includes('total of payments')) {
+    return { field: 'total_of_payments', confidence: 0.95 };
+  }
+
+  // Sales tax
+  if (nameLower.includes('sales tax') || nameLower.includes('tax amount')) {
+    return { field: 'sales_tax', confidence: 0.9 };
+  }
+
+  // Doc fee
+  if (nameLower.includes('doc fee') || nameLower.includes('documentation fee')) {
+    return { field: 'doc_fee', confidence: 0.95 };
+  }
+
+  // Total price
+  if (nameLower.includes('total price') || nameLower.includes('total sale')) {
+    return { field: 'total_price', confidence: 0.9 };
+  }
+
+  return { field: null, confidence: 0 };
+}
+
+// ============================================
+// PDF ANALYSIS PROMPT FOR AI FALLBACK
+// ============================================
 const buildAnalysisPrompt = (formName: string, formNumber: string | null, state: string) => `
-You are analyzing a PDF form used by auto dealers. Your task is to identify all fillable fields in this PDF and map them to our universal field system.
+You are analyzing a PDF form used by auto dealers. Identify all fillable fields and map them to our universal field system.
 
-FORM BEING ANALYZED:
-- Form Name: ${formName}
-- Form Number: ${formNumber || "Unknown"}
-- State: ${state}
+FORM: ${formName} (${formNumber || 'Unknown'}) - ${state}
 
-UNIVERSAL FIELDS AVAILABLE (use these exact field keys):
-${allUniversalFields.join("\n")}
+UNIVERSAL FIELDS AVAILABLE:
+${Object.entries(universalFieldCategories).map(([cat, fields]) => `${cat}: ${fields.join(', ')}`).join('\n')}
 
-INSTRUCTIONS:
-1. Examine the PDF carefully
-2. Identify EVERY fillable field, text box, checkbox, date field, and signature line
-3. For each field found, determine which universal_field it maps to
-4. Assign a confidence score (0.0 to 1.0) based on how certain you are of the mapping
-5. If a PDF field doesn't match any universal field, mark it as "unmapped"
-
-RESPOND WITH VALID JSON ONLY:
+RESPOND WITH VALID JSON:
 {
   "form_analysis": {
     "total_pages": <number>,
     "form_type": "<deal|title|financing|disclosure|tax|compliance>",
     "deal_types": ["<cash|bhph|traditional|wholesale>"],
-    "description": "<brief description of form purpose>"
+    "description": "<brief description>"
   },
   "pdf_fields": [
     {
-      "pdf_field_name": "<exact label or identifier from PDF>",
-      "pdf_field_type": "<text|number|date|checkbox|signature|address|currency>",
-      "page": <page number>,
-      "universal_field": "<matching field_key or null if unmapped>",
+      "pdf_field_name": "<exact field label from PDF>",
+      "pdf_field_type": "<text|number|date|checkbox|signature>",
+      "page": <page>,
+      "universal_field": "<matching field_key or null>",
       "confidence": <0.0 to 1.0>,
-      "notes": "<any relevant notes about this field>"
+      "notes": "<any notes>"
     }
-  ],
-  "summary": {
-    "total_fields": <number>,
-    "mapped_fields": <number>,
-    "unmapped_fields": <number>,
-    "high_confidence": <fields with confidence >= 0.9>,
-    "needs_review": <fields with confidence < 0.7>
-  }
+  ]
 }
 
-MAPPING GUIDELINES:
-- "Purchaser", "Buyer", "Customer" → buyer_* fields
-- "Co-Purchaser", "Co-Buyer", "Co-Signer" → co_buyer_* fields
-- "Seller", "Dealer", "Dealership" → dealer_* fields
-- "VIN", "Vehicle Identification" → vehicle_vin
-- "Year/Make/Model" split into vehicle_year, vehicle_make, vehicle_model
-- "Odometer", "Mileage" → vehicle_miles
-- "Sales Price", "Cash Price", "Selling Price" → sale_price
-- "APR", "Annual Percentage Rate" → apr
-- "Finance Charge" → finance_charge
-- "Total of Payments" → total_of_payments
-- Signature lines → *_signature fields
-- Date signed → *_signature_date fields
-
-Be thorough - every field matters for accurate form filling.
+MAPPING HINTS:
+- "Purchaser", "Buyer", "Customer" → buyer_*
+- "Seller", "Dealer" → dealer_*
+- "VIN" → vehicle_vin
+- "Odometer", "Mileage" → odometer
+- Signature lines → *_signature
 `;
 
 // ============================================
 // MAIN HANDLER
 // ============================================
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -158,7 +272,9 @@ serve(async (req) => {
     if (!form_id) throw new Error("form_id is required");
     if (!pdf_url && !pdf_base64) throw new Error("Either pdf_url or pdf_base64 is required");
 
-    // Get form details from database
+    console.log(`[ANALYZE] Starting analysis for form_id: ${form_id}`);
+
+    // Get form details
     const { data: form, error: formError } = await supabase
       .from("form_staging")
       .select("*")
@@ -166,240 +282,308 @@ serve(async (req) => {
       .single();
 
     if (formError || !form) {
-      throw new Error(`Form not found: ${form_id}`);
+      throw new Error(`Form not found: ${form_id} - ${formError?.message || 'Unknown'}`);
     }
 
-    console.log(`[analyze-pdf] Analyzing form: ${form.form_name} (${form.state})`);
+    console.log(`[ANALYZE] Form: ${form.form_name} (${form.state})`);
+    console.log(`[ANALYZE] PDF URL: ${pdf_url}`);
 
     // Get or fetch PDF content
-    let pdfData: string;
-    let mediaType = "application/pdf";
+    let pdfBytes: Uint8Array;
 
     if (pdf_base64) {
-      // Already have base64 data
-      pdfData = pdf_base64;
+      console.log(`[ANALYZE] Using provided base64 data`);
+      pdfBytes = Uint8Array.from(atob(pdf_base64), c => c.charCodeAt(0));
     } else if (pdf_url) {
-      // Fetch PDF from URL
-      console.log(`[analyze-pdf] Fetching PDF from: ${pdf_url}`);
-      const pdfResponse = await fetch(pdf_url);
+      console.log(`[ANALYZE] Fetching PDF from: ${pdf_url}`);
+
+      const pdfResponse = await fetch(pdf_url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+      });
 
       if (!pdfResponse.ok) {
         throw new Error(`Failed to fetch PDF: ${pdfResponse.status} ${pdfResponse.statusText}`);
       }
 
-      // Check if it's actually a PDF
       const contentType = pdfResponse.headers.get("content-type") || "";
+      console.log(`[ANALYZE] Content-Type: ${contentType}`);
+
       if (contentType.includes("text/html")) {
-        throw new Error(`URL is a web page, not a PDF. Please upload the actual PDF file.`);
+        throw new Error(`URL returned HTML, not PDF. The link may require login or has changed.`);
       }
 
       const pdfBuffer = await pdfResponse.arrayBuffer();
+      pdfBytes = new Uint8Array(pdfBuffer);
 
-      // Check if the content looks like a PDF (starts with %PDF)
-      const firstBytes = new Uint8Array(pdfBuffer.slice(0, 5));
-      const header = String.fromCharCode(...firstBytes);
-      if (!header.startsWith("%PDF") && !contentType.includes("pdf") && !contentType.includes("octet-stream")) {
-        throw new Error(`URL does not contain a valid PDF file. Content-Type: ${contentType}`);
+      console.log(`[ANALYZE] Downloaded ${pdfBytes.length} bytes`);
+
+      // Verify PDF header
+      const header = String.fromCharCode(...pdfBytes.slice(0, 5));
+      if (!header.startsWith("%PDF")) {
+        throw new Error(`File is not a valid PDF (header: ${header})`);
       }
 
-      // Convert to base64 using chunked approach (avoids stack overflow on large files)
-      const bytes = new Uint8Array(pdfBuffer);
-      let binary = "";
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode(...chunk);
-      }
-      pdfData = btoa(binary);
-
-      // Check if it's an image (use already-declared contentType)
-      if (contentType.includes("image")) {
-        mediaType = contentType;
-      }
-
-      // If this is an external URL (not our storage), save a copy to our storage
-      const isExternalUrl = !pdf_url.includes("supabase.co/storage");
-      if (isExternalUrl) {
+      // If external URL, save to our storage
+      if (!pdf_url.includes("supabase.co/storage")) {
         try {
           const fileName = `${form.state}/${form.form_name.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}.pdf`;
           const { error: uploadError } = await supabase.storage
             .from("form-pdfs")
-            .upload(fileName, new Uint8Array(pdfBuffer), { contentType: "application/pdf" });
+            .upload(fileName, pdfBytes, { contentType: "application/pdf" });
 
           if (!uploadError) {
             const { data: urlData } = supabase.storage.from("form-pdfs").getPublicUrl(fileName);
-            // Update form with our storage URL
             await supabase.from("form_staging").update({
               source_url: urlData.publicUrl,
               pdf_validated: true,
               url_validated: true,
               url_validated_at: new Date().toISOString()
             }).eq("id", form_id);
-            console.log(`[analyze-pdf] Saved PDF to storage: ${fileName}`);
-          } else {
-            console.log(`[analyze-pdf] Could not save to storage: ${uploadError.message}`);
+            console.log(`[ANALYZE] Saved PDF to storage: ${fileName}`);
           }
         } catch (storageErr) {
-          console.log(`[analyze-pdf] Storage save failed: ${storageErr.message}`);
+          console.log(`[ANALYZE] Storage save failed (non-fatal): ${storageErr}`);
         }
       }
     } else {
       throw new Error("No PDF data provided");
     }
 
-    // Call Claude API to analyze the PDF
-    console.log(`[analyze-pdf] Calling Claude API...`);
+    // ============================================
+    // EXTRACT PDF FIELDS using pdf-lib
+    // ============================================
+    let actualPdfFields: { name: string; type: string }[] = [];
+    let extractionMethod = 'pdf-lib';
 
-    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicApiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 8000,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "document",
-                source: {
-                  type: "base64",
-                  media_type: mediaType,
-                  data: pdfData
-                }
-              },
-              {
-                type: "text",
-                text: buildAnalysisPrompt(form.form_name, form.form_number, form.state)
-              }
-            ]
-          }
-        ]
-      })
-    });
-
-    if (!claudeResponse.ok) {
-      const errorText = await claudeResponse.text();
-      console.error(`[analyze-pdf] Claude API error:`, errorText);
-      throw new Error(`Claude API error: ${claudeResponse.status}`);
-    }
-
-    const claudeData = await claudeResponse.json();
-    const aiResponseText = claudeData.content[0]?.text || "";
-
-    console.log(`[analyze-pdf] Got AI response, parsing...`);
-
-    // Parse AI response
-    let analysis;
     try {
-      // Extract JSON from response (handle markdown code blocks)
-      const jsonMatch = aiResponseText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                        aiResponseText.match(/```\s*([\s\S]*?)\s*```/) ||
-                        [null, aiResponseText];
-      const jsonStr = jsonMatch[1] || aiResponseText;
-      analysis = JSON.parse(jsonStr.trim());
-    } catch (parseError) {
-      console.error(`[analyze-pdf] Failed to parse AI response:`, aiResponseText.substring(0, 500));
-      throw new Error("Failed to parse AI analysis response");
-    }
+      console.log(`[ANALYZE] Loading PDF with pdf-lib...`);
+      const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+      const pdfForm = pdfDoc.getForm();
+      const fields = pdfForm.getFields();
 
-    // Build suggested mappings array for response
-    const suggestedMappings = analysis.pdf_fields
-      .filter((f: any) => f.universal_field)
-      .map((f: any) => ({
-        pdf_field: f.pdf_field_name,
-        universal_field: f.universal_field,
-        confidence: f.confidence,
-        page: f.page,
-        field_type: f.pdf_field_type
+      actualPdfFields = fields.map(field => ({
+        name: field.getName(),
+        type: field.constructor.name.replace('PDF', '').replace('Field', '')
       }));
 
-    const unmappedFields = analysis.pdf_fields
-      .filter((f: any) => !f.universal_field)
-      .map((f: any) => f.pdf_field_name);
+      console.log(`[ANALYZE] Extracted ${actualPdfFields.length} fillable fields from PDF`);
 
-    // Check if this form already has shared mappings
-    const { data: existingShared } = await supabase
-      .from("shared_form_mappings")
-      .select("id, usage_count")
-      .eq("state", form.state)
-      .eq("form_name", form.form_name)
-      .single();
+      if (actualPdfFields.length > 0) {
+        console.log(`[ANALYZE] Field names:`);
+        actualPdfFields.slice(0, 30).forEach((f, i) => {
+          console.log(`  ${i + 1}. "${f.name}" (${f.type})`);
+        });
+        if (actualPdfFields.length > 30) {
+          console.log(`  ... and ${actualPdfFields.length - 30} more fields`);
+        }
+      }
+    } catch (pdfLibErr) {
+      console.log(`[ANALYZE] pdf-lib extraction failed: ${pdfLibErr}`);
+      console.log(`[ANALYZE] PDF may be encrypted or have no fillable fields`);
+    }
 
-    // Update form_staging with AI-suggested mappings
+    // ============================================
+    // BUILD FIELD MAPPINGS
+    // ============================================
+    let fieldMappings: any[] = [];
+    let mappedCount = 0;
+    let unmappedCount = 0;
+
+    if (actualPdfFields.length > 0) {
+      // Use extracted PDF field names and auto-map them
+      console.log(`[ANALYZE] Auto-mapping ${actualPdfFields.length} PDF fields...`);
+
+      fieldMappings = actualPdfFields.map((f, idx) => {
+        const autoMap = autoMapFieldName(f.name);
+
+        const mapping = {
+          pdf_field: f.name,
+          pdf_field_name: f.name, // Alias for compatibility
+          pdf_field_type: f.type,
+          universal_field: autoMap.field,
+          universal_fields: autoMap.field ? [autoMap.field] : [],
+          confidence: autoMap.confidence,
+          matched: !!autoMap.field,
+          status: autoMap.field ? 'mapped' : 'unmapped',
+          notes: autoMap.field ? `Auto-mapped (${Math.round(autoMap.confidence * 100)}% confidence)` : 'Needs manual mapping'
+        };
+
+        if (mapping.matched) mappedCount++;
+        else unmappedCount++;
+
+        return mapping;
+      });
+
+      console.log(`[ANALYZE] Auto-mapping complete: ${mappedCount} mapped, ${unmappedCount} unmapped`);
+
+    } else {
+      // No fillable fields - fall back to AI visual analysis
+      console.log(`[ANALYZE] No fillable fields found, falling back to AI analysis...`);
+      extractionMethod = 'ai-visual';
+
+      if (!anthropicApiKey) {
+        throw new Error("PDF has no fillable fields and ANTHROPIC_API_KEY is not set for visual analysis");
+      }
+
+      // Convert to base64 for Claude
+      let binary = "";
+      const chunkSize = 8192;
+      for (let i = 0; i < pdfBytes.length; i += chunkSize) {
+        const chunk = pdfBytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      const pdfBase64 = btoa(binary);
+
+      console.log(`[ANALYZE] Calling Claude API for visual analysis...`);
+
+      const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": anthropicApiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 8000,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
+              { type: "text", text: buildAnalysisPrompt(form.form_name, form.form_number, form.state) }
+            ]
+          }]
+        })
+      });
+
+      if (!claudeResponse.ok) {
+        const errorText = await claudeResponse.text();
+        console.error(`[ANALYZE] Claude API error:`, errorText);
+        throw new Error(`Claude API error: ${claudeResponse.status}`);
+      }
+
+      const claudeData = await claudeResponse.json();
+      const aiText = claudeData.content[0]?.text || "";
+
+      console.log(`[ANALYZE] Got AI response, parsing...`);
+
+      // Parse AI response
+      let analysis;
+      try {
+        const jsonMatch = aiText.match(/```json\s*([\s\S]*?)\s*```/) ||
+                          aiText.match(/```\s*([\s\S]*?)\s*```/) ||
+                          [null, aiText];
+        analysis = JSON.parse((jsonMatch[1] || aiText).trim());
+      } catch (parseError) {
+        console.error(`[ANALYZE] Failed to parse AI response`);
+        throw new Error("Failed to parse AI analysis response");
+      }
+
+      // Convert AI response to field mappings
+      fieldMappings = (analysis.pdf_fields || []).map((f: any, idx: number) => {
+        let pdfFieldName = f.pdf_field_name;
+        if (!pdfFieldName || typeof pdfFieldName !== 'string' || pdfFieldName.trim() === '') {
+          pdfFieldName = `Field_${idx + 1}`;
+        }
+
+        const mapping = {
+          pdf_field: pdfFieldName.trim(),
+          pdf_field_name: pdfFieldName.trim(),
+          pdf_field_type: f.pdf_field_type || 'text',
+          page: f.page,
+          universal_field: f.universal_field || null,
+          universal_fields: f.universal_field ? [f.universal_field] : [],
+          confidence: f.confidence || 0,
+          matched: !!f.universal_field,
+          status: f.universal_field ? 'mapped' : 'unmapped',
+          notes: f.notes || null
+        };
+
+        if (mapping.matched) mappedCount++;
+        else unmappedCount++;
+
+        return mapping;
+      });
+
+      console.log(`[ANALYZE] AI analysis: ${mappedCount} mapped, ${unmappedCount} unmapped`);
+    }
+
+    // ============================================
+    // UPDATE DATABASE
+    // ============================================
+    const totalFields = fieldMappings.length;
+    const mappingConfidence = totalFields > 0 ? Math.round((mappedCount / totalFields) * 100) : 0;
+
+    console.log(`[ANALYZE] Updating database...`);
+    console.log(`[ANALYZE] Total fields: ${totalFields}, Mapped: ${mappedCount}, Confidence: ${mappingConfidence}%`);
+
+    const updateData: any = {
+      field_mappings: fieldMappings,
+      detected_fields: fieldMappings.map(f => f.pdf_field),
+      mapping_status: extractionMethod === 'pdf-lib' ? 'extracted' : 'ai_suggested',
+      mapping_confidence: mappingConfidence,
+      analyzed_at: new Date().toISOString(),
+      is_fillable: actualPdfFields.length > 0
+    };
+
     const { error: updateError } = await supabase
       .from("form_staging")
-      .update({
-        field_mappings: suggestedMappings,
-        mapping_status: "ai_suggested",
-        deal_types: analysis.form_analysis?.deal_types || form.deal_types
-      })
+      .update(updateData)
       .eq("id", form_id);
 
     if (updateError) {
-      console.error(`[analyze-pdf] Update error:`, updateError.message);
+      console.error(`[ANALYZE] Database update failed:`, updateError);
+      throw new Error(`Failed to save analysis: ${updateError.message}`);
     }
 
-    // Calculate stats
-    const highConfidence = suggestedMappings.filter((m: any) => m.confidence >= 0.9).length;
-    const needsReview = suggestedMappings.filter((m: any) => m.confidence < 0.7).length;
+    console.log(`[ANALYZE] Database updated successfully`);
 
-    console.log(`[analyze-pdf] Analysis complete: ${suggestedMappings.length} mapped, ${unmappedFields.length} unmapped`);
+    // ============================================
+    // RETURN RESPONSE
+    // ============================================
+    const response = {
+      success: true,
+      form_id: form_id,
+      form_name: form.form_name,
+      form_number: form.form_number,
+      state: form.state,
+
+      // Field counts - use pdf_fields_found for frontend compatibility
+      pdf_fields_found: totalFields,
+      total_fields: totalFields,
+      mapped_count: mappedCount,
+      unmapped_count: unmappedCount,
+      mapping_confidence: mappingConfidence,
+
+      // Extraction method
+      extraction_method: extractionMethod,
+      is_fillable: actualPdfFields.length > 0,
+
+      // All fields with mappings
+      all_fields: fieldMappings,
+      actual_pdf_fields: actualPdfFields,
+
+      // Status
+      needs_review: unmappedCount > 0,
+      mapping_status: updateData.mapping_status,
+
+      message: `Analyzed ${totalFields} fields. ${mappedCount} auto-mapped (${mappingConfidence}%), ${unmappedCount} need manual mapping.`
+    };
+
+    console.log(`[ANALYZE] Complete: ${response.message}`);
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        form_id: form_id,
-        form_name: form.form_name,
-        state: form.state,
-
-        // Form analysis
-        form_analysis: analysis.form_analysis,
-
-        // Field counts
-        pdf_fields_found: analysis.pdf_fields?.length || 0,
-        mapped_count: suggestedMappings.length,
-        unmapped_count: unmappedFields.length,
-        high_confidence_count: highConfidence,
-        needs_review_count: needsReview,
-
-        // Detailed mappings
-        suggested_mappings: suggestedMappings,
-        unmapped_fields: unmappedFields,
-
-        // Status
-        needs_review: needsReview > 0 || unmappedFields.length > 3,
-        mapping_status: "ai_suggested",
-
-        // Shared mapping info
-        has_existing_shared_mapping: !!existingShared,
-        shared_mapping_usage: existingShared?.usage_count || 0,
-
-        // Next steps
-        next_steps: [
-          "Review AI-suggested mappings for accuracy",
-          "Map any unmapped fields manually",
-          "Click 'Verify & Share' to make mappings available to other dealers",
-          needsReview > 0 ? `⚠️ ${needsReview} fields need review (low confidence)` : null
-        ].filter(Boolean),
-
-        message: `Analyzed ${analysis.pdf_fields?.length || 0} fields. ${suggestedMappings.length} mapped (${highConfidence} high confidence), ${unmappedFields.length} unmapped.`
-      }),
+      JSON.stringify(response),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
-    console.error("[analyze-pdf] Error:", error.message);
+    console.error("[ANALYZE] Error:", error);
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message,
-        hint: error.message.includes("PDF") ?
-          "Make sure the PDF URL is accessible or upload the PDF directly" : undefined
+        error: error instanceof Error ? error.message : String(error),
+        hint: "Make sure the PDF URL is accessible and points to a valid PDF file"
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
