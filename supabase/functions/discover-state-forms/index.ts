@@ -25,11 +25,14 @@ const stateNames: Record<string, string> = {
 // STEP A: AI RESEARCH - What forms does this state require?
 // ============================================================
 function buildResearchPrompt(stateName: string, stateCode: string): string {
-  return `You are an expert on automotive dealer compliance and DMV requirements for ${stateName} (${stateCode}).
+  return `You are an expert on motor vehicle dealer compliance for ${stateName}.
 
-List ALL official forms required for used car dealers in ${stateName}. DO NOT provide any URLs.
+List forms required for USED CAR DEALERS in ${stateName}. Focus on DMV, Tax Commission, and federal (FTC/NHTSA) requirements.
 
-CRITICAL: Return ONLY a valid JSON array. No markdown, no explanation, no code blocks. Start with [ and end with ].
+DO NOT include: IRS forms, generic business forms, forms from other states.
+DO NOT provide any URLs.
+
+Return ONLY a JSON array. No markdown, no explanation. Start with [ end with ].
 
 Include these categories:
 
@@ -84,14 +87,7 @@ For EACH form, provide this exact structure:
   "is_federal": true or false
 }
 
-IMPORTANT EXCLUSIONS:
-- Do NOT include IRS tax forms (1099-C, W-9, 8300, etc.) - these are federal tax reporting, not state dealer forms
-- Do NOT include forms from other states
-- DO include federal requirements that dealers must use IN-STATE (FTC Buyers Guide, Odometer Disclosure) because these are required at point of sale
-- Every state-specific form should have an official form number (like TC-656 for Utah). If you cannot find the official form number for a state form, set form_number to null but still include the form.
-
-Return 20-30 forms covering all categories. Focus on ${stateName}-specific forms plus the required federal disclosures.
-Do NOT include any URLs. I will search for official PDFs separately.`;
+Return 20-25 forms. Use official form numbers when available (TC-656 for Utah). Set form_number to null if unknown.`;
 }
 
 interface DiscoveredForm {
@@ -121,7 +117,7 @@ async function researchFormsWithAI(
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-3-haiku-20240307",
       max_tokens: 4096,
       messages: [{
         role: "user",
@@ -169,61 +165,129 @@ async function researchFormsWithAI(
 // ============================================================
 // STEP B: GOOGLE SEARCH - Find real PDF URLs via SerpAPI
 // ============================================================
+
+// URLs to REJECT - manufacturer sites, generic legal docs, etc.
+const REJECTED_URL_PATTERNS = [
+  'nissan', 'toyota', 'honda', 'ford', 'chevrolet', 'gmc', 'dodge', 'chrysler',
+  'hyundai', 'kia', 'mazda', 'subaru', 'volkswagen', 'bmw', 'mercedes', 'audi',
+  'manufacturer', 'rental', 'lease-agreement', 'chapter', 'statute', 'legislature',
+  'law.justia', 'findlaw', 'lawserver', 'casetext', 'courtlistener'
+];
+
+// URLs to ACCEPT - official government and legal form sites
+const ACCEPTED_DOMAINS = [
+  '.gov', 'tax.utah.gov', 'dmv.utah.gov', 'dmv.', 'ftc.gov', 'nhtsa.gov',
+  'dor.', 'revenue.', 'motor.', 'mvd.', 'dot.state'
+];
+
+function isValidPdfUrl(url: string): boolean {
+  const lowerUrl = url.toLowerCase();
+
+  // Reject manufacturer and irrelevant URLs
+  for (const pattern of REJECTED_URL_PATTERNS) {
+    if (lowerUrl.includes(pattern)) {
+      return false;
+    }
+  }
+
+  // Prefer .gov and official sites
+  const hasAcceptedDomain = ACCEPTED_DOMAINS.some(domain => lowerUrl.includes(domain));
+
+  // Must end in .pdf
+  if (!lowerUrl.endsWith('.pdf')) {
+    return false;
+  }
+
+  return true;
+}
+
 async function searchForPdfUrl(
   form: DiscoveredForm,
   stateName: string,
+  stateCode: string,
   serpApiKey: string
 ): Promise<string | null> {
   const formId = form.form_number || form.form_name;
   console.log(`[STEP B] Searching for PDF: ${formId}`);
 
-  // Build search queries - try most specific first
+  // Build MOTOR-VEHICLE-SPECIFIC search queries
   const queries: string[] = [];
 
-  if (form.form_number) {
-    // Most specific: form number + state + filetype:pdf + site:.gov
-    queries.push(`${form.form_number} ${stateName} filetype:pdf site:.gov`);
-    // Try without site restriction
-    queries.push(`${form.form_number} ${stateName} official form filetype:pdf`);
-  }
-
-  // Broader: form name search
-  queries.push(`"${form.form_name}" ${stateName} filetype:pdf`);
-  queries.push(`${form.form_name} ${stateName} official PDF download`);
-
-  // For federal forms, search federal sites
+  // For federal forms, search federal sites FIRST
   if (form.is_federal) {
-    if (form.form_name.toLowerCase().includes('buyers guide') || form.form_name.toLowerCase().includes('ftc')) {
-      queries.unshift(`FTC Buyers Guide PDF site:ftc.gov`);
+    const nameLower = form.form_name.toLowerCase();
+    if (nameLower.includes('buyers guide') || nameLower.includes('ftc')) {
+      queries.push(`FTC Buyers Guide auto dealer filetype:pdf site:ftc.gov`);
+      queries.push(`FTC used car buyers guide filetype:pdf site:.gov`);
     }
-    if (form.form_name.toLowerCase().includes('odometer')) {
-      queries.unshift(`odometer disclosure statement PDF site:.gov`);
+    if (nameLower.includes('odometer')) {
+      queries.push(`Odometer Disclosure Statement motor vehicle filetype:pdf site:nhtsa.gov`);
+      queries.push(`federal odometer disclosure form filetype:pdf site:.gov`);
+    }
+    if (nameLower.includes('truth in lending') || nameLower.includes('tila')) {
+      queries.push(`Truth in Lending Disclosure auto loan filetype:pdf site:.gov`);
+    }
+    if (nameLower.includes('privacy') || nameLower.includes('glba')) {
+      queries.push(`GLBA Privacy Notice auto dealer filetype:pdf site:.gov`);
     }
   }
+
+  // For forms WITH a form number (like TC-69, TC-656)
+  if (form.form_number) {
+    const formNum = form.form_number;
+
+    // Utah-specific: TC- forms are on tax.utah.gov
+    if (stateCode === 'UT' && formNum.toUpperCase().startsWith('TC')) {
+      queries.push(`${formNum} site:tax.utah.gov filetype:pdf`);
+      queries.push(`${formNum} site:dmv.utah.gov filetype:pdf`);
+    }
+
+    // State-specific government sites
+    queries.push(`${formNum} site:.gov ${stateCode} filetype:pdf`);
+    queries.push(`${formNum} ${stateName} motor vehicle form filetype:pdf site:.gov`);
+    queries.push(`${formNum} ${stateName} DMV form filetype:pdf`);
+    queries.push(`${formNum} ${stateName} auto dealer form PDF`);
+  }
+
+  // For forms WITHOUT a form number - be MORE specific about motor vehicles
+  if (!form.form_number || queries.length < 3) {
+    const formName = form.form_name;
+    queries.push(`"${formName}" motor vehicle ${stateName} filetype:pdf site:.gov`);
+    queries.push(`${formName} auto dealer ${stateName} filetype:pdf`);
+    queries.push(`${formName} DMV ${stateName} form filetype:pdf`);
+    queries.push(`${formName} vehicle ${stateCode} official form PDF`);
+  }
+
+  console.log(`[STEP B] Will try ${queries.length} search queries`);
 
   for (const query of queries) {
     try {
-      const url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpApiKey}&num=5`;
+      console.log(`[STEP B] Query: ${query}`);
+      const url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpApiKey}&num=10`;
 
       const response = await fetch(url);
       if (!response.ok) {
-        console.log(`[STEP B] SerpAPI error for "${query}": ${response.status}`);
+        console.log(`[STEP B] SerpAPI error: ${response.status}`);
         continue;
       }
 
       const data = await response.json();
       const results = data.organic_results || [];
+      console.log(`[STEP B] Got ${results.length} results`);
 
-      // Find first result with .pdf link
+      // Find first VALID result with .pdf link
       for (const result of results) {
         const link = result.link || "";
-        if (link.toLowerCase().endsWith(".pdf")) {
-          console.log(`[STEP B] Found PDF for ${formId}: ${link}`);
+
+        if (isValidPdfUrl(link)) {
+          console.log(`[STEP B] ✓ Found valid PDF for ${formId}: ${link}`);
           return link;
+        } else if (link.toLowerCase().endsWith('.pdf')) {
+          console.log(`[STEP B] ✗ Rejected PDF (bad domain): ${link}`);
         }
       }
 
-      console.log(`[STEP B] No PDF in results for query: "${query}"`);
+      console.log(`[STEP B] No valid PDF in results for this query`);
     } catch (err) {
       console.log(`[STEP B] Search error: ${err}`);
     }
@@ -433,7 +497,7 @@ serve(async (req) => {
       console.log(`\n--- Processing: ${formId} ---`);
 
       // STEP B: Search for PDF URL
-      const pdfUrl = await searchForPdfUrl(form, stateName, serpApiKey);
+      const pdfUrl = await searchForPdfUrl(form, stateName, stateUpper, serpApiKey);
 
       // STEP C: Download if URL found
       let storage_bucket: string | null = null;

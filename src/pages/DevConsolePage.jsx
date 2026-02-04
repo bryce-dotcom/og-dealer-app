@@ -606,7 +606,7 @@ export default function DevConsolePage() {
       }
 
       // Now analyze the PDF
-      const { data, error } = await supabase.functions.invoke('analyze-form-pdf', {
+      const { data, error } = await supabase.functions.invoke('map-form-fields', {
         body: { form_id: form.id, pdf_url: pdfUrl }
       });
       if (error) throw error;
@@ -626,7 +626,7 @@ export default function DevConsolePage() {
   };
 
   const openStagingMapper = (form) => {
-    // Convert field_mappings (array from analyze-form-pdf) to the format the mapper expects
+    // Convert field_mappings (array from map-form-fields) to the format the mapper expects
     // New format: field_mappings: [{ pdf_field, universal_fields: [], separator, confidence, status }]
     // Legacy format: field_mappings: [{ pdf_field, universal_field, confidence }]
     // UI format: field_mapping: { field_name: { fields: [], separator } | string }
@@ -638,7 +638,7 @@ export default function DevConsolePage() {
     console.log('[MAPPER DEBUG] form.field_mappings count:', form.field_mappings?.length || 0);
     console.log('[MAPPER DEBUG] form.detected_fields count:', form.detected_fields?.length || 0);
 
-    // If we have field_mappings array (from analyze-form-pdf or save), convert it to UI format
+    // If we have field_mappings array (from map-form-fields or save), convert it to UI format
     if (form.field_mappings && Array.isArray(form.field_mappings) && form.field_mappings.length > 0) {
       // Log all fields from field_mappings
       console.log('[MAPPER DEBUG] All field_mappings:', form.field_mappings.map(m => ({
@@ -2429,7 +2429,7 @@ export default function DevConsolePage() {
                     </thead>
                     <tbody>
                       {getFilteredStaging().map(f => {
-                        // field_mappings is from analyze-form-pdf, detected_fields is from old analyze-form
+                        // field_mappings is from map-form-fields, detected_fields is from old analyze-form
                         const mappingsCount = f.field_mappings?.length || 0;
                         const detectedCount = f.detected_fields?.length || 0;
                         const hasMapping = mappingsCount > 0 || detectedCount > 0;
