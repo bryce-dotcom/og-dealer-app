@@ -1025,12 +1025,13 @@ export default function DevConsolePage() {
     try {
       showToast('Promoting form to library...', 'info');
 
-      // Insert into form_library
-      const { data: insertedForm, error: insertError } = await supabase.from('form_library').insert({
+      // Build insert payload - log for debugging
+      const insertPayload = {
         state: form.state,
         form_number: form.form_number ? String(form.form_number) : null,
         form_name: form.form_name,
         category: form.category || selectedLibrary || 'deal',
+        source_agency: form.source_agency || 'State DMV',
         source_url: form.source_url || null,
         download_url: form.download_url || null,
         storage_bucket: form.storage_bucket || null,
@@ -1042,9 +1043,16 @@ export default function DevConsolePage() {
         mapping_status: form.mapping_status || 'pending',
         status: 'active',
         promoted_from: form.id
-      }).select().single();
+      };
+      console.log('[PROMOTE DEBUG] Insert payload:', JSON.stringify(insertPayload, null, 2));
 
-      if (insertError) throw insertError;
+      // Insert into form_library
+      const { data: insertedForm, error: insertError } = await supabase.from('form_library').insert(insertPayload).select().single();
+
+      if (insertError) {
+        console.error('[PROMOTE DEBUG] Insert error:', insertError);
+        throw insertError;
+      }
 
       // Update form_staging status to 'promoted'
       const { error: updateError } = await supabase.from('form_staging').update({
