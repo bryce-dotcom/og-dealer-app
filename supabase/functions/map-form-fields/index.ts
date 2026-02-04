@@ -143,10 +143,10 @@ serve(async (req) => {
   }
 
   try {
-    const { form_id } = await req.json();
+    const { form_id, debug } = await req.json();
     if (!form_id) throw new Error("form_id is required");
 
-    console.log(`[MAP] Starting field mapping for form: ${form_id}`);
+    console.log(`[MAP] Starting field mapping for form: ${form_id}${debug ? ' (DEBUG MODE)' : ''}`);
 
     // Get form from staging table first, then fall back to registry
     let form: any = null;
@@ -186,6 +186,26 @@ serve(async (req) => {
     }
 
     console.log(`[MAP] Form: ${form.form_name} (${form.state})`);
+
+    // Debug mode: return diagnostic info without processing
+    if (debug) {
+      return new Response(
+        JSON.stringify({
+          debug: true,
+          form_id,
+          sourceTable,
+          form_name: form.form_name,
+          state: form.state,
+          storage_bucket: form.storage_bucket || null,
+          storage_path: form.storage_path || null,
+          download_url: form.download_url || null,
+          source_url: form.source_url || null,
+          has_storage: !!(form.storage_bucket && form.storage_path),
+          message: "Debug mode - form found, no processing done"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     let pdfBytes: Uint8Array;
 
@@ -348,8 +368,8 @@ serve(async (req) => {
         detected_fields: detectedFields.map(f => f.name),
         field_mappings: fieldMappings,
         mapping_confidence: mappingConfidence,
-        status: mappingConfidence >= 70 ? "active" : "pending",
-        updated_at: new Date().toISOString()
+        mapping_status: mappingConfidence >= 70 ? "ai_suggested" : "pending",
+        analyzed_at: new Date().toISOString()
       })
       .eq("id", form_id);
 
