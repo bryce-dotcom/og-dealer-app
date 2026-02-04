@@ -114,10 +114,10 @@ async function researchFormsWithAI(
     headers: {
       "Content-Type": "application/json",
       "x-api-key": anthropicApiKey,
-      "anthropic-version": "2023-06-01"
+      "anthropic-version": "2024-01-01"
     },
     body: JSON.stringify({
-      model: "claude-3-haiku-20240307",
+      model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
       messages: [{
         role: "user",
