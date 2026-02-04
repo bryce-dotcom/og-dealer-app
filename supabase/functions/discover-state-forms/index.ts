@@ -84,7 +84,13 @@ For EACH form, provide this exact structure:
   "is_federal": true or false
 }
 
-Return 20-30 forms covering all categories. Include both state-specific AND federal requirements.
+IMPORTANT EXCLUSIONS:
+- Do NOT include IRS tax forms (1099-C, W-9, 8300, etc.) - these are federal tax reporting, not state dealer forms
+- Do NOT include forms from other states
+- DO include federal requirements that dealers must use IN-STATE (FTC Buyers Guide, Odometer Disclosure) because these are required at point of sale
+- Every state-specific form should have an official form number (like TC-656 for Utah). If you cannot find the official form number for a state form, set form_number to null but still include the form.
+
+Return 20-30 forms covering all categories. Focus on ${stateName}-specific forms plus the required federal disclosures.
 Do NOT include any URLs. I will search for official PDFs separately.`;
 }
 

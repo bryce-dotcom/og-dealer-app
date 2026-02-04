@@ -544,7 +544,7 @@ export default function DevConsolePage() {
   const [stagingMapperModal, setStagingMapperModal] = useState(null);
 
   const analyzeForm = async (form) => {
-    if (!form.source_url) {
+    if (!form.storage_path) {
       showToast('Please upload a PDF first before analyzing', 'error');
       return;
     }
@@ -552,7 +552,10 @@ export default function DevConsolePage() {
     setLoading(true);
 
     try {
-      let pdfUrl = form.source_url;
+      // Build URL from storage_path
+      let pdfUrl = form.storage_path
+        ? `https://rlzudfinlxonpbwacxpt.supabase.co/storage/v1/object/public/${form.storage_bucket}/${form.storage_path}`
+        : form.source_url;
       const isExternalUrl = !pdfUrl.includes('supabase.co/storage');
 
       // If it's an external URL, try to fetch and upload to our storage first
@@ -2589,8 +2592,8 @@ export default function DevConsolePage() {
                                   {inlineUploadingId === f.id ? '...' : f.source_url ? '↑' : 'Upload'}
                                 </button>
 
-                                {/* Analyze Button */}
-                                {f.source_url && !isProduction && (
+                                {/* Analyze Button - show if PDF exists in storage */}
+                                {f.storage_path && !isProduction && (
                                   <button
                                     onClick={() => !analyzingFormId && analyzeForm(f)}
                                     disabled={analyzingFormId === f.id}
@@ -2626,8 +2629,8 @@ export default function DevConsolePage() {
                                     ) : 'Analyze'}
                                   </button>
                                 )}
-                                {/* View/Map Button - show if has PDF or has mapping */}
-                                {(f.source_url || hasMapping) && (
+                                {/* View/Map Button - show if has PDF in storage or has mapping */}
+                                {(f.storage_path || hasMapping) && (
                                   <button
                                     onClick={() => openStagingMapper(f)}
                                     style={{
