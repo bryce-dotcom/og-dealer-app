@@ -206,7 +206,7 @@ serve(async (req) => {
     }
 
     // Fallback to URL if storage didn't work
-    if (!pdfBytes!) {
+    if (!pdfBytes) {
       const pdfUrl = form.download_url || form.source_url;
       if (!pdfUrl) {
         throw new Error("Form has no PDF in storage and no URL. Please upload a PDF first.");
