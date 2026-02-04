@@ -3424,8 +3424,8 @@ export default function DevConsolePage() {
               <div style={{ flex: 1, borderRight: '1px solid #27272a', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600' }}>PDF Preview</div>
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#09090b', padding: '20px' }}>
-                  {fieldMapperModal.source_url ? (
-                    <iframe src={fieldMapperModal.source_url} style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }} title="PDF Preview" />
+                  {(fieldMapperModal.source_url || (fieldMapperModal.storage_bucket && fieldMapperModal.storage_path)) ? (
+                    <iframe src={fieldMapperModal.source_url || `https://rlzudfinlxonpbwacxpt.supabase.co/storage/v1/object/public/${fieldMapperModal.storage_bucket}/${fieldMapperModal.storage_path}`} style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }} title="PDF Preview" />
                   ) : (
                     <div style={{ textAlign: 'center', color: '#71717a' }}>
                       <div style={{ fontSize: '48px', marginBottom: '12px' }}>📄</div>
