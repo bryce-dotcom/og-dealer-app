@@ -151,6 +151,7 @@ serve(async (req) => {
     // Get form from staging table first, then fall back to registry
     let form: any = null;
     let formError: any = null;
+    let sourceTable: string = "form_staging"; // Track which table we found the form in
 
     // Try form_staging first (where discovered forms go)
     const { data: stagingForm, error: stagingError } = await supabase
@@ -161,6 +162,7 @@ serve(async (req) => {
 
     if (stagingForm) {
       form = stagingForm;
+      sourceTable = "form_staging";
       console.log(`[MAP] Found form in form_staging`);
     } else {
       // Fall back to form_registry (production forms)
@@ -172,6 +174,7 @@ serve(async (req) => {
 
       if (registryForm) {
         form = registryForm;
+        sourceTable = "form_registry";
         console.log(`[MAP] Found form in form_registry`);
       } else {
         formError = stagingError || registryError;
@@ -336,10 +339,10 @@ serve(async (req) => {
     const mappingConfidence = Math.round((mappedCount / detectedFields.length) * 100);
 
     // ============================================
-    // UPDATE DATABASE
+    // UPDATE DATABASE (same table we read from)
     // ============================================
     const { error: updateError } = await supabase
-      .from("form_registry")
+      .from(sourceTable)
       .update({
         is_fillable: true,
         detected_fields: detectedFields.map(f => f.name),
