@@ -1585,9 +1585,9 @@ export default function DevConsolePage() {
     // Then apply status filter
     if (stagingFilter === 'all') return filtered;
     if (stagingFilter === 'needs_number') return filtered.filter(f => !f.form_number_confirmed);
-    if (stagingFilter === 'needs_pdf') return filtered.filter(f => !f.source_url || f.workflow_status === 'needs_upload');
-    if (stagingFilter === 'needs_mapping') return filtered.filter(f => f.source_url && !f.field_mappings?.length && (f.mapping_confidence || 0) < 99);
-    if (stagingFilter === 'ready') return filtered.filter(f => ((f.field_mappings?.length > 0) || (f.mapping_confidence || 0) >= 99) && f.form_number_confirmed && f.source_url && f.workflow_status !== 'production' && f.status !== 'approved');
+    if (stagingFilter === 'needs_pdf') return filtered.filter(f => !f.storage_path || f.workflow_status === 'needs_upload');
+    if (stagingFilter === 'needs_mapping') return filtered.filter(f => f.storage_path && !f.field_mappings?.length && (f.mapping_confidence || 0) < 99);
+    if (stagingFilter === 'ready') return filtered.filter(f => ((f.field_mappings?.length > 0) || (f.mapping_confidence || 0) >= 99) && f.form_number_confirmed && f.storage_path && f.workflow_status !== 'production' && f.status !== 'approved');
     if (stagingFilter === 'production') return filtered.filter(f => f.workflow_status === 'production' || f.status === 'active');
     return filtered.filter(f => f.status === stagingFilter);
   };
@@ -2390,7 +2390,7 @@ export default function DevConsolePage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '10px', marginBottom: '20px' }}>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Total{stagingStateFilter !== 'all' ? ` (${stagingStateFilter})` : ''}</div><div style={{ fontSize: '22px', fontWeight: '700' }}>{stagingStateFilter !== 'all' ? formStaging.filter(f => f.state === stagingStateFilter).length : formStaging.length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Form # OK</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => f.form_number_confirmed && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Has PDF</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.source_url && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Has PDF</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#3b82f6' }}>{formStaging.filter(f => f.storage_path && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Mapped</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#8b5cf6' }}>{formStaging.filter(f => ((f.field_mappings?.length || 0) > 0 || (f.mapping_confidence || 0) > 0) && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                   <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}>Production</div><div style={{ fontSize: '22px', fontWeight: '700', color: '#22c55e' }}>{formStaging.filter(f => (f.workflow_status === 'production' || f.status === 'active') && (stagingStateFilter === 'all' || f.state === stagingStateFilter)).length}</div></div>
                 </div>
@@ -2436,7 +2436,7 @@ export default function DevConsolePage() {
                         const isMapped = f.mapping_status === 'ai_suggested' || f.mapping_status === 'human_verified' || mappingScore >= 50;
                         const isReadyToPromote = f.status !== 'promoted' && f.status !== 'active' && f.workflow_status !== 'production';
                         const needsNumber = !f.form_number_confirmed;
-                        const needsPdf = !f.source_url;
+                        const needsPdf = !f.storage_path;
                         const isProduction = f.workflow_status === 'production' || f.status === 'active' || f.status === 'promoted';
                         const dealTypeColors = { cash: '#22c55e', bhph: '#8b5cf6', traditional: '#3b82f6', wholesale: '#eab308' };
                         return (
@@ -2500,7 +2500,25 @@ export default function DevConsolePage() {
 
                             {/* PDF Status */}
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              {f.source_url ? (
+                              {f.storage_path ? (
+                                <a
+                                  href={`https://rlzudfinlxonpbwacxpt.supabase.co/storage/v1/object/public/${f.storage_bucket}/${f.storage_path}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '4px 10px',
+                                    borderRadius: '4px',
+                                    backgroundColor: '#22c55e',
+                                    color: '#fff',
+                                    fontSize: '10px',
+                                    textDecoration: 'none',
+                                    fontWeight: '600'
+                                  }}
+                                >
+                                  ✓ View PDF
+                                </a>
+                              ) : f.source_url ? (
                                 <a
                                   href={f.source_url}
                                   target="_blank"
@@ -2509,14 +2527,14 @@ export default function DevConsolePage() {
                                     display: 'inline-block',
                                     padding: '4px 10px',
                                     borderRadius: '4px',
-                                    backgroundColor: f.pdf_validated ? '#22c55e' : '#3b82f6',
-                                    color: '#fff',
+                                    backgroundColor: '#eab308',
+                                    color: '#000',
                                     fontSize: '10px',
                                     textDecoration: 'none',
                                     fontWeight: '600'
                                   }}
                                 >
-                                  {f.pdf_validated ? '✓ View PDF' : '🔗 Link'}
+                                  🔗 Link Only
                                 </a>
                               ) : (
                                 <span style={{ padding: '4px 10px', borderRadius: '4px', backgroundColor: '#ef4444', color: '#fff', fontSize: '10px', fontWeight: '600' }}>No PDF</span>
