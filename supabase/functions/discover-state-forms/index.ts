@@ -21,64 +21,91 @@ const stateNames: Record<string, string> = {
   WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming"
 };
 
-// Build the AI prompt for form discovery - DEMAND direct PDF URLs
-function buildDiscoveryPrompt(stateName: string, stateCode: string): string {
-  return `You are a DMV and automotive compliance expert. List ALL official forms required for used car dealers in ${stateName} (${stateCode}).
+// ============================================================
+// STEP A: AI RESEARCH - What forms does this state require?
+// ============================================================
+function buildResearchPrompt(stateName: string, stateCode: string): string {
+  return `You are an expert on automotive dealer compliance and DMV requirements for ${stateName} (${stateCode}).
 
-CRITICAL: Return ONLY a valid JSON array. No markdown, no explanation, no code blocks. Just the raw JSON array starting with [ and ending with ].
+List ALL official forms required for used car dealers in ${stateName}. DO NOT provide any URLs.
 
-Include these form types (15-20 forms total):
-1. DMV Title Transfer forms (Application for Title, Assignment of Title)
-2. Bill of Sale (state-specific if available)
-3. Odometer Disclosure Statement (federal requirement)
-4. Power of Attorney forms
-5. Dealer Report of Sale / Notice of Transfer
-6. Temporary Permit / Transit Permit / Temp Tags
-7. Sales Tax Collection forms
-8. Damage Disclosure forms
-9. Lien Release forms
-10. Registration forms
-11. FTC Buyers Guide (federal requirement for all used car dealers)
-12. Truth in Lending Disclosure (Regulation Z) - for BHPH/financing
-13. Retail Installment Sales Contract - for BHPH
-14. Promissory Note - for BHPH
-15. Security Agreement - for BHPH
-16. Privacy Notice (GLBA) - for financing
-17. Credit Application
-18. Any state-specific required disclosures
+CRITICAL: Return ONLY a valid JSON array. No markdown, no explanation, no code blocks. Start with [ and end with ].
 
-For each form provide this EXACT structure:
+Include these categories:
+
+1. DMV/TITLE FORMS (category: "title")
+   - Application for Title
+   - Assignment of Title
+   - Duplicate Title requests
+   - Out-of-state title transfers
+
+2. REGISTRATION FORMS (category: "registration")
+   - Vehicle registration application
+   - Dealer report of sale / Notice of transfer and release of liability
+   - Temporary permits / Transit tags
+
+3. TAX FORMS (category: "tax")
+   - Motor vehicle sales tax return
+   - Sales and use tax forms
+   - Monthly/quarterly dealer tax returns
+
+4. COMPLIANCE/DISCLOSURE FORMS (category: "compliance")
+   - FTC Buyers Guide (federal - all used car dealers)
+   - Odometer Disclosure Statement (federal requirement)
+   - Damage disclosure / Salvage disclosure
+   - As-Is disclosure / Warranty disclaimer
+   - Lemon Law buyback disclosure (if applicable)
+
+5. BHPH/FINANCING FORMS (category: "financing")
+   - Truth in Lending Disclosure (Regulation Z)
+   - Retail Installment Sales Contract
+   - Promissory Note
+   - Security Agreement
+   - Privacy Notice (GLBA)
+   - Right to Cure notice
+   - Credit Application
+
+6. DEAL DOCUMENTS (category: "deal")
+   - Bill of Sale
+   - Purchase Agreement / Buyer's Order
+   - Power of Attorney
+   - Lien Release forms
+
+For EACH form, provide this exact structure:
 {
-  "form_number": "TC-656 or null if no official number",
+  "form_number": "TC-656 (use official form number, or null if none)",
   "form_name": "Full official name of the form",
-  "category": "deal|title|financing|tax|disclosure|registration|compliance",
-  "required_for": ["Cash", "BHPH", "Financing", "Wholesale"],
-  "source_url": "URL to official form page",
-  "download_url": "DIRECT link to the PDF file - MUST end in .pdf when possible",
-  "source_agency": "Name of the issuing agency (e.g. Utah State Tax Commission, FTC)",
-  "description": "Brief description of what the form is for",
-  "is_fillable": true or false,
-  "confidence": 0.0 to 1.0
+  "category": "title|registration|tax|compliance|financing|deal",
+  "required_for": ["all"] or ["bhph"] or ["financing"] or ["all", "bhph"],
+  "source_agency": "Utah State Tax Commission or Utah DMV or FTC or IRS etc",
+  "description": "What this form is used for",
+  "deadline": "45 days from sale or monthly by 25th or null if no deadline",
+  "penalty": "Late fee amount or penalty description or null",
+  "is_federal": true or false
 }
 
-IMPORTANT FOR download_url:
-- For Utah forms, use https://tax.utah.gov/forms/current/ prefix (e.g., https://tax.utah.gov/forms/current/tc-656.pdf)
-- For Utah DMV, use https://dmv.utah.gov/forms/ prefix
-- For federal FTC forms, use https://www.ftc.gov/system/files/ URLs
-- For IRS forms, use https://www.irs.gov/pub/irs-pdf/ prefix
-- ALWAYS provide DIRECT PDF download links, not form landing pages
-- The download_url MUST be a direct link to a .pdf file that can be fetched
-
-Return 15-20 forms as a JSON array. Include both state-specific AND federal requirements.`;
+Return 20-30 forms covering all categories. Include both state-specific AND federal requirements.
+Do NOT include any URLs. I will search for official PDFs separately.`;
 }
 
-// Call Claude AI to discover forms
-async function discoverFormsWithAI(
+interface DiscoveredForm {
+  form_number: string | null;
+  form_name: string;
+  category: string;
+  required_for: string[];
+  source_agency: string;
+  description: string;
+  deadline: string | null;
+  penalty: string | null;
+  is_federal: boolean;
+}
+
+async function researchFormsWithAI(
   stateName: string,
   stateCode: string,
   anthropicApiKey: string
-): Promise<any[]> {
-  console.log(`[DISCOVER] Calling Claude AI for ${stateName} forms...`);
+): Promise<DiscoveredForm[]> {
+  console.log(`[STEP A] Researching ${stateName} dealer requirements with AI...`);
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -92,83 +119,139 @@ async function discoverFormsWithAI(
       max_tokens: 4096,
       messages: [{
         role: "user",
-        content: buildDiscoveryPrompt(stateName, stateCode)
+        content: buildResearchPrompt(stateName, stateCode)
       }]
     })
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[DISCOVER] Claude API error: ${response.status} - ${errorText}`);
+    console.error(`[STEP A] Claude API error: ${response.status} - ${errorText}`);
     throw new Error(`Claude API error: ${response.status}`);
   }
 
   const data = await response.json();
   const aiText = data.content[0]?.text || "";
-  console.log(`[DISCOVER] AI response length: ${aiText.length} chars`);
+  console.log(`[STEP A] AI response: ${aiText.length} chars`);
 
-  // Extract JSON array from response (handle markdown code blocks)
+  // Extract JSON array from response
   let jsonText = aiText;
-
-  // Remove markdown code blocks if present
   const codeBlockMatch = aiText.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
     jsonText = codeBlockMatch[1];
   }
 
-  // Find the JSON array
   const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
   if (!jsonMatch) {
-    console.error(`[DISCOVER] Could not find JSON array in AI response`);
-    console.error(`[DISCOVER] Raw response: ${aiText.substring(0, 500)}`);
+    console.error(`[STEP A] Could not parse JSON from AI response`);
     throw new Error("AI response did not contain valid JSON array");
   }
 
-  const forms = JSON.parse(jsonMatch[0]);
-  console.log(`[DISCOVER] AI discovered ${forms.length} forms`);
+  const forms: DiscoveredForm[] = JSON.parse(jsonMatch[0]);
+  console.log(`[STEP A] AI identified ${forms.length} required forms`);
+
+  // Log summary by category
+  const byCategory: Record<string, number> = {};
+  forms.forEach(f => {
+    byCategory[f.category] = (byCategory[f.category] || 0) + 1;
+  });
+  console.log(`[STEP A] By category:`, byCategory);
 
   return forms;
 }
 
-// Try to download PDF and upload to storage
-async function tryDownloadPdf(
-  form: any,
+// ============================================================
+// STEP B: GOOGLE SEARCH - Find real PDF URLs via SerpAPI
+// ============================================================
+async function searchForPdfUrl(
+  form: DiscoveredForm,
+  stateName: string,
+  serpApiKey: string
+): Promise<string | null> {
+  const formId = form.form_number || form.form_name;
+  console.log(`[STEP B] Searching for PDF: ${formId}`);
+
+  // Build search queries - try most specific first
+  const queries: string[] = [];
+
+  if (form.form_number) {
+    // Most specific: form number + state + filetype:pdf + site:.gov
+    queries.push(`${form.form_number} ${stateName} filetype:pdf site:.gov`);
+    // Try without site restriction
+    queries.push(`${form.form_number} ${stateName} official form filetype:pdf`);
+  }
+
+  // Broader: form name search
+  queries.push(`"${form.form_name}" ${stateName} filetype:pdf`);
+  queries.push(`${form.form_name} ${stateName} official PDF download`);
+
+  // For federal forms, search federal sites
+  if (form.is_federal) {
+    if (form.form_name.toLowerCase().includes('buyers guide') || form.form_name.toLowerCase().includes('ftc')) {
+      queries.unshift(`FTC Buyers Guide PDF site:ftc.gov`);
+    }
+    if (form.form_name.toLowerCase().includes('odometer')) {
+      queries.unshift(`odometer disclosure statement PDF site:.gov`);
+    }
+  }
+
+  for (const query of queries) {
+    try {
+      const url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpApiKey}&num=5`;
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.log(`[STEP B] SerpAPI error for "${query}": ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const results = data.organic_results || [];
+
+      // Find first result with .pdf link
+      for (const result of results) {
+        const link = result.link || "";
+        if (link.toLowerCase().endsWith(".pdf")) {
+          console.log(`[STEP B] Found PDF for ${formId}: ${link}`);
+          return link;
+        }
+      }
+
+      console.log(`[STEP B] No PDF in results for query: "${query}"`);
+    } catch (err) {
+      console.log(`[STEP B] Search error: ${err}`);
+    }
+  }
+
+  console.log(`[STEP B] No PDF found for: ${formId}`);
+  return null;
+}
+
+// ============================================================
+// STEP C: DOWNLOAD PDF - Validate and upload to storage
+// ============================================================
+async function downloadAndUploadPdf(
+  form: DiscoveredForm,
+  pdfUrl: string,
   stateCode: string,
   supabase: any
 ): Promise<{
   storage_bucket: string | null;
   storage_path: string | null;
   file_size_bytes: number | null;
-  download_error: string | null;
+  error: string | null;
 }> {
-  const downloadUrl = form.download_url || form.source_url;
-
-  if (!downloadUrl) {
-    console.log(`[DISCOVER] No URL for form: ${form.form_number || form.form_name}`);
-    return { storage_bucket: null, storage_path: null, file_size_bytes: null, download_error: "No URL provided" };
-  }
-
-  // Check if URL looks like it could be a PDF (relaxed check)
-  const isPdfLike = downloadUrl.toLowerCase().includes('.pdf') ||
-                    downloadUrl.toLowerCase().includes('/pdf/') ||
-                    downloadUrl.toLowerCase().includes('download') ||
-                    downloadUrl.toLowerCase().includes('form');
-
-  if (!isPdfLike) {
-    console.log(`[DISCOVER] URL doesn't look like PDF: ${downloadUrl}`);
-    return { storage_bucket: null, storage_path: null, file_size_bytes: null, download_error: "URL doesn't appear to be a PDF" };
-  }
+  const formId = form.form_number || form.form_name;
+  console.log(`[STEP C] Downloading PDF for ${formId}: ${pdfUrl}`);
 
   try {
-    console.log(`[DISCOVER] Attempting to download: ${downloadUrl}`);
-
     // Create abort controller for 15 second timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const pdfResponse = await fetch(downloadUrl, {
+    const response = await fetch(pdfUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; OGDealerBot/1.0)",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/pdf,*/*"
       },
       signal: controller.signal
@@ -176,66 +259,66 @@ async function tryDownloadPdf(
 
     clearTimeout(timeoutId);
 
-    if (!pdfResponse.ok) {
-      console.log(`[DISCOVER] PDF download failed: HTTP ${pdfResponse.status} for ${downloadUrl}`);
-      return { storage_bucket: null, storage_path: null, file_size_bytes: null, download_error: `HTTP ${pdfResponse.status}` };
+    if (!response.ok) {
+      return { storage_bucket: null, storage_path: null, file_size_bytes: null, error: `HTTP ${response.status}` };
     }
 
-    const pdfBuffer = await pdfResponse.arrayBuffer();
-    const pdfBytes = new Uint8Array(pdfBuffer);
-    const fileSize = pdfBytes.byteLength;
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const fileSize = bytes.byteLength;
 
-    console.log(`[DISCOVER] Downloaded ${fileSize} bytes from ${downloadUrl}`);
-
-    // Verify PDF header - must start with %PDF-
+    // Validate PDF header - must start with %PDF-
     if (fileSize < 10) {
-      console.log(`[DISCOVER] File too small to be PDF: ${fileSize} bytes`);
-      return { storage_bucket: null, storage_path: null, file_size_bytes: null, download_error: "File too small" };
+      return { storage_bucket: null, storage_path: null, file_size_bytes: null, error: "File too small" };
     }
 
-    const header = String.fromCharCode(...pdfBytes.slice(0, 5));
+    const header = String.fromCharCode(...bytes.slice(0, 5));
     if (!header.startsWith("%PDF")) {
-      console.log(`[DISCOVER] Not a valid PDF (header: ${header})`);
-      return { storage_bucket: null, storage_path: null, file_size_bytes: null, download_error: "Invalid PDF header" };
+      // Check if it's HTML (common redirect/block page)
+      const firstChars = String.fromCharCode(...bytes.slice(0, 100));
+      if (firstChars.toLowerCase().includes("<!doctype") || firstChars.toLowerCase().includes("<html")) {
+        return { storage_bucket: null, storage_path: null, file_size_bytes: null, error: "Got HTML instead of PDF" };
+      }
+      return { storage_bucket: null, storage_path: null, file_size_bytes: null, error: `Invalid PDF header: ${header}` };
     }
 
-    console.log(`[DISCOVER] Valid PDF confirmed: ${fileSize} bytes`);
+    console.log(`[STEP C] Valid PDF downloaded: ${fileSize} bytes`);
 
     // Generate storage path
-    const formId = (form.form_number || form.form_name || "unknown")
+    const sanitizedName = (form.form_number || form.form_name)
       .replace(/[^a-zA-Z0-9-]/g, "_")
       .substring(0, 50);
-    const storagePath = `staging/${stateCode}/${formId}.pdf`;
+    const storagePath = `staging/${stateCode}/${sanitizedName}.pdf`;
 
     // Upload to Supabase storage
     const { error: uploadError } = await supabase.storage
       .from("form-staging")
-      .upload(storagePath, pdfBytes, {
+      .upload(storagePath, bytes, {
         contentType: "application/pdf",
         upsert: true
       });
 
     if (uploadError) {
-      console.log(`[DISCOVER] Upload error: ${uploadError.message}`);
-      return { storage_bucket: null, storage_path: null, file_size_bytes: fileSize, download_error: `Upload failed: ${uploadError.message}` };
+      return { storage_bucket: null, storage_path: null, file_size_bytes: fileSize, error: `Upload failed: ${uploadError.message}` };
     }
 
-    console.log(`[DISCOVER] SUCCESS - Uploaded to: form-staging/${storagePath}`);
+    console.log(`[STEP C] Uploaded to: form-staging/${storagePath}`);
     return {
       storage_bucket: "form-staging",
       storage_path: storagePath,
       file_size_bytes: fileSize,
-      download_error: null
+      error: null
     };
 
-  } catch (error: any) {
-    const errorMsg = error.name === 'AbortError' ? 'Timeout after 15s' : error.message;
-    console.log(`[DISCOVER] Download error for ${downloadUrl}: ${errorMsg}`);
-    return { storage_bucket: null, storage_path: null, file_size_bytes: null, download_error: errorMsg };
+  } catch (err: any) {
+    const errorMsg = err.name === 'AbortError' ? 'Timeout (15s)' : err.message;
+    return { storage_bucket: null, storage_path: null, file_size_bytes: null, error: errorMsg };
   }
 }
 
-// Main handler
+// ============================================================
+// MAIN HANDLER
+// ============================================================
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -245,6 +328,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  const serpApiKey = Deno.env.get("SERP_API_KEY"); // Note: SERP_API_KEY not SERPAPI_KEY
 
   if (!supabaseUrl || !supabaseKey) {
     return new Response(
@@ -260,11 +344,18 @@ serve(async (req) => {
     );
   }
 
+  if (!serpApiKey) {
+    return new Response(
+      JSON.stringify({ success: false, error: "SERP_API_KEY not configured - needed for Google search" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
     const body = await req.json();
-    const { state, county, clear_existing } = body;
+    const { state, clear_existing } = body;
 
     if (!state) {
       throw new Error("State is required");
@@ -276,24 +367,23 @@ serve(async (req) => {
       throw new Error(`Unknown state: ${state}`);
     }
 
-    console.log(`[DISCOVER] ========================================`);
-    console.log(`[DISCOVER] Starting form discovery for ${stateName} (${stateUpper})${county ? `, county: ${county}` : ''}`);
-    console.log(`[DISCOVER] ========================================`);
+    console.log(`\n========================================`);
+    console.log(`DISCOVER FORMS FOR ${stateName} (${stateUpper})`);
+    console.log(`========================================\n`);
 
-    // Check if forms already exist in form_staging for this state
+    // Check for existing forms
     const { data: existingForms, error: existingError } = await supabase
       .from("form_staging")
-      .select("id, form_number, form_name, category, status, storage_path")
+      .select("id, form_number, form_name, category, storage_path")
       .eq("state", stateUpper);
 
     if (existingError) {
-      console.error(`[DISCOVER] Error checking existing forms:`, existingError);
+      console.error(`Error checking existing forms:`, existingError);
     }
 
-    // If forms exist and clear_existing not requested, return existing
     if (existingForms && existingForms.length > 0 && !clear_existing) {
       const withPdf = existingForms.filter(f => f.storage_path).length;
-      console.log(`[DISCOVER] Found ${existingForms.length} existing forms (${withPdf} with PDFs) for ${stateUpper}`);
+      console.log(`Found ${existingForms.length} existing forms (${withPdf} with PDFs)`);
 
       return new Response(
         JSON.stringify({
@@ -303,60 +393,80 @@ serve(async (req) => {
           state_name: stateName,
           forms_count: existingForms.length,
           forms_with_pdf: withPdf,
-          forms: existingForms,
-          message: `Found ${existingForms.length} existing forms for ${stateName} (${withPdf} with PDFs). Use clear_existing=true to rediscover.`
+          forms: existingForms.map(f => ({
+            form_number: f.form_number,
+            form_name: f.form_name,
+            category: f.category,
+            has_pdf: !!f.storage_path
+          })),
+          message: `Found ${existingForms.length} existing forms. Use clear_existing=true to rediscover.`
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // If clear_existing, delete old forms first
+    // Clear existing if requested
     if (clear_existing && existingForms && existingForms.length > 0) {
-      console.log(`[DISCOVER] Clearing ${existingForms.length} existing forms for ${stateUpper}`);
-      const { error: deleteError } = await supabase
-        .from("form_staging")
-        .delete()
-        .eq("state", stateUpper);
-
-      if (deleteError) {
-        console.error(`[DISCOVER] Error deleting existing forms:`, deleteError);
-      }
+      console.log(`Clearing ${existingForms.length} existing forms...`);
+      await supabase.from("form_staging").delete().eq("state", stateUpper);
     }
 
-    // Discover with AI
-    console.log(`[DISCOVER] Calling AI to discover forms...`);
-    const discoveredForms = await discoverFormsWithAI(stateName, stateUpper, anthropicApiKey);
+    // ========================================
+    // STEP A: AI RESEARCH
+    // ========================================
+    const discoveredForms = await researchFormsWithAI(stateName, stateUpper, anthropicApiKey);
 
-    // Process and insert forms into form_staging
-    const results: { form_number: string | null; form_name: string; downloaded: boolean; error?: string }[] = [];
-    let downloadedCount = 0;
-    let insertedCount = 0;
+    // ========================================
+    // STEP B & C: SEARCH + DOWNLOAD
+    // ========================================
+    const results: any[] = [];
+    let formsWithPdf = 0;
 
     for (const form of discoveredForms) {
-      console.log(`[DISCOVER] Processing: ${form.form_number || 'NO_NUMBER'} - ${form.form_name}`);
+      const formId = form.form_number || form.form_name;
+      console.log(`\n--- Processing: ${formId} ---`);
 
-      // Try to download PDF
-      const { storage_bucket, storage_path, file_size_bytes, download_error } = await tryDownloadPdf(form, stateUpper, supabase);
+      // STEP B: Search for PDF URL
+      const pdfUrl = await searchForPdfUrl(form, stateName, serpApiKey);
 
-      const downloaded = !!storage_path;
-      if (downloaded) {
-        downloadedCount++;
+      // STEP C: Download if URL found
+      let storage_bucket: string | null = null;
+      let storage_path: string | null = null;
+      let file_size_bytes: number | null = null;
+      let downloadError: string | null = null;
+
+      if (pdfUrl) {
+        const downloadResult = await downloadAndUploadPdf(form, pdfUrl, stateUpper, supabase);
+        storage_bucket = downloadResult.storage_bucket;
+        storage_path = downloadResult.storage_path;
+        file_size_bytes = downloadResult.file_size_bytes;
+        downloadError = downloadResult.error;
+
+        if (storage_path) {
+          formsWithPdf++;
+        }
+      } else {
+        downloadError = "No PDF URL found";
       }
 
-      // Insert into form_staging
+      // Insert into database
       const insertData = {
         state: stateUpper,
-        form_number: form.form_number || null,
+        form_number: form.form_number,
         form_name: form.form_name,
-        category: form.category || "deal",
-        source_url: form.source_url || null,
-        source_agency: form.source_agency || null,
-        download_url: form.download_url || null,
+        category: form.category,
+        required_for: form.required_for,
+        source_agency: form.source_agency,
+        description: form.description,
+        deadline_description: form.deadline,
+        compliance_notes: form.penalty,
+        download_url: pdfUrl,
         storage_bucket,
         storage_path,
         file_size_bytes,
-        is_fillable: form.is_fillable || false,
-        ai_confidence: form.confidence || 0.85,
+        is_fillable: true,
+        ai_confidence: 0.9,
+        ai_discovered: true,
         status: "pending",
         created_at: new Date().toISOString()
       };
@@ -366,45 +476,39 @@ serve(async (req) => {
         .insert(insertData);
 
       if (insertError) {
-        console.error(`[DISCOVER] Insert error for ${form.form_name}:`, insertError.message);
-        results.push({
-          form_number: form.form_number,
-          form_name: form.form_name,
-          downloaded,
-          error: `Insert failed: ${insertError.message}`
-        });
-      } else {
-        insertedCount++;
-        results.push({
-          form_number: form.form_number,
-          form_name: form.form_name,
-          downloaded,
-          error: downloaded ? undefined : download_error || undefined
-        });
+        console.error(`Insert error for ${formId}:`, insertError.message);
       }
+
+      results.push({
+        form_number: form.form_number,
+        form_name: form.form_name,
+        category: form.category,
+        deadline: form.deadline,
+        has_pdf: !!storage_path,
+        error: downloadError
+      });
     }
 
-    console.log(`[DISCOVER] ========================================`);
-    console.log(`[DISCOVER] COMPLETE: ${insertedCount} forms inserted, ${downloadedCount} PDFs downloaded`);
-    console.log(`[DISCOVER] ========================================`);
+    console.log(`\n========================================`);
+    console.log(`COMPLETE: ${discoveredForms.length} forms, ${formsWithPdf} PDFs`);
+    console.log(`========================================\n`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        source: "ai_discovered",
+        source: "discovered",
         state: stateUpper,
         state_name: stateName,
         forms_found: discoveredForms.length,
-        forms_inserted: insertedCount,
-        forms_downloaded: downloadedCount,
+        forms_with_pdf: formsWithPdf,
         forms: results,
-        message: `Discovered ${discoveredForms.length} forms for ${stateName}. Inserted ${insertedCount}, downloaded ${downloadedCount} PDFs.`
+        message: `Discovered ${discoveredForms.length} forms for ${stateName}. Downloaded ${formsWithPdf} PDFs.`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error: any) {
-    console.error("[DISCOVER] Fatal error:", error);
+    console.error("Fatal error:", error);
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
