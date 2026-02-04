@@ -1028,18 +1028,18 @@ export default function DevConsolePage() {
       // Insert into form_library
       const { data: insertedForm, error: insertError } = await supabase.from('form_library').insert({
         state: form.state,
-        form_number: form.form_number,
+        form_number: form.form_number ? String(form.form_number) : null,
         form_name: form.form_name,
         category: form.category || selectedLibrary || 'deal',
-        source_url: form.source_url,
-        download_url: form.download_url,
-        storage_bucket: form.storage_bucket,
-        storage_path: form.storage_path,
-        is_fillable: form.is_fillable || false,
-        detected_fields: form.detected_fields || [],
-        field_mappings: form.field_mappings || {},
-        mapping_confidence: form.mapping_confidence || 0,
-        mapping_status: form.mapping_status || 'unmapped',
+        source_url: form.source_url || null,
+        download_url: form.download_url || null,
+        storage_bucket: form.storage_bucket || null,
+        storage_path: form.storage_path || null,
+        is_fillable: Boolean(form.is_fillable),
+        detected_fields: Array.isArray(form.detected_fields) ? form.detected_fields : [],
+        field_mappings: Array.isArray(form.field_mappings) ? form.field_mappings : [],
+        mapping_confidence: Math.min(100, Math.max(0, parseInt(form.mapping_confidence) || 0)),
+        mapping_status: form.mapping_status || 'pending',
         status: 'active',
         promoted_from: form.id
       }).select().single();
