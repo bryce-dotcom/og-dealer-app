@@ -3718,8 +3718,8 @@ export default function DevConsolePage() {
               <div style={{ flex: 1, borderRight: '1px solid #27272a', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ padding: '12px 16px', backgroundColor: '#27272a', fontSize: '13px', fontWeight: '600' }}>PDF Preview</div>
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#09090b', padding: '20px' }}>
-                  {stagingMapperModal.source_url ? (
-                    <iframe src={stagingMapperModal.source_url} style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }} title="PDF Preview" />
+                  {(stagingMapperModal.source_url || (stagingMapperModal.storage_bucket && stagingMapperModal.storage_path)) ? (
+                    <iframe src={stagingMapperModal.source_url || `https://rlzudfinlxonpbwacxpt.supabase.co/storage/v1/object/public/${stagingMapperModal.storage_bucket}/${stagingMapperModal.storage_path}`} style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }} title="PDF Preview" />
                   ) : (
                     <div style={{ textAlign: 'center', color: '#71717a' }}>
                       <div style={{ fontSize: '48px', marginBottom: '12px' }}>📄</div>
