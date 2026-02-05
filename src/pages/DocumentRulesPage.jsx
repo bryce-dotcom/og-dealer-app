@@ -16,17 +16,19 @@ export default function DocumentRulesPage() {
   const [editingPackage, setEditingPackage] = useState(null);
   const [selectedForms, setSelectedForms] = useState([]);
   const [formFilter, setFormFilter] = useState('all');
-  const [analyzingFormId, setAnalyzingFormId] = useState(null);
   const [mapperModal, setMapperModal] = useState(null);
-  const [discovering, setDiscovering] = useState(false);
+  const [settingsModal, setSettingsModal] = useState(false);
+  const [customDealTypes, setCustomDealTypes] = useState([]);
+  const [newDealType, setNewDealType] = useState('');
 
-  const dealTypes = ['Cash', 'BHPH', 'Financing', 'Wholesale', 'Trade-In'];
+  // Default deal types (user can add more via settings)
+  const defaultDealTypes = ['Cash', 'BHPH', 'Financing', 'Wholesale'];
+  const dealTypes = [...defaultDealTypes, ...customDealTypes];
   const dealTypeColors = {
     Cash: '#22c55e',
     BHPH: '#8b5cf6',
     Financing: '#3b82f6',
-    Wholesale: '#eab308',
-    'Trade-In': '#f97316'
+    Wholesale: '#eab308'
   };
 
   const categoryColors = {
@@ -49,13 +51,24 @@ export default function DocumentRulesPage() {
     loadData();
   }, [dealer?.state, dealerId]);
 
+  // Load custom deal types from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(`customDealTypes_${dealerId}`);
+    if (saved) {
+      try {
+        setCustomDealTypes(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to load custom deal types');
+      }
+    }
+  }, [dealerId]);
+
   const loadData = async () => {
     setLoading(true);
     const state = dealer?.state || 'UT';
 
     try {
       // Load forms from form_library for dealer's state
-      // form_library contains production-ready forms (promoted from staging)
       const { data: formsData, error: formsError } = await supabase
         .from('form_library')
         .select('*')
@@ -92,96 +105,26 @@ export default function DocumentRulesPage() {
     setLoading(false);
   };
 
-  // === DISCOVER FORMS (triggers AI discovery, adds to form_staging) ===
-  const discoverForms = async () => {
-    const state = dealer?.state || 'UT';
-    setDiscovering(true);
-    showToast(`Discovering ${state} forms with AI...`);
-
-    try {
-      const { data, error } = await supabase.functions.invoke('discover-state-forms', {
-        body: { state }
-      });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      const count = data.forms_count || data.forms_found || 0;
-
-      if (data.source === 'existing') {
-        showToast(`Found ${count} existing forms in staging for ${state}. Use Admin Console to promote to library.`);
-      } else {
-        showToast(`Discovered ${count} forms for ${state}! Ask admin to review & promote.`);
-      }
-
-      // Note: This adds to form_staging, not form_library
-      // Admin must promote forms to form_library for them to show here
-      loadData();
-    } catch (err) {
-      console.error('[DocumentRules] Discovery error:', err);
-      showToast('Discovery failed: ' + err.message, 'error');
-    }
-    setDiscovering(false);
+  // Save custom deal types
+  const saveCustomDealTypes = (types) => {
+    setCustomDealTypes(types);
+    localStorage.setItem(`customDealTypes_${dealerId}`, JSON.stringify(types));
   };
 
-  // === ANALYZE FORM (Extract PDF Fields) ===
-  const analyzeForm = async (form) => {
-    if (!form.download_url && !form.source_url && !form.storage_path) {
-      showToast('No PDF available for this form', 'error');
+  const addCustomDealType = () => {
+    if (!newDealType.trim()) return;
+    if (dealTypes.includes(newDealType.trim())) {
+      showToast('Deal type already exists', 'error');
       return;
     }
-
-    setAnalyzingFormId(form.id);
-    showToast(`Analyzing ${form.form_name}...`);
-
-    try {
-      const { data, error } = await supabase.functions.invoke('map-form-fields', {
-        body: { form_id: form.id }
-      });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      const mapped = data?.mapped_count || 0;
-      const total = data?.detected_fields_count || 0;
-      showToast(`Found ${total} fields, ${mapped} auto-mapped`);
-      loadData();
-    } catch (err) {
-      showToast('Analysis failed: ' + err.message, 'error');
-    }
-    setAnalyzingFormId(null);
+    saveCustomDealTypes([...customDealTypes, newDealType.trim()]);
+    setNewDealType('');
+    showToast(`Added "${newDealType.trim()}" deal type`);
   };
 
-  // === UPLOAD PDF ===
-  const uploadPdf = async (form, file) => {
-    if (!file) return;
-
-    showToast('Uploading PDF...');
-
-    try {
-      const state = dealer?.state || 'UT';
-      const safeFormName = form.form_name.replace(/[^a-zA-Z0-9]/g, '_');
-      const fileName = `${state}/${safeFormName}_${Date.now()}.pdf`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('form-pdfs')
-        .upload(fileName, file, { contentType: 'application/pdf' });
-
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage.from('form-pdfs').getPublicUrl(fileName);
-
-      // Update form_library with the new URL
-      await supabase
-        .from('form_library')
-        .update({ download_url: urlData.publicUrl })
-        .eq('id', form.id);
-
-      showToast('PDF uploaded successfully');
-      loadData();
-    } catch (err) {
-      showToast('Upload failed: ' + err.message, 'error');
-    }
+  const removeCustomDealType = (type) => {
+    saveCustomDealTypes(customDealTypes.filter(t => t !== type));
+    showToast(`Removed "${type}" deal type`);
   };
 
   // === PACKAGE FUNCTIONS ===
@@ -272,18 +215,16 @@ export default function DocumentRulesPage() {
           <div>
             <h1 style={{ fontSize: '24px', fontWeight: '700', margin: '0 0 8px 0' }}>Document Rules</h1>
             <p style={{ color: '#a1a1aa', margin: 0 }}>
-              {dealer?.state || 'UT'} • {forms.length} forms • {packages.length} packages configured
+              {dealer?.state || 'UT'} • {forms.length} forms available • {packages.length} packages configured
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={discoverForms}
-              disabled={discovering}
-              style={{ ...btnPrimary, opacity: discovering ? 0.7 : 1 }}
-            >
-              {discovering ? 'Discovering...' : `Discover ${dealer?.state || 'UT'} Forms`}
-            </button>
-          </div>
+          <button
+            onClick={() => setSettingsModal(true)}
+            style={{ ...btnSecondary, display: 'flex', alignItems: 'center', gap: '8px' }}
+            title="Package Settings"
+          >
+            ⚙️ Settings
+          </button>
         </div>
 
         {/* Stats Row */}
@@ -293,11 +234,7 @@ export default function DocumentRulesPage() {
             <div style={{ fontSize: '28px', fontWeight: '700' }}>{forms.length}</div>
           </div>
           <div style={cardStyle}>
-            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>With PDF</div>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#3b82f6' }}>{forms.filter(f => f.download_url || f.storage_path).length}</div>
-          </div>
-          <div style={cardStyle}>
-            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Mapped</div>
+            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Ready to Use</div>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{forms.filter(f => f.mapping_confidence >= 70).length}</div>
           </div>
           <div style={cardStyle}>
@@ -344,7 +281,7 @@ export default function DocumentRulesPage() {
                     color: '#fff', textTransform: 'capitalize'
                   }}
                 >
-                  {filter}
+                  {filter === 'mapped' ? 'Ready' : filter === 'unmapped' ? 'Pending' : filter}
                 </button>
               ))}
             </div>
@@ -352,11 +289,11 @@ export default function DocumentRulesPage() {
             {forms.length === 0 ? (
               <div style={{ ...cardStyle, textAlign: 'center', padding: '60px' }}>
                 <div style={{ fontSize: '48px', marginBottom: '16px' }}>📄</div>
-                <h3 style={{ margin: '0 0 8px 0' }}>No Forms in Library</h3>
-                <p style={{ color: '#71717a', margin: '0 0 20px 0' }}>
-                  Forms must be discovered and promoted by admin to appear here.
+                <h3 style={{ margin: '0 0 8px 0' }}>No Forms Available</h3>
+                <p style={{ color: '#71717a', margin: 0 }}>
+                  Your state's forms haven't been added to the library yet.<br/>
+                  Contact support to get {dealer?.state || 'your state'}'s DMV forms added.
                 </p>
-                <button onClick={discoverForms} style={btnPrimary}>Discover Forms</button>
               </div>
             ) : (
               <div style={cardStyle}>
@@ -366,18 +303,21 @@ export default function DocumentRulesPage() {
                       <th style={{ textAlign: 'left', padding: '12px 8px', color: '#71717a' }}>Form Name</th>
                       <th style={{ textAlign: 'left', padding: '12px 8px', color: '#71717a' }}>Category</th>
                       <th style={{ textAlign: 'center', padding: '12px 8px', color: '#71717a' }}>Fields</th>
-                      <th style={{ textAlign: 'center', padding: '12px 8px', color: '#71717a' }}>Mapping</th>
-                      <th style={{ textAlign: 'center', padding: '12px 8px', color: '#71717a' }}>Actions</th>
+                      <th style={{ textAlign: 'center', padding: '12px 8px', color: '#71717a' }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {getFilteredForms().map(form => {
-                      const hasPdf = form.download_url || form.storage_path;
                       const fieldsCount = form.detected_fields?.length || 0;
                       const confidence = form.mapping_confidence || 0;
+                      const isReady = confidence >= 70;
 
                       return (
-                        <tr key={form.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                        <tr
+                          key={form.id}
+                          style={{ borderBottom: '1px solid #3f3f46', cursor: fieldsCount > 0 ? 'pointer' : 'default' }}
+                          onClick={() => fieldsCount > 0 && setMapperModal(form)}
+                        >
                           <td style={{ padding: '12px 8px' }}>
                             <div style={{ fontWeight: '600' }}>{form.form_name}</div>
                             {form.form_number && (
@@ -398,67 +338,34 @@ export default function DocumentRulesPage() {
                           </td>
                           <td style={{ padding: '12px 8px', textAlign: 'center' }}>
                             {fieldsCount > 0 ? (
-                              <span style={{ color: '#22c55e', fontWeight: '600' }}>{fieldsCount}</span>
+                              <span style={{ color: '#a1a1aa' }}>{fieldsCount}</span>
                             ) : (
                               <span style={{ color: '#52525b' }}>—</span>
                             )}
                           </td>
                           <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                            {fieldsCount > 0 ? (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                                <div style={{ width: '50px', height: '6px', backgroundColor: '#3f3f46', borderRadius: '3px', overflow: 'hidden' }}>
-                                  <div style={{ width: `${confidence}%`, height: '100%', backgroundColor: confidence >= 70 ? '#22c55e' : confidence >= 40 ? '#eab308' : '#ef4444' }} />
-                                </div>
-                                <span style={{ fontSize: '11px', color: confidence >= 70 ? '#22c55e' : '#a1a1aa' }}>{confidence}%</span>
-                              </div>
-                            ) : (
-                              <span style={{ color: '#52525b' }}>—</span>
-                            )}
-                          </td>
-                          <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                              {/* Upload PDF */}
-                              <label style={{
-                                padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer',
-                                backgroundColor: hasPdf ? '#22c55e20' : '#3f3f46',
-                                color: hasPdf ? '#22c55e' : '#a1a1aa',
-                                border: hasPdf ? '1px solid #22c55e40' : '1px solid transparent'
+                            {isReady ? (
+                              <span style={{
+                                padding: '4px 10px', borderRadius: '4px', fontSize: '11px',
+                                backgroundColor: '#22c55e20', color: '#22c55e', fontWeight: '600'
                               }}>
-                                {hasPdf ? '✓ PDF' : 'Upload'}
-                                <input
-                                  type="file"
-                                  accept=".pdf"
-                                  style={{ display: 'none' }}
-                                  onChange={(e) => uploadPdf(form, e.target.files[0])}
-                                />
-                              </label>
-
-                              {/* Analyze */}
-                              <button
-                                onClick={() => analyzeForm(form)}
-                                disabled={!hasPdf || analyzingFormId === form.id}
-                                style={{
-                                  padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: hasPdf ? 'pointer' : 'not-allowed',
-                                  backgroundColor: '#3b82f6', color: '#fff', border: 'none',
-                                  opacity: (!hasPdf || analyzingFormId === form.id) ? 0.5 : 1
-                                }}
-                              >
-                                {analyzingFormId === form.id ? '...' : 'Analyze'}
-                              </button>
-
-                              {/* View Mappings */}
-                              {fieldsCount > 0 && (
-                                <button
-                                  onClick={() => setMapperModal(form)}
-                                  style={{
-                                    padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer',
-                                    backgroundColor: '#8b5cf6', color: '#fff', border: 'none'
-                                  }}
-                                >
-                                  Map
-                                </button>
-                              )}
-                            </div>
+                                Ready
+                              </span>
+                            ) : fieldsCount > 0 ? (
+                              <span style={{
+                                padding: '4px 10px', borderRadius: '4px', fontSize: '11px',
+                                backgroundColor: '#eab30820', color: '#eab308', fontWeight: '600'
+                              }}>
+                                {confidence}% mapped
+                              </span>
+                            ) : (
+                              <span style={{
+                                padding: '4px 10px', borderRadius: '4px', fontSize: '11px',
+                                backgroundColor: '#3f3f46', color: '#71717a'
+                              }}>
+                                Pending
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -484,14 +391,18 @@ export default function DocumentRulesPage() {
                 const pkg = getPackage(dealType);
                 const formIds = pkg?.form_ids || [];
                 const pkgForms = formIds.map(id => getFormById(id)).filter(Boolean);
+                const isCustom = customDealTypes.includes(dealType);
                 return (
-                  <div key={dealType} style={{ ...cardStyle, borderLeft: `4px solid ${dealTypeColors[dealType]}`, marginBottom: 0 }}>
+                  <div key={dealType} style={{ ...cardStyle, borderLeft: `4px solid ${dealTypeColors[dealType] || '#f97316'}`, marginBottom: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                      <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>{dealType}</h3>
+                      <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700' }}>
+                        {dealType}
+                        {isCustom && <span style={{ fontSize: '10px', color: '#71717a', marginLeft: '8px' }}>(custom)</span>}
+                      </h3>
                       <span style={{
                         padding: '4px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: '600',
-                        backgroundColor: pkgForms.length > 0 ? `${dealTypeColors[dealType]}20` : '#3f3f46',
-                        color: pkgForms.length > 0 ? dealTypeColors[dealType] : '#71717a'
+                        backgroundColor: pkgForms.length > 0 ? `${dealTypeColors[dealType] || '#f97316'}20` : '#3f3f46',
+                        color: pkgForms.length > 0 ? (dealTypeColors[dealType] || '#f97316') : '#71717a'
                       }}>
                         {pkgForms.length} docs
                       </span>
@@ -516,7 +427,7 @@ export default function DocumentRulesPage() {
                       onClick={() => startEditPackage(dealType)}
                       style={{
                         width: '100%', padding: '8px', borderRadius: '6px', border: 'none',
-                        backgroundColor: dealTypeColors[dealType], color: '#fff', fontWeight: '600',
+                        backgroundColor: dealTypeColors[dealType] || '#f97316', color: '#fff', fontWeight: '600',
                         cursor: 'pointer', fontSize: '13px'
                       }}
                     >
@@ -537,7 +448,7 @@ export default function DocumentRulesPage() {
             <div style={{ padding: '20px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>
-                  <span style={{ color: dealTypeColors[editingPackage] }}>{editingPackage}</span> Package
+                  <span style={{ color: dealTypeColors[editingPackage] || '#f97316' }}>{editingPackage}</span> Package
                 </h2>
                 <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '13px' }}>
                   Select documents • {selectedForms.length} selected
@@ -562,14 +473,14 @@ export default function DocumentRulesPage() {
                         onClick={() => toggleForm(form.id)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: '12px', padding: '12px',
-                          backgroundColor: isSelected ? `${dealTypeColors[editingPackage]}15` : '#27272a',
+                          backgroundColor: isSelected ? `${dealTypeColors[editingPackage] || '#f97316'}15` : '#27272a',
                           borderRadius: '8px', marginBottom: '8px', cursor: 'pointer',
-                          border: isSelected ? `2px solid ${dealTypeColors[editingPackage]}` : '2px solid transparent'
+                          border: isSelected ? `2px solid ${dealTypeColors[editingPackage] || '#f97316'}` : '2px solid transparent'
                         }}
                       >
                         <div style={{
                           width: '24px', height: '24px', borderRadius: '6px',
-                          backgroundColor: isSelected ? dealTypeColors[editingPackage] : '#3f3f46',
+                          backgroundColor: isSelected ? (dealTypeColors[editingPackage] || '#f97316') : '#3f3f46',
                           display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                         }}>
                           {isSelected && <span style={{ color: '#fff', fontSize: '14px' }}>✓</span>}
@@ -594,7 +505,7 @@ export default function DocumentRulesPage() {
               ))}
               {forms.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
-                  No forms available. Ask admin to promote forms to the library.
+                  No forms available. Contact support to get forms added to the library.
                 </div>
               )}
             </div>
@@ -603,14 +514,14 @@ export default function DocumentRulesPage() {
               <span style={{ color: '#a1a1aa', fontSize: '13px' }}>{selectedForms.length} documents selected</span>
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={() => { setEditingPackage(null); setSelectedForms([]); }} style={btnSecondary}>Cancel</button>
-                <button onClick={savePackage} style={{ ...btnSuccess, backgroundColor: dealTypeColors[editingPackage] }}>Save Package</button>
+                <button onClick={savePackage} style={{ ...btnSuccess, backgroundColor: dealTypeColors[editingPackage] || '#f97316' }}>Save Package</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* === FIELD MAPPER MODAL === */}
+      {/* === FIELD MAPPER MODAL (View Only) === */}
       {mapperModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
           <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '800px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
@@ -618,7 +529,7 @@ export default function DocumentRulesPage() {
               <div>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>Field Mappings</h2>
                 <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '13px' }}>
-                  {mapperModal.form_name} • {mapperModal.detected_fields?.length || 0} fields detected
+                  {mapperModal.form_name} • {mapperModal.detected_fields?.length || 0} fields
                 </p>
               </div>
               <button onClick={() => setMapperModal(null)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>×</button>
@@ -659,7 +570,7 @@ export default function DocumentRulesPage() {
 
               {(!mapperModal.field_mappings || mapperModal.field_mappings.length === 0) && (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
-                  No field mappings. Click "Analyze" to extract PDF fields.
+                  No field mappings available for this form.
                 </div>
               )}
             </div>
@@ -669,6 +580,101 @@ export default function DocumentRulesPage() {
                 {(mapperModal.field_mappings || []).filter(m => m.universal_field).length} / {mapperModal.field_mappings?.length || 0} fields mapped
               </div>
               <button onClick={() => setMapperModal(null)} style={btnPrimary}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === SETTINGS MODAL === */}
+      {settingsModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '500px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
+            <div style={{ padding: '20px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>Package Settings</h2>
+                <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '13px' }}>
+                  Customize deal types for your dealership
+                </p>
+              </div>
+              <button onClick={() => setSettingsModal(false)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+              {/* Default Deal Types */}
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#a1a1aa', marginBottom: '12px' }}>Default Deal Types</h4>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {defaultDealTypes.map(type => (
+                    <span key={type} style={{
+                      padding: '8px 16px', borderRadius: '6px',
+                      backgroundColor: dealTypeColors[type] || '#3f3f46',
+                      color: '#fff', fontSize: '13px', fontWeight: '600'
+                    }}>
+                      {type}
+                    </span>
+                  ))}
+                </div>
+                <p style={{ color: '#71717a', fontSize: '12px', marginTop: '8px' }}>
+                  These are the standard deal types and cannot be removed.
+                </p>
+              </div>
+
+              {/* Custom Deal Types */}
+              <div>
+                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#a1a1aa', marginBottom: '12px' }}>Custom Deal Types</h4>
+
+                {customDealTypes.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                    {customDealTypes.map(type => (
+                      <div key={type} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 16px', backgroundColor: '#27272a', borderRadius: '6px'
+                      }}>
+                        <span style={{ fontWeight: '600' }}>{type}</span>
+                        <button
+                          onClick={() => removeCustomDealType(type)}
+                          style={{
+                            background: 'none', border: 'none', color: '#ef4444',
+                            cursor: 'pointer', fontSize: '14px', padding: '4px 8px'
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: '#71717a', fontSize: '13px', marginBottom: '16px' }}>
+                    No custom deal types added yet.
+                  </p>
+                )}
+
+                {/* Add New Deal Type */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={newDealType}
+                    onChange={(e) => setNewDealType(e.target.value)}
+                    placeholder="e.g., Trade-In, Lease, Fleet"
+                    onKeyDown={(e) => e.key === 'Enter' && addCustomDealType()}
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: '6px',
+                      backgroundColor: '#27272a', border: '1px solid #3f3f46',
+                      color: '#fff', fontSize: '14px', outline: 'none'
+                    }}
+                  />
+                  <button
+                    onClick={addCustomDealType}
+                    style={{ ...btnPrimary, padding: '10px 16px' }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: '20px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setSettingsModal(false)} style={btnPrimary}>Done</button>
             </div>
           </div>
         </div>
