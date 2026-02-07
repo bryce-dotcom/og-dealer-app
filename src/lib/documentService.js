@@ -299,9 +299,11 @@ export async function executeDeal(dealId, dealerId) {
       // Record in generated_documents
       await supabase.from('generated_documents').insert({
         deal_id: dealId,
+        dealer_id: dealerId,
         form_library_id: form.id,
         form_number: form.form_number,
         form_name: form.form_name,
+        state: dealer?.state || 'UT',
         storage_path: storagePath,
         generated_by: 'system'
       });
@@ -321,9 +323,10 @@ export async function executeDeal(dealId, dealerId) {
 
   // Update deal
   await supabase.from('deals')
-    .update({ 
+    .update({
       generated_docs: generated.map(g => g.form_name),
-      updated_at: new Date().toISOString()
+      docs_generated: generated.map(g => g.form_number),
+      docs_generated_at: new Date().toISOString()
     })
     .eq('id', dealId);
 

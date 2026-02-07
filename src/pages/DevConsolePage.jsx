@@ -388,7 +388,6 @@ export default function DevConsolePage() {
     if (id === dealerId) { showToast('Cannot delete current dealer', 'error'); return; }
     setLoading(true);
     try {
-      await supabase.from('dealer_forms').delete().eq('dealer_id', id);
       await supabase.from('inventory').delete().eq('dealer_id', id);
       await supabase.from('deals').delete().eq('dealer_id', id);
       await supabase.from('bhph_loans').delete().eq('dealer_id', id);
