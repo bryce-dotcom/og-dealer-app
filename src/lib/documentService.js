@@ -27,10 +27,10 @@ export async function getDealForms(dealerId, dealType) {
   // Then get form details from form_registry
   const { data: forms, error: formError } = await supabase
     .from('form_registry')
-    .select('id, form_number, form_name, storage_path, field_mapping, deadline_days, sort_order')
+    .select('id, form_number, form_name, storage_path, field_mappings')
     .or(`form_name.in.(${pkg.docs.map(d => `"${d}"`).join(',')}),form_number.in.(${pkg.docs.map(d => `"${d}"`).join(',')})`)
     .not('storage_path', 'is', null)
-    .order('sort_order');
+    .order('form_name');
 
   if (formError) {
     console.error('Error fetching forms:', formError);
@@ -281,7 +281,7 @@ export async function executeDeal(dealId, dealerId) {
       const templateBytes = await templateData.arrayBuffer();
       
       // Fill the form
-      const filledPdfBytes = await fillPdfForm(templateBytes, form.field_mapping, context);
+      const filledPdfBytes = await fillPdfForm(templateBytes, form.field_mappings, context);
       
       // Save to deal-documents bucket
       const fileName = `${form.form_number}_${dealId}_${Date.now()}.pdf`;
@@ -299,11 +299,10 @@ export async function executeDeal(dealId, dealerId) {
       // Record in generated_documents
       await supabase.from('generated_documents').insert({
         deal_id: dealId,
-        form_registry_id: form.id,
+        form_library_id: form.id,
         form_number: form.form_number,
         form_name: form.form_name,
         storage_path: storagePath,
-        file_name: fileName,
         generated_by: 'system'
       });
 

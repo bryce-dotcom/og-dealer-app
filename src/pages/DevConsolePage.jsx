@@ -273,7 +273,7 @@ export default function DevConsolePage() {
         supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(100),
         supabase.from('promo_codes').select('*').order('created_at', { ascending: false }),
         supabase.from('message_templates').select('*').order('name'),
-        supabase.from('compliance_rules').select('*').order('state, category'),
+        supabase.from('compliance_rules').select('*').order('state').order('category'),
         supabase.from('form_staging').select('*').order('created_at', { ascending: false }),
         supabase.from('form_library').select('*').order('created_at', { ascending: false }),
       ]);
