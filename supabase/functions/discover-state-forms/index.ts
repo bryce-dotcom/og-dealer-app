@@ -166,38 +166,61 @@ async function researchFormsWithAI(
 // STEP B: GOOGLE SEARCH - Find real PDF URLs via SerpAPI
 // ============================================================
 
-// URLs to REJECT - manufacturer sites, generic legal docs, etc.
+// URLs to REJECT - manufacturer sites, legislative docs, legal research sites
 const REJECTED_URL_PATTERNS = [
+  // Car manufacturers
   'nissan', 'toyota', 'honda', 'ford', 'chevrolet', 'gmc', 'dodge', 'chrysler',
   'hyundai', 'kia', 'mazda', 'subaru', 'volkswagen', 'bmw', 'mercedes', 'audi',
-  'manufacturer', 'rental', 'lease-agreement', 'chapter', 'statute', 'legislature',
-  'law.justia', 'findlaw', 'lawserver', 'casetext', 'courtlistener'
+  'manufacturer', 'rental', 'lease-agreement',
+  // Legislative / statutory - NOT fillable forms
+  'legislature', 'le.utah.gov', '/bill', 'statute', '/code/', '.gov/code',
+  '.gov/laws', '/laws/', '/legislation/', '/bills/', '/enrolled/',
+  'session', 'fiscal', 'analysis',
+  'senate', 'house', 'congress',
+  // Legal research sites
+  'law.justia', 'findlaw', 'lawserver', 'casetext', 'courtlistener', 'chapter'
 ];
 
-// URLs to ACCEPT - official government and legal form sites
+// Domains to ACCEPT - official government and form sites
 const ACCEPTED_DOMAINS = [
   '.gov', 'tax.utah.gov', 'dmv.utah.gov', 'dmv.', 'ftc.gov', 'nhtsa.gov',
   'dor.', 'revenue.', 'motor.', 'mvd.', 'dot.state'
 ];
 
+// URL path patterns that indicate actual fillable forms (at least one must match)
+const ACCEPTED_URL_PATTERNS = [
+  '/forms/', '/form/', '/pub/', '/publications/',
+  'tax.utah.gov', 'dmv.utah.gov', 'motorvehicle', 'dmv',
+  'taxcommission', 'ftc.gov/tips', 'nhtsa.gov', 'irs.gov/pub', 'irs.gov/forms',
+  'revenue', 'dor.', 'mvd.', 'motor.'
+];
+
 function isValidPdfUrl(url: string): boolean {
   const lowerUrl = url.toLowerCase();
-
-  // Reject manufacturer and irrelevant URLs
-  for (const pattern of REJECTED_URL_PATTERNS) {
-    if (lowerUrl.includes(pattern)) {
-      return false;
-    }
-  }
-
-  // Prefer .gov and official sites
-  const hasAcceptedDomain = ACCEPTED_DOMAINS.some(domain => lowerUrl.includes(domain));
 
   // Must end in .pdf
   if (!lowerUrl.endsWith('.pdf')) {
     return false;
   }
 
+  // Reject legislative and irrelevant URLs
+  for (const pattern of REJECTED_URL_PATTERNS) {
+    if (lowerUrl.includes(pattern)) {
+      console.log(`REJECTED URL (legislative/irrelevant): ${url} [matched: ${pattern}]`);
+      return false;
+    }
+  }
+
+  // Must match at least one accepted URL pattern (actual form sources)
+  const hasAcceptedPattern = ACCEPTED_URL_PATTERNS.some(p => lowerUrl.includes(p));
+  const hasAcceptedDomain = ACCEPTED_DOMAINS.some(d => lowerUrl.includes(d));
+
+  if (!hasAcceptedPattern && !hasAcceptedDomain) {
+    console.log(`REJECTED URL (no accepted pattern): ${url}`);
+    return false;
+  }
+
+  console.log(`ACCEPTED URL: ${url}`);
   return true;
 }
 
@@ -238,15 +261,20 @@ async function searchForPdfUrl(
 
     // Utah-specific: TC- forms are on tax.utah.gov
     if (stateCode === 'UT' && formNum.toUpperCase().startsWith('TC')) {
-      queries.push(`${formNum} site:tax.utah.gov filetype:pdf`);
+      queries.push(`${formNum} site:tax.utah.gov/forms filetype:pdf`);
+      queries.push(`${formNum} Utah Tax Commission form PDF`);
+    }
+
+    // Utah DMV forms
+    if (stateCode === 'UT' && !formNum.toUpperCase().startsWith('TC')) {
       queries.push(`${formNum} site:dmv.utah.gov filetype:pdf`);
+      queries.push(`${formNum} Utah DMV motor vehicle form PDF`);
     }
 
     // State-specific government sites
     queries.push(`${formNum} site:.gov ${stateCode} filetype:pdf`);
     queries.push(`${formNum} ${stateName} motor vehicle form filetype:pdf site:.gov`);
     queries.push(`${formNum} ${stateName} DMV form filetype:pdf`);
-    queries.push(`${formNum} ${stateName} auto dealer form PDF`);
   }
 
   // For forms WITHOUT a form number - be MORE specific about motor vehicles
