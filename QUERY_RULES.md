@@ -94,7 +94,7 @@ Before querying a table, confirm it exists in `DATABASE_SCHEMA.md`. The live dat
 **Confirmed existing tables** (actively queried by frontend): `dealer_settings`, `inventory`, `employees`, `bhph_loans`, `deals`, `customers`, `bhph_payments`, `commissions`, `commission_roles`, `inventory_expenses`, `inventory_commissions`, `customer_vehicle_requests`, `time_clock`, `time_off_requests`, `employee_documents`, `payroll_runs`, `paystubs`, `bank_accounts`, `bank_transactions`, `manual_expenses`, `expense_categories`, `assets`, `liabilities`, `saved_reports`, `generated_documents`, `feedback`, `audit_log`, `promo_codes`, `message_templates`, `compliance_rules`, `state_updates`, `document_packages`, `form_staging`, `form_library`, `form_registry`
 
 **Table NOT found in live schema:**
-- `dealer_forms` (referenced in DevConsolePage.jsx:391 delete cascade)
+- ~~`dealer_forms`~~ — reference removed from DevConsolePage.jsx in commit `7e3b145`
 
 ---
 
@@ -145,12 +145,12 @@ Before changing any query:
 
 ---
 
-## Quick Reference: Fix These Known Bugs
+## Quick Reference: Previously Known Bugs (ALL FIXED)
 
-| Priority | File | Line | Current | Fix |
-|----------|------|------|---------|-----|
-| P0 | `src/lib/documentService.js` | 30 | `select('...field_mapping, deadline_days, sort_order')` | Remove `deadline_days, sort_order`. Change `field_mapping` to `field_mappings` |
-| P0 | `src/lib/documentService.js` | 33 | `.order('sort_order')` | Remove or change to `.order('created_at')` |
-| P0 | `src/lib/documentService.js` | 300-308 | `form_registry_id, file_name` | Change to `form_library_id`. Remove `file_name`. |
-| P1 | `src/pages/DevConsolePage.jsx` | 276 | `.order('state, category')` | `.order('state').order('category')` |
-| P2 | `src/pages/DevConsolePage.jsx` | 391 | `.from('dealer_forms').delete()` | Table may not exist - verify or remove |
+| Status | File | Line | What Was Wrong | Fix | Commit |
+|--------|------|------|----------------|-----|--------|
+| **FIXED** | `src/lib/documentService.js` | 30 | Selected non-existent `field_mapping`, `deadline_days`, `sort_order` from `form_registry` | Changed to `field_mappings`; removed the rest | `ebb226a` |
+| **FIXED** | `src/lib/documentService.js` | 33 | `.order('sort_order')` — column doesn't exist | Changed to `.order('form_name')` | `ebb226a` |
+| **FIXED** | `src/lib/documentService.js` | 300-308 | Inserted `form_registry_id`, `file_name` into `generated_documents` — neither exists | Changed to `form_library_id`; removed `file_name`; added missing `state`, `dealer_id` | `ebb226a` + `7e3b145` |
+| **FIXED** | `src/pages/DevConsolePage.jsx` | 276 | `.order('state, category')` — invalid multi-column syntax | Changed to `.order('state').order('category')` | `ebb226a` |
+| **FIXED** | `src/pages/DevConsolePage.jsx` | 391 | `.from('dealer_forms').delete()` — table doesn't exist | Line removed | `7e3b145` |
