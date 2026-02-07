@@ -19,7 +19,7 @@ Before writing or modifying ANY Supabase query:
 ## Project Structure
 
 - **Active pages:** All in `src/pages/` directory, imported by `src/App.jsx`
-- **Dead code:** Root `src/*.jsx` files (BooksPage, BHPHDashboard, CommissionsPage, etc.) are NOT imported by any route
+- **Dead code:** Cleaned up — 64 dead files (21,394 lines) removed in commit `7e3b145`
 - **Shared libs:** `src/lib/store.js` (global state), `src/lib/supabase.js` (client), `src/lib/documentService.js` (doc generation)
 - **Components:** `src/components/` for shared UI components
 
@@ -37,12 +37,12 @@ Before writing or modifying ANY Supabase query:
 - Project ref: `rlzudfinlxonpbwacxpt`
 - URL: `https://rlzudfinlxonpbwacxpt.supabase.co`
 - 78 tables in public schema
-- 36 tables actively queried by frontend
+- 35 tables actively queried by frontend
 
-## Known Bugs (DO NOT REINTRODUCE)
+## Known Bugs (ALL FIXED — DO NOT REINTRODUCE)
 
-1. `src/lib/documentService.js:30` - Selects non-existent columns from `form_registry`
-2. `src/lib/documentService.js:33` - Orders by non-existent `sort_order` on `form_registry`
-3. `src/lib/documentService.js:300-308` - Inserts wrong column names into `generated_documents`
-4. `src/pages/DevConsolePage.jsx:276` - Invalid `.order('state, category')` syntax
-5. `src/pages/DevConsolePage.jsx:391` - References `dealer_forms` table (may not exist)
+1. ~~`src/lib/documentService.js:30` - Selects non-existent columns from `form_registry`~~ **FIXED** in `ebb226a`
+2. ~~`src/lib/documentService.js:33` - Orders by non-existent `sort_order` on `form_registry`~~ **FIXED** in `ebb226a`
+3. ~~`src/lib/documentService.js:300-308` - Inserts wrong column names into `generated_documents`~~ **FIXED** in `ebb226a` + `7e3b145`
+4. ~~`src/pages/DevConsolePage.jsx:276` - Invalid `.order('state, category')` syntax~~ **FIXED** in `ebb226a`
+5. ~~`src/pages/DevConsolePage.jsx:391` - References `dealer_forms` table (doesn't exist)~~ **FIXED** in `7e3b145` (line removed)
