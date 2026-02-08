@@ -296,15 +296,48 @@ serve(async (req) => {
 
     console.log(`[DOCS] Package has ${pkg.form_ids.length} forms`);
 
-    // Get forms from form_registry
+    // Get forms from form_library
     const { data: forms, error: formsError } = await supabase
-      .from('form_registry')
-      .select('id, form_number, form_name, download_url, source_url, field_mappings, is_fillable')
-      .in('id', pkg.form_ids)
-      .eq('status', 'active');
+      .from('form_library')
+      .select('id, form_number, form_name, download_url, source_url, field_mappings, is_fillable, storage_path, storage_bucket')
+      .in('id', pkg.form_ids);
 
-    if (formsError || !forms?.length) {
-      throw new Error(`No active forms found for this package: ${formsError?.message || 'Empty'}`);
+    if (formsError) {
+      throw new Error(`Error loading forms: ${formsError.message}`);
+    }
+
+    // If no form_ids matched, fall back to docs text array for template matching
+    if (!forms?.length) {
+      console.log(`[DOCS] No form_library rows matched form_ids. Falling back to docs names.`);
+      // Re-fetch package with docs column
+      const { data: fullPkg } = await supabase
+        .from('document_packages')
+        .select('docs')
+        .eq('dealer_id', deal.dealer_id)
+        .eq('deal_type', deal.deal_type)
+        .single();
+
+      const docNames = fullPkg?.docs || [];
+      if (docNames.length === 0) {
+        throw new Error(`No document package configured for ${deal.deal_type} deals.`);
+      }
+
+      // Create pseudo-form objects from doc names for template matching
+      const pseudoForms = docNames.map((name: string) => ({
+        id: null,
+        form_number: null,
+        form_name: name,
+        download_url: null,
+        source_url: null,
+        field_mappings: null,
+        is_fillable: false,
+        storage_path: null,
+        storage_bucket: null
+      }));
+
+      console.log(`[DOCS] Using ${pseudoForms.length} doc names from package: ${docNames.join(', ')}`);
+      // Replace forms with pseudo-forms
+      (forms as any[]).push(...pseudoForms);
     }
 
     console.log(`[DOCS] Found ${forms.length} active forms to generate`);
@@ -321,32 +354,57 @@ serve(async (req) => {
 
         // Try to fill PDF if we have one with mappings
         const pdfUrl = form.download_url || form.source_url;
+        const hasMappings = form.field_mappings && (Array.isArray(form.field_mappings) ? form.field_mappings.length > 0 : Object.keys(form.field_mappings).length > 0);
 
-        if (pdfUrl && form.is_fillable && form.field_mappings?.length > 0) {
-          console.log(`[DOCS] Filling PDF from: ${pdfUrl}`);
+        if ((pdfUrl || form.storage_path) && form.is_fillable && hasMappings) {
+          let templateBytes: ArrayBuffer | null = null;
 
-          // Download PDF
-          const pdfResponse = await fetch(pdfUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-          });
+          // Try Supabase storage first (form_library uploads)
+          if (form.storage_path && form.storage_bucket) {
+            console.log(`[DOCS] Downloading from storage: ${form.storage_bucket}/${form.storage_path}`);
+            const { data: storageData, error: storageError } = await supabase.storage
+              .from(form.storage_bucket)
+              .download(form.storage_path);
+            if (storageData && !storageError) {
+              templateBytes = await storageData.arrayBuffer();
+            } else {
+              console.log(`[DOCS] Storage download failed: ${storageError?.message}`);
+            }
+          }
 
-          if (pdfResponse.ok) {
-            const templateBytes = await pdfResponse.arrayBuffer();
+          // Fall back to external URL
+          if (!templateBytes && pdfUrl) {
+            console.log(`[DOCS] Filling PDF from URL: ${pdfUrl}`);
+            const pdfResponse = await fetch(pdfUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0' }
+            });
+            if (pdfResponse.ok) {
+              templateBytes = await pdfResponse.arrayBuffer();
+            } else {
+              console.log(`[DOCS] Failed to download PDF: ${pdfResponse.status}`);
+            }
+          }
 
-            // Fill the PDF
-            const fillResult = await fillPdfForm(templateBytes, form.field_mappings, context);
+          if (templateBytes) {
+            // Normalize field_mappings to array format
+            const mappings = Array.isArray(form.field_mappings)
+              ? form.field_mappings
+              : Object.entries(form.field_mappings).map(([k, v]: [string, any]) => ({
+                  pdf_field: k,
+                  universal_field: typeof v === 'string' ? v : v?.universal_field || ''
+                }));
+
+            const fillResult = await fillPdfForm(templateBytes, mappings, context);
             pdfBytes = fillResult.pdfBytes;
 
             debugInfo = {
               generatedFrom: 'filled_pdf',
-              sourceUrl: pdfUrl,
+              source: form.storage_path ? 'storage' : pdfUrl,
               totalFields: fillResult.totalFields,
               filledCount: fillResult.filledCount
             };
 
             console.log(`[DOCS] Filled ${fillResult.filledCount}/${fillResult.totalFields} fields`);
-          } else {
-            console.log(`[DOCS] Failed to download PDF: ${pdfResponse.status}`);
           }
         }
 
@@ -392,12 +450,14 @@ serve(async (req) => {
         await supabase.from('generated_documents').insert({
           deal_id: typeof deal_id === 'string' ? parseInt(deal_id) : deal_id,
           dealer_id: deal.dealer_id,
-          form_number: form.form_number,
+          form_library_id: form.id || null,
+          form_number: form.form_number || 'DOC',
           form_name: form.form_name,
           state: dealer?.state || 'UT',
           storage_path: storagePath,
           public_url: urlData?.signedUrl || null,
-          generated_by: 'system'
+          generated_by: 'system',
+          generation_method: debugInfo.generatedFrom || 'code_template'
         });
 
         generated.push({
