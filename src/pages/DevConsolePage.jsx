@@ -1662,9 +1662,30 @@ export default function DevConsolePage() {
   };
 
   const removeFromLibrary = async (id) => {
-    if (!confirm('Remove this form from the library?')) return;
     setLoading(true);
     try {
+      // Check if form is used in any document packages
+      const { data: allPkgs } = await supabase.from('document_packages').select('id, deal_type, form_ids');
+      const affectedPkgs = (allPkgs || []).filter(p => p.form_ids && p.form_ids.includes(id));
+
+      if (affectedPkgs.length > 0) {
+        const pkgNames = affectedPkgs.map(p => p.deal_type).join(', ');
+        if (!confirm(`This form is used in ${affectedPkgs.length} document package(s): ${pkgNames}.\n\nRemove from packages and delete?`)) {
+          setLoading(false);
+          return;
+        }
+        // Remove form ID from each affected package
+        for (const pkg of affectedPkgs) {
+          const newFormIds = pkg.form_ids.filter(fid => fid !== id);
+          await supabase.from('document_packages').update({ form_ids: newFormIds }).eq('id', pkg.id);
+        }
+      } else {
+        if (!confirm('Remove this form from the library?')) {
+          setLoading(false);
+          return;
+        }
+      }
+
       // Get the library form first to find its promoted_from id
       const { data: libForm } = await supabase.from('form_library').select('promoted_from').eq('id', id).single();
 
@@ -1677,7 +1698,7 @@ export default function DevConsolePage() {
       }
 
       await logAudit('DEMOTE', 'form_library', id, { status: 'active' }, { status: 'deleted' });
-      showToast('Form removed from library');
+      showToast('Form removed from library' + (affectedPkgs.length ? ` and ${affectedPkgs.length} package(s)` : ''));
       loadAllData();
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
