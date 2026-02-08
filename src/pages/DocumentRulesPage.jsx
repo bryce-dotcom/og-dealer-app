@@ -537,11 +537,17 @@ export default function DocumentRulesPage() {
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
               <div style={{ display: 'grid', gap: '8px' }}>
-                {(mapperModal.field_mappings || []).map((mapping, idx) => (
+                {(mapperModal.field_mappings || []).map((mapping, idx) => {
+                  const isHighlighted = mapping.status === 'highlight';
+                  const isDismissed = mapping.status === 'dismissed';
+                  const isMapped = mapping.universal_fields?.length > 0 || !!mapping.universal_field;
+                  return (
                   <div key={idx} style={{
                     display: 'flex', alignItems: 'center', gap: '12px', padding: '12px',
-                    backgroundColor: mapping.universal_field ? '#22c55e10' : '#27272a',
-                    borderRadius: '8px', border: mapping.universal_field ? '1px solid #22c55e30' : '1px solid transparent'
+                    backgroundColor: isHighlighted ? 'rgba(234,179,8,0.1)' : (isMapped ? '#22c55e10' : '#27272a'),
+                    borderRadius: '8px',
+                    border: isHighlighted ? '1px solid rgba(234,179,8,0.3)' : (isMapped ? '1px solid #22c55e30' : '1px solid transparent'),
+                    opacity: isDismissed ? 0.5 : 1
                   }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: '600', fontSize: '13px', fontFamily: 'monospace' }}>
@@ -553,9 +559,16 @@ export default function DocumentRulesPage() {
                     </div>
                     <div style={{ color: '#52525b' }}>→</div>
                     <div style={{ flex: 1 }}>
-                      {mapping.universal_field ? (
+                      {isHighlighted ? (
+                        <div style={{ color: '#eab308', fontWeight: '500' }}>
+                          <span style={{ display: 'inline-block', width: '12px', height: '12px', backgroundColor: mapping.highlight_color || '#ffff00', borderRadius: '2px', marginRight: '6px', verticalAlign: 'middle' }}></span>
+                          Highlight{mapping.highlight_label ? `: "${mapping.highlight_label}"` : ''}
+                        </div>
+                      ) : isDismissed ? (
+                        <div style={{ color: '#71717a', fontStyle: 'italic', textDecoration: 'line-through' }}>Dismissed</div>
+                      ) : isMapped ? (
                         <div style={{ color: '#22c55e', fontWeight: '500' }}>
-                          {mapping.universal_field}
+                          {mapping.universal_fields?.join(', ') || mapping.universal_field}
                           <span style={{ marginLeft: '8px', fontSize: '10px', color: '#71717a' }}>
                             ({Math.round((mapping.confidence || 0) * 100)}%)
                           </span>
@@ -565,7 +578,8 @@ export default function DocumentRulesPage() {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {(!mapperModal.field_mappings || mapperModal.field_mappings.length === 0) && (
@@ -577,7 +591,11 @@ export default function DocumentRulesPage() {
 
             <div style={{ padding: '20px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ color: '#a1a1aa', fontSize: '13px' }}>
-                {(mapperModal.field_mappings || []).filter(m => m.universal_field).length} / {mapperModal.field_mappings?.length || 0} fields mapped
+                {(mapperModal.field_mappings || []).filter(m => m.universal_fields?.length > 0 || m.universal_field).length} mapped
+                {(mapperModal.field_mappings || []).filter(m => m.status === 'highlight').length > 0 && (
+                  <span style={{ color: '#eab308' }}> / {(mapperModal.field_mappings || []).filter(m => m.status === 'highlight').length} highlight</span>
+                )}
+                {' / '}{mapperModal.field_mappings?.length || 0} total
               </div>
               <button onClick={() => setMapperModal(null)} style={btnPrimary}>Close</button>
             </div>

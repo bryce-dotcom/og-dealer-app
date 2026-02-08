@@ -193,20 +193,50 @@ async function fillPdfForm(
 
     console.log(`[FILL] PDF has ${totalFields} fillable fields`);
 
-    // Build mapping lookup: pdf_field -> mapping object
+    // Build mapping lookup: pdf_field -> mapping object (mapped + highlighted)
     const mappingLookup = new Map<string, any>();
     for (const mapping of fieldMappings) {
-      if (mapping.pdf_field && (mapping.universal_field || mapping.universal_fields?.length)) {
+      if (mapping.pdf_field && (mapping.status === 'highlight' || mapping.universal_field || mapping.universal_fields?.length)) {
         mappingLookup.set(mapping.pdf_field, mapping);
       }
     }
 
+    // Helper to parse hex color to rgb values (0-1 range)
+    const hexToRgb = (hex: string) => {
+      const h = hex.replace('#', '');
+      return {
+        r: parseInt(h.substring(0, 2), 16) / 255,
+        g: parseInt(h.substring(2, 4), 16) / 255,
+        b: parseInt(h.substring(4, 6), 16) / 255
+      };
+    };
+
     // Fill each field
+    let highlightCount = 0;
     for (const field of fields) {
       const fieldName = field.getName();
       const mapping = mappingLookup.get(fieldName);
 
       if (mapping) {
+        // HIGHLIGHTED: set background color + optional label text
+        if (mapping.status === 'highlight') {
+          try {
+            const textField = form.getTextField(fieldName);
+            const color = hexToRgb(mapping.highlight_color || '#ffff00');
+            textField.setBackgroundColor(rgb(color.r, color.g, color.b));
+            if (mapping.highlight_label) {
+              textField.setText(mapping.highlight_label);
+            }
+            highlightCount++;
+            console.log(`[FILL] ${fieldName} = HIGHLIGHT (${mapping.highlight_color || '#ffff00'}${mapping.highlight_label ? ', "' + mapping.highlight_label + '"' : ''})`);
+          } catch {
+            // Not a text field, try other types
+            console.log(`[FILL] Could not highlight field: ${fieldName}`);
+          }
+          continue;
+        }
+
+        // MAPPED: fill with resolved data value
         const value = resolveFieldValue(mapping, context);
         if (value) {
           try {
@@ -228,6 +258,10 @@ async function fillPdfForm(
           }
         }
       }
+    }
+
+    if (highlightCount > 0) {
+      console.log(`[FILL] Highlighted ${highlightCount} fields`);
     }
 
     form.flatten();

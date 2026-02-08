@@ -632,6 +632,7 @@ export default function DevConsolePage() {
     let detected_fields = form.detected_fields || [];
     let field_mapping = form.field_mapping || {};
     let dismissed_fields = form.dismissed_fields || {};
+    let highlighted_fields = form.highlighted_fields || {};
 
     console.log('[MAPPER DEBUG] Opening mapper for:', form.form_name);
     console.log('[MAPPER DEBUG] form.field_mappings count:', form.field_mappings?.length || 0);
@@ -674,12 +675,22 @@ export default function DevConsolePage() {
 
       field_mapping = {};
       dismissed_fields = {};
+      highlighted_fields = {};
 
       form.field_mappings.forEach((m, idx) => {
         // Use same naming logic as above
         let fieldName = m.pdf_field || m.pdf_field_name;
         if (!fieldName || (typeof fieldName === 'string' && fieldName.trim() === '')) {
           fieldName = `Unnamed_Field_${idx + 1}`;
+        }
+
+        // Track highlighted fields
+        if (m.status === 'highlight') {
+          highlighted_fields[fieldName] = {
+            color: m.highlight_color || '#ffff00',
+            label: m.highlight_label || ''
+          };
+          return;
         }
 
         // Track dismissed fields
@@ -716,6 +727,7 @@ export default function DevConsolePage() {
       detected_fields,
       field_mapping,
       dismissed_fields,
+      highlighted_fields,
     });
   };
 
@@ -724,24 +736,42 @@ export default function DevConsolePage() {
     setLoading(true);
     try {
       const dismissedFields = stagingMapperModal.dismissed_fields || {};
+      const highlightedFields = stagingMapperModal.highlighted_fields || {};
       const dismissedCount = Object.keys(dismissedFields).length;
+      const highlightedCount = Object.keys(highlightedFields).length;
 
-      // Count mapped fields (fields with at least one mapping, excluding dismissed)
+      // Count mapped fields (fields with at least one mapping, excluding dismissed and highlighted)
       const mappedCount = Object.entries(stagingMapperModal.field_mapping || {}).filter(([field, v]) => {
-        if (dismissedFields[field]) return false; // Don't count dismissed
+        if (dismissedFields[field]) return false;
+        if (highlightedFields[field]) return false;
         if (!v) return false;
         if (typeof v === 'string') return !!v;
         return v.fields && v.fields.length > 0;
       }).length;
 
-      // Total fields excluding dismissed
-      const totalFields = (stagingMapperModal.detected_fields?.length || 1) - dismissedCount;
+      // Total fields excluding dismissed and highlighted (highlights are resolved, not unmapped)
+      const totalFields = (stagingMapperModal.detected_fields?.length || 1) - dismissedCount - highlightedCount;
       const confidence = totalFields > 0 ? Math.round((mappedCount / totalFields) * 100) : 100;
 
       // Convert to field_mappings array format - now includes status
       const field_mappings = stagingMapperModal.detected_fields.map(field => {
         const isDismissed = dismissedFields[field];
+        const isHighlighted = highlightedFields[field];
         const mapping = stagingMapperModal.field_mapping?.[field];
+
+        // Highlighted field
+        if (isHighlighted) {
+          return {
+            pdf_field: field,
+            universal_fields: [],
+            separator: ' ',
+            confidence: 0,
+            status: 'highlight',
+            matched: false,
+            highlight_color: isHighlighted.color || '#ffff00',
+            highlight_label: isHighlighted.label || ''
+          };
+        }
 
         // Dismissed field
         if (isDismissed) {
@@ -941,15 +971,38 @@ export default function DevConsolePage() {
     }));
   };
 
-  // Restore a dismissed field
+  // Restore a dismissed or highlighted field
   const restoreField = (fieldName) => {
     setStagingMapperModal(prev => {
       const { [fieldName]: _, ...restDismissed } = prev.dismissed_fields || {};
+      const { [fieldName]: __, ...restHighlighted } = prev.highlighted_fields || {};
       return {
         ...prev,
-        dismissed_fields: restDismissed
+        dismissed_fields: restDismissed,
+        highlighted_fields: restHighlighted
       };
     });
+  };
+
+  // Mark a field as highlighted (yellow background on printed PDF)
+  const highlightField = (fieldName, color = '#ffff00', label = '') => {
+    setStagingMapperModal(prev => ({
+      ...prev,
+      highlighted_fields: {
+        ...prev.highlighted_fields,
+        [fieldName]: { color, label }
+      },
+      // Clear any mapping for this field
+      field_mapping: {
+        ...prev.field_mapping,
+        [fieldName]: null
+      },
+      // Remove from dismissed if it was there
+      dismissed_fields: (() => {
+        const { [fieldName]: _, ...rest } = prev.dismissed_fields || {};
+        return rest;
+      })()
+    }));
   };
 
   // Inline upload handler for staging forms
@@ -3723,18 +3776,21 @@ export default function DevConsolePage() {
                   <div style={{ fontSize: '12px', color: '#a1a1aa' }}>Mapping Score</div>
                   {(() => {
                     const dismissedFields = stagingMapperModal.dismissed_fields || {};
+                    const highlightedFields = stagingMapperModal.highlighted_fields || {};
                     const dismissedCount = Object.keys(dismissedFields).length;
+                    const highlightedCount = Object.keys(highlightedFields).length;
                     const mappedCount = Object.entries(stagingMapperModal.field_mapping || {}).filter(([field, v]) => {
                       if (dismissedFields[field]) return false;
+                      if (highlightedFields[field]) return false;
                       return v && (typeof v === 'string' ? !!v : v.fields?.length > 0);
                     }).length;
-                    const totalFields = (stagingMapperModal.detected_fields?.length || 1) - dismissedCount;
+                    const totalFields = (stagingMapperModal.detected_fields?.length || 1) - dismissedCount - highlightedCount;
                     const score = totalFields > 0 ? Math.round((mappedCount / totalFields) * 100) : 100;
                     const isReady = score >= 99;
                     return (
                       <div style={{ fontSize: '24px', fontWeight: '700', color: isReady ? '#22c55e' : '#eab308' }}>
                         {score}%
-                        {dismissedCount > 0 && <span style={{ fontSize: '11px', marginLeft: '6px', color: '#71717a' }}>({dismissedCount} dismissed)</span>}
+                        {(dismissedCount > 0 || highlightedCount > 0) && <span style={{ fontSize: '11px', marginLeft: '6px', color: '#71717a' }}>({dismissedCount} dismissed{highlightedCount > 0 ? `, ${highlightedCount} highlight` : ''})</span>}
                         {isReady && <span style={{ fontSize: '12px', marginLeft: '8px', color: '#22c55e' }}>Ready!</span>}
                       </div>
                     );
@@ -3765,43 +3821,60 @@ export default function DevConsolePage() {
               {/* Field Mapping (right) */}
               <div style={{ width: '450px', display: 'flex', flexDirection: 'column' }}>
                 {(() => {
-                  // Sort fields: unmapped first, then mapped, dismissed at bottom
+                  // Sort fields: unmapped first, then mapped, highlighted, dismissed at bottom
                   const allFields = stagingMapperModal.detected_fields || [];
                   const dismissedFields = stagingMapperModal.dismissed_fields || {};
+                  const highlightedFields = stagingMapperModal.highlighted_fields || {};
 
                   const unmappedFields = allFields.filter(field => {
                     if (dismissedFields[field]) return false;
+                    if (highlightedFields[field]) return false;
                     const mapping = stagingMapperModal.field_mapping?.[field];
                     const mappedFieldsArr = getMappingFields(mapping);
                     return mappedFieldsArr.length === 0;
                   });
                   const mappedFieldsList = allFields.filter(field => {
                     if (dismissedFields[field]) return false;
+                    if (highlightedFields[field]) return false;
                     const mapping = stagingMapperModal.field_mapping?.[field];
                     const mappedFieldsArr = getMappingFields(mapping);
                     return mappedFieldsArr.length > 0;
                   });
+                  const highlightedFieldsList = allFields.filter(field => highlightedFields[field]);
                   const dismissedFieldsList = allFields.filter(field => dismissedFields[field]);
 
-                  const renderFieldRow = (field, idx, isDismissed = false) => {
+                  const HIGHLIGHT_COLORS = [
+                    { value: '#ffff00', label: 'Yellow', rgb: 'rgb(255,255,0)' },
+                    { value: '#ffb3ba', label: 'Pink', rgb: 'rgb(255,179,186)' },
+                    { value: '#baffc9', label: 'Green', rgb: 'rgb(186,255,201)' },
+                    { value: '#bae1ff', label: 'Blue', rgb: 'rgb(186,225,255)' },
+                  ];
+
+                  const renderFieldRow = (field, idx, isDismissed = false, isHighlighted = false) => {
                     const mapping = stagingMapperModal.field_mapping?.[field];
                     const mappedFieldsArr = getMappingFields(mapping);
                     const separator = getMappingSeparator(mapping);
-                    const isMapped = mappedFieldsArr.length > 0 && !isDismissed;
+                    const isMapped = mappedFieldsArr.length > 0 && !isDismissed && !isHighlighted;
                     const isMulti = mappedFieldsArr.length > 1;
+                    const hlData = isHighlighted ? highlightedFields[field] : null;
                     return (
                       <div key={idx} style={{
                         marginBottom: '12px',
                         padding: '12px',
-                        backgroundColor: isDismissed ? 'rgba(113,113,122,0.1)' : (isMapped ? '#27272a' : 'rgba(239,68,68,0.1)'),
+                        backgroundColor: isHighlighted ? 'rgba(234,179,8,0.1)' : (isDismissed ? 'rgba(113,113,122,0.1)' : (isMapped ? '#27272a' : 'rgba(239,68,68,0.1)')),
                         borderRadius: '8px',
-                        borderLeft: isDismissed ? '4px solid #71717a' : (isMapped ? '4px solid #22c55e' : '4px solid #ef4444'),
+                        borderLeft: isHighlighted ? `4px solid ${hlData?.color || '#eab308'}` : (isDismissed ? '4px solid #71717a' : (isMapped ? '4px solid #22c55e' : '4px solid #ef4444')),
                         opacity: isDismissed ? 0.6 : 1
                       }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isDismissed ? '0' : '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (isDismissed && !isHighlighted) ? '0' : '8px' }}>
                           <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', textDecoration: isDismissed ? 'line-through' : 'none' }}>{field}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            {isDismissed ? (
+                            {isHighlighted ? (
+                              <>
+                                <span style={{ fontSize: '10px', color: '#eab308', padding: '2px 6px', backgroundColor: 'rgba(234,179,8,0.2)', borderRadius: '4px' }}>Highlight</span>
+                                <button onClick={() => restoreField(field)} style={{ fontSize: '10px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Restore</button>
+                              </>
+                            ) : isDismissed ? (
                               <>
                                 <span style={{ fontSize: '10px', color: '#71717a', padding: '2px 6px', backgroundColor: 'rgba(113,113,122,0.2)', borderRadius: '4px' }}>Dismissed</span>
                                 <button onClick={() => restoreField(field)} style={{ fontSize: '10px', color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Restore</button>
@@ -3814,6 +3887,7 @@ export default function DevConsolePage() {
                                 ) : (
                                   <>
                                     <span style={{ fontSize: '10px', color: '#ef4444', padding: '2px 6px', backgroundColor: 'rgba(239,68,68,0.2)', borderRadius: '4px' }}>Not Mapped</span>
+                                    <button onClick={() => highlightField(field)} style={{ fontSize: '10px', color: '#eab308', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }} title="Highlight on printed PDF">Highlight</button>
                                     <button onClick={() => dismissField(field)} style={{ fontSize: '10px', color: '#71717a', background: 'none', border: 'none', cursor: 'pointer' }} title="Mark as not needed">Dismiss</button>
                                   </>
                                 )}
@@ -3822,8 +3896,33 @@ export default function DevConsolePage() {
                           </div>
                         </div>
 
-                        {/* Only show mapping UI for non-dismissed fields */}
-                        {!isDismissed && (
+                        {/* Highlight options */}
+                        {isHighlighted && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '11px', color: '#a1a1aa' }}>Color:</span>
+                              {HIGHLIGHT_COLORS.map(c => (
+                                <button key={c.value} onClick={() => highlightField(field, c.value, hlData?.label || '')} style={{
+                                  width: '20px', height: '20px', borderRadius: '4px', border: hlData?.color === c.value ? '2px solid #fff' : '1px solid #52525b',
+                                  backgroundColor: c.value, cursor: 'pointer', padding: 0
+                                }} title={c.label} />
+                              ))}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '11px', color: '#a1a1aa' }}>Label:</span>
+                              <input
+                                type="text"
+                                value={hlData?.label || ''}
+                                onChange={(e) => highlightField(field, hlData?.color || '#ffff00', e.target.value)}
+                                placeholder="e.g. Sign here, Initial, Date"
+                                style={{ ...inputStyle, fontSize: '11px', padding: '4px 8px', flex: 1 }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Only show mapping UI for non-dismissed, non-highlighted fields */}
+                        {!isDismissed && !isHighlighted && (
                           <>
                             {/* Show currently mapped fields as removable chips */}
                             {mappedFieldsArr.length > 0 && (
@@ -3895,6 +3994,9 @@ export default function DevConsolePage() {
                           <span style={{ color: '#ef4444' }}>{unmappedFields.length} unmapped</span>
                           {' / '}
                           <span style={{ color: '#22c55e' }}>{mappedFieldsList.length} mapped</span>
+                          {highlightedFieldsList.length > 0 && (
+                            <span style={{ color: '#eab308' }}> / {highlightedFieldsList.length} highlight</span>
+                          )}
                           {dismissedFieldsList.length > 0 && (
                             <span style={{ color: '#71717a' }}> / {dismissedFieldsList.length} dismissed</span>
                           )}
@@ -3947,6 +4049,30 @@ export default function DevConsolePage() {
                           </>
                         )}
 
+                        {/* HIGHLIGHTED SECTION */}
+                        {highlightedFieldsList.length > 0 && (
+                          <>
+                            <div style={{
+                              padding: '8px 12px',
+                              marginBottom: '12px',
+                              marginTop: '20px',
+                              backgroundColor: 'rgba(234,179,8,0.15)',
+                              borderRadius: '6px',
+                              borderLeft: '4px solid #eab308',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}>
+                              <span style={{ fontSize: '16px' }}>&#9998;</span>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#eab308' }}>
+                                HIGHLIGHTED ({highlightedFieldsList.length})
+                              </span>
+                              <span style={{ fontSize: '11px', color: '#a1a1aa' }}>— yellow on printed PDF</span>
+                            </div>
+                            {highlightedFieldsList.map((field, idx) => renderFieldRow(field, `highlight-${idx}`, false, true))}
+                          </>
+                        )}
+
                         {/* DISMISSED SECTION */}
                         {dismissedFieldsList.length > 0 && (
                           <>
@@ -3961,7 +4087,7 @@ export default function DevConsolePage() {
                               alignItems: 'center',
                               gap: '8px'
                             }}>
-                              <span style={{ fontSize: '16px' }}>🚫</span>
+                              <span style={{ fontSize: '16px' }}>&#128683;</span>
                               <span style={{ fontSize: '13px', fontWeight: '600', color: '#71717a' }}>
                                 DISMISSED ({dismissedFieldsList.length})
                               </span>
@@ -3988,16 +4114,18 @@ export default function DevConsolePage() {
             <div style={{ padding: '16px 24px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ color: '#71717a', fontSize: '12px' }}>
                 {(() => {
+                  const dismissedCount = Object.keys(stagingMapperModal.dismissed_fields || {}).length;
+                  const highlightedCount = Object.keys(stagingMapperModal.highlighted_fields || {}).length;
                   const mappedCount = Object.values(stagingMapperModal.field_mapping || {}).filter(v => {
                     if (!v) return false;
                     if (typeof v === 'string') return !!v;
                     return v.fields && v.fields.length > 0;
                   }).length;
                   const totalFields = stagingMapperModal.detected_fields?.length || 0;
-                  const unmapped = totalFields - mappedCount;
+                  const unmapped = totalFields - mappedCount - dismissedCount - highlightedCount;
                   return unmapped > 0
                     ? `${unmapped} field${unmapped > 1 ? 's' : ''} need${unmapped === 1 ? 's' : ''} mapping to reach 100%`
-                    : '✓ All fields mapped - ready to promote!';
+                    : '✓ All fields resolved - ready to promote!';
                 })()}
               </div>
               <div style={{ display: 'flex', gap: '12px' }}>
