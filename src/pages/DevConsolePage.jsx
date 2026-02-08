@@ -1686,11 +1686,15 @@ export default function DevConsolePage() {
         }
       }
 
+      // Null out generated_documents that reference this form
+      await supabase.from('generated_documents').update({ form_library_id: null }).eq('form_library_id', id);
+
       // Get the library form first to find its promoted_from id
       const { data: libForm } = await supabase.from('form_library').select('promoted_from').eq('id', id).single();
 
       // Delete from form_library
-      await supabase.from('form_library').delete().eq('id', id);
+      const { error: delError } = await supabase.from('form_library').delete().eq('id', id);
+      if (delError) throw delError;
 
       // If it was promoted from staging, update the staging record back to pending
       if (libForm?.promoted_from) {
