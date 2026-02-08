@@ -144,21 +144,34 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
 function resolveFieldValue(mapping: any, context: Record<string, any>): string {
   if (!mapping) return '';
 
-  const field = mapping.universal_field;
-  if (!field) return '';
-
-  // Try exact match first
-  if (context[field] !== undefined) {
-    return String(context[field] || '');
+  // Support both universal_field (string) and universal_fields (array)
+  const fields: string[] = [];
+  if (mapping.universal_fields && Array.isArray(mapping.universal_fields)) {
+    fields.push(...mapping.universal_fields);
+  } else if (mapping.universal_field) {
+    fields.push(mapping.universal_field);
   }
 
-  // Try without category prefix
-  const fieldName = field.split('.').pop();
-  if (fieldName && context[fieldName] !== undefined) {
-    return String(context[fieldName] || '');
+  if (fields.length === 0) return '';
+
+  // Resolve each field and join with separator (for multi-field mappings like "city, state zip")
+  const separator = mapping.separator || ' ';
+  const values: string[] = [];
+
+  for (const field of fields) {
+    // Try exact match first
+    if (context[field] !== undefined && context[field] !== '') {
+      values.push(String(context[field]));
+      continue;
+    }
+    // Try without category prefix (e.g. "vehicle.year" -> "year")
+    const fieldName = field.split('.').pop();
+    if (fieldName && context[fieldName] !== undefined && context[fieldName] !== '') {
+      values.push(String(context[fieldName]));
+    }
   }
 
-  return '';
+  return values.join(separator);
 }
 
 // ============================================
@@ -180,10 +193,10 @@ async function fillPdfForm(
 
     console.log(`[FILL] PDF has ${totalFields} fillable fields`);
 
-    // Build mapping lookup: pdf_field -> universal_field
+    // Build mapping lookup: pdf_field -> mapping object
     const mappingLookup = new Map<string, any>();
     for (const mapping of fieldMappings) {
-      if (mapping.pdf_field && mapping.universal_field) {
+      if (mapping.pdf_field && (mapping.universal_field || mapping.universal_fields?.length)) {
         mappingLookup.set(mapping.pdf_field, mapping);
       }
     }
