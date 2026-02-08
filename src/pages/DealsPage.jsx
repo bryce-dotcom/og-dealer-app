@@ -152,21 +152,20 @@ export default function DealsPage() {
     const loadDocPackages = async () => {
       if (!dealerId) return;
       try {
-        // Load document packages (has form_ids array)
+        // Load document packages (has form_ids array + docs text array)
         const { data: pkgData, error: pkgError } = await supabase
           .from('document_packages')
-          .select('deal_type, form_ids')
+          .select('deal_type, form_ids, docs')
           .eq('dealer_id', dealerId);
 
         if (pkgError) throw pkgError;
 
-        // Load approved forms from staging (the library)
+        // Load forms from form_library (promoted/approved forms)
         const state = dealer?.state || 'UT';
         const { data: formsData, error: formsError } = await supabase
-          .from('form_staging')
+          .from('form_library')
           .select('id, form_number, form_name')
-          .eq('state', state)
-          .eq('status', 'approved');
+          .eq('state', state);
 
         if (formsError) throw formsError;
 
@@ -175,16 +174,24 @@ export default function DealsPage() {
         // Map form_ids to form names for each package
         const packages = {};
         pkgData?.forEach(pkg => {
-          if (pkg.deal_type && pkg.form_ids && Array.isArray(pkg.form_ids)) {
-            // Convert form IDs to form names
-            const formNames = pkg.form_ids.map(formId => {
+          if (!pkg.deal_type) return;
+
+          // Try resolving form_ids to names from form_library
+          let formNames = [];
+          if (pkg.form_ids && Array.isArray(pkg.form_ids)) {
+            formNames = pkg.form_ids.map(formId => {
               const form = formsData?.find(f => f.id === formId);
               return form ? form.form_name : null;
             }).filter(Boolean);
+          }
 
-            if (formNames.length > 0) {
-              packages[pkg.deal_type] = formNames;
-            }
+          // Fallback: use docs text array if form_ids didn't resolve
+          if (formNames.length === 0 && pkg.docs && Array.isArray(pkg.docs)) {
+            formNames = pkg.docs;
+          }
+
+          if (formNames.length > 0) {
+            packages[pkg.deal_type] = formNames;
           }
         });
 
