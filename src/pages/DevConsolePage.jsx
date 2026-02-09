@@ -1125,6 +1125,41 @@ export default function DevConsolePage() {
     setLoading(false);
   };
 
+  // Update an already-promoted library form with latest staging mappings
+  const updateLibraryForm = async (stagingForm) => {
+    setLoading(true);
+    try {
+      const libraryMatch = formLibrary.find(lf => lf.promoted_from === stagingForm.id);
+      if (!libraryMatch) {
+        showToast('Could not find library form to update', 'error');
+        setLoading(false);
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from('form_library')
+        .update({
+          field_mappings: Array.isArray(stagingForm.field_mappings) ? stagingForm.field_mappings : [],
+          detected_fields: Array.isArray(stagingForm.detected_fields) ? stagingForm.detected_fields : [],
+          mapping_confidence: Math.min(100, Math.max(0, parseInt(stagingForm.mapping_confidence) || 0)),
+          mapping_status: stagingForm.mapping_status || 'pending',
+          storage_bucket: stagingForm.storage_bucket || libraryMatch.storage_bucket,
+          storage_path: stagingForm.storage_path || libraryMatch.storage_path,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', libraryMatch.id);
+
+      if (updateError) throw updateError;
+
+      await logAudit('UPDATE_LIBRARY', 'form_library', libraryMatch.id, null, { from_staging: stagingForm.id });
+      showToast('Library form updated with latest mappings');
+      loadAllData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
   // Promote all pending staging forms to library
   const promoteAllForms = async () => {
     const pendingForms = formStaging.filter(f => f.status === 'pending');
@@ -2732,38 +2767,61 @@ export default function DevConsolePage() {
                                   </button>
                                 )}
 
-                                {/* Promote Button */}
-                                {isReadyToPromote && (
-                                  <button
-                                    onClick={() => setPromoteModal({ form: f, selectedLibrary: f.doc_type || 'deal' })}
-                                    style={{
-                                      background: 'none',
-                                      border: '1px solid #22c55e',
-                                      color: '#22c55e',
-                                      padding: '3px 8px',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '10px',
-                                      fontWeight: '600'
-                                    }}
-                                  >
-                                    Promote
-                                  </button>
-                                )}
-
-                                {/* Production Badge */}
-                                {isProduction && (
-                                  <span style={{
-                                    padding: '3px 8px',
-                                    borderRadius: '4px',
-                                    fontSize: '10px',
-                                    backgroundColor: '#22c55e',
-                                    color: '#000',
-                                    fontWeight: '600'
-                                  }}>
-                                    ✓ Live
-                                  </span>
-                                )}
+                                {/* Promote or Update Library Button */}
+                                {(() => {
+                                  const libraryVersion = formLibrary.find(lf => lf.promoted_from === f.id);
+                                  if (libraryVersion) {
+                                    return (
+                                      <>
+                                        <button
+                                          onClick={() => updateLibraryForm(f)}
+                                          style={{
+                                            background: 'none',
+                                            border: '1px solid #3b82f6',
+                                            color: '#3b82f6',
+                                            padding: '3px 8px',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '10px',
+                                            fontWeight: '600'
+                                          }}
+                                        >
+                                          Update Library
+                                        </button>
+                                        <span style={{
+                                          padding: '3px 8px',
+                                          borderRadius: '4px',
+                                          fontSize: '10px',
+                                          backgroundColor: '#3b82f6',
+                                          color: '#fff',
+                                          fontWeight: '600'
+                                        }}>
+                                          In Library
+                                        </span>
+                                      </>
+                                    );
+                                  }
+                                  if (isReadyToPromote) {
+                                    return (
+                                      <button
+                                        onClick={() => setPromoteModal({ form: f, selectedLibrary: f.doc_type || 'deal' })}
+                                        style={{
+                                          background: 'none',
+                                          border: '1px solid #22c55e',
+                                          color: '#22c55e',
+                                          padding: '3px 8px',
+                                          borderRadius: '4px',
+                                          cursor: 'pointer',
+                                          fontSize: '10px',
+                                          fontWeight: '600'
+                                        }}
+                                      >
+                                        Promote
+                                      </button>
+                                    );
+                                  }
+                                  return null;
+                                })()}
 
                                 {/* Delete */}
                                 <button
