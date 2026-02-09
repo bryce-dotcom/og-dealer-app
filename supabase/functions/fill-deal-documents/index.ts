@@ -211,6 +211,9 @@ async function fillPdfForm(
       };
     };
 
+    // Collect highlighted fields to draw after flatten
+    const highlightsToDraw: Array<{ fieldName: string; color: { r: number; g: number; b: number }; label: string }> = [];
+
     // Fill each field
     let highlightCount = 0;
     for (const field of fields) {
@@ -218,21 +221,12 @@ async function fillPdfForm(
       const mapping = mappingLookup.get(fieldName);
 
       if (mapping) {
-        // HIGHLIGHTED: set background color + optional label text
+        // HIGHLIGHTED: collect for post-flatten drawing
         if (mapping.status === 'highlight') {
-          try {
-            const textField = form.getTextField(fieldName);
-            const color = hexToRgb(mapping.highlight_color || '#ffff00');
-            textField.setBackgroundColor(rgb(color.r, color.g, color.b));
-            if (mapping.highlight_label) {
-              textField.setText(mapping.highlight_label);
-            }
-            highlightCount++;
-            console.log(`[FILL] ${fieldName} = HIGHLIGHT (${mapping.highlight_color || '#ffff00'}${mapping.highlight_label ? ', "' + mapping.highlight_label + '"' : ''})`);
-          } catch {
-            // Not a text field, try other types
-            console.log(`[FILL] Could not highlight field: ${fieldName}`);
-          }
+          const color = hexToRgb(mapping.highlight_color || '#ffff00');
+          highlightsToDraw.push({ fieldName, color, label: mapping.highlight_label || '' });
+          highlightCount++;
+          console.log(`[FILL] ${fieldName} = HIGHLIGHT (${mapping.highlight_color || '#ffff00'}${mapping.highlight_label ? ', "' + mapping.highlight_label + '"' : ''})`);
           continue;
         }
 
@@ -264,7 +258,70 @@ async function fillPdfForm(
       console.log(`[FILL] Highlighted ${highlightCount} fields`);
     }
 
+    // Capture field positions BEFORE flattening (flatten removes form fields)
+    const highlightRects: Array<{ pageIndex: number; x: number; y: number; width: number; height: number; color: { r: number; g: number; b: number }; label: string }> = [];
+    for (const hl of highlightsToDraw) {
+      try {
+        const tf = form.getTextField(hl.fieldName);
+        const widgets = tf.acroField.getWidgets();
+        for (const widget of widgets) {
+          const rect = widget.getRectangle();
+          const pageRef = widget.P();
+          const pages = pdfDoc.getPages();
+          let pageIndex = 0;
+          if (pageRef) {
+            for (let i = 0; i < pages.length; i++) {
+              if (pages[i].ref === pageRef) { pageIndex = i; break; }
+            }
+          }
+          highlightRects.push({
+            pageIndex,
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            color: hl.color,
+            label: hl.label
+          });
+        }
+      } catch (e) {
+        console.log(`[FILL] Could not get rect for highlight: ${hl.fieldName} - ${e}`);
+      }
+    }
+
     form.flatten();
+
+    // Draw highlight rectangles on pages after flatten
+    if (highlightRects.length > 0) {
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      for (const hr of highlightRects) {
+        try {
+          const page = pdfDoc.getPages()[hr.pageIndex];
+          // Draw colored rectangle
+          page.drawRectangle({
+            x: hr.x,
+            y: hr.y,
+            width: hr.width,
+            height: hr.height,
+            color: rgb(hr.color.r, hr.color.g, hr.color.b),
+            opacity: 0.4,
+          });
+          // Draw label text if provided
+          if (hr.label) {
+            const fontSize = Math.min(10, hr.height - 2);
+            page.drawText(hr.label, {
+              x: hr.x + 2,
+              y: hr.y + (hr.height - fontSize) / 2,
+              size: fontSize > 0 ? fontSize : 8,
+              font,
+              color: rgb(0, 0, 0),
+            });
+          }
+        } catch (e) {
+          console.log(`[FILL] Error drawing highlight rect: ${e}`);
+        }
+      }
+    }
   } catch (err) {
     console.log(`[FILL] Error filling form: ${err}`);
   }
