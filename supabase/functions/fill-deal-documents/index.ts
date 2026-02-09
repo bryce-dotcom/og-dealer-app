@@ -129,8 +129,12 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
     buyer_zip: deal.zip || '',
     buyer_phone: deal.phone || '',
     buyer_email: deal.email || '',
-    buyer_dl_number: deal.dl_number || '',
-    buyer_dl_state: deal.dl_state || '',
+    buyer_dl_number: deal.purchaser_dl || deal.dl_number || '',
+    buyer_dl_state: deal.purchaser_dl_state || deal.dl_state || '',
+    buyer_dob: formatDate(deal.purchaser_dob),
+    purchaser_dl: deal.purchaser_dl || '',
+    purchaser_dl_state: deal.purchaser_dl_state || '',
+    purchaser_dob: formatDate(deal.purchaser_dob),
     customer_name: buyerName,
     customer_address: deal.address || '',
     customer_phone: deal.phone || '',
@@ -178,6 +182,9 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
 
     // === TRADE-IN ===
     trade_description: deal.trade_description || '',
+    trade_year: String(deal.trade_year || ''),
+    trade_make: deal.trade_make || '',
+    trade_model: deal.trade_model || '',
     trade_value: formatCurrency(tradeVal),
     trade_allowance: formatCurrency(deal.trade_allowance || tradeVal),
     trade_acv: formatCurrency(deal.trade_acv || tradeVal),
@@ -198,9 +205,12 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
     accessory_3_desc: deal.accessory_3_desc || '',
     accessory_3_price: formatCurrency(deal.accessory_3_price || 0),
 
-    // === LIENHOLDER (dealer for BHPH) ===
-    lienholder_name: dealer?.dealer_name || '',
-    lienholder_address: dealer?.address || '',
+    // === LIENHOLDER (from deal, fallback to dealer for BHPH) ===
+    lienholder_name: deal.lienholder_name || dealer?.dealer_name || '',
+    lienholder_address: deal.lienholder_address || dealer?.address || '',
+    lienholder_city: deal.lienholder_city || dealer?.city || '',
+    lienholder_state: deal.lienholder_state || dealer?.state || '',
+    lienholder_zip: deal.lienholder_zip || dealer?.zip || '',
 
     // === DATES ===
     today: today,

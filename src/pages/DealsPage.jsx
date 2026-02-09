@@ -79,6 +79,10 @@ const INITIAL_DEAL_FORM = {
   zip: '',
   phone: '',
   email: '',
+  // Buyer ID fields
+  purchaser_dl: '',
+  purchaser_dl_state: '',
+  purchaser_dob: '',
   // Legacy buyer fields
   customer_email: '',
   customer_phone: '',
@@ -86,10 +90,15 @@ const INITIAL_DEAL_FORM = {
   stage: 'Lead',
   price: '',
   down_payment: '',
+  // Trade-in
   trade_value: '',
   trade_payoff: '',
   trade_acv: '',
   trade_description: '',
+  trade_year: '',
+  trade_make: '',
+  trade_model: '',
+  trade_vin: '',
   term_months: '48',
   interest_rate: '18',
   doc_fee: '299',
@@ -104,6 +113,21 @@ const INITIAL_DEAL_FORM = {
   accessory_2_price: '',
   accessory_3_desc: '',
   accessory_3_price: '',
+  // Co-Buyer
+  co_buyer_name: '',
+  co_buyer_address: '',
+  co_buyer_city: '',
+  co_buyer_state: '',
+  co_buyer_zip: '',
+  co_buyer_phone: '',
+  co_buyer_email: '',
+  co_buyer_dl_number: '',
+  // Lienholder
+  lienholder_name: '',
+  lienholder_address: '',
+  lienholder_city: '',
+  lienholder_state: '',
+  lienholder_zip: '',
   notes: '',
   date_of_sale: new Date().toISOString().split('T')[0]
 };
@@ -135,6 +159,9 @@ export default function DealsPage() {
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '', address: '' });
   const [showAccessories, setShowAccessories] = useState(false);
   const [showTradeIn, setShowTradeIn] = useState(false);
+  const [showCoBuyer, setShowCoBuyer] = useState(false);
+  const [showLienholder, setShowLienholder] = useState(false);
+  const [showBuyerDetails, setShowBuyerDetails] = useState(false);
   
   // Document system state
   const [docPackages, setDocPackages] = useState({});
@@ -506,6 +533,9 @@ export default function DealsPage() {
     setCustomerSearch('');
     setShowAccessories(false);
     setShowTradeIn(false);
+    setShowCoBuyer(false);
+    setShowLienholder(false);
+    setShowBuyerDetails(false);
     setShowDealForm(true);
   };
 
@@ -522,6 +552,10 @@ export default function DealsPage() {
       zip: deal.zip || '',
       phone: deal.phone || deal.customer_phone || '',
       email: deal.email || deal.customer_email || '',
+      // Buyer ID
+      purchaser_dl: deal.purchaser_dl || '',
+      purchaser_dl_state: deal.purchaser_dl_state || '',
+      purchaser_dob: deal.purchaser_dob || '',
       // Legacy fields
       customer_email: deal.customer_email || deal.email || '',
       customer_phone: deal.customer_phone || deal.phone || '',
@@ -533,6 +567,10 @@ export default function DealsPage() {
       trade_payoff: deal.trade_payoff || '',
       trade_acv: deal.trade_acv || '',
       trade_description: deal.trade_description || '',
+      trade_year: deal.trade_year || '',
+      trade_make: deal.trade_make || '',
+      trade_model: deal.trade_model || '',
+      trade_vin: deal.trade_vin || '',
       term_months: deal.term_months || '48',
       interest_rate: deal.interest_rate || deal.apr || '18',
       doc_fee: deal.doc_fee || '299',
@@ -547,12 +585,30 @@ export default function DealsPage() {
       accessory_2_price: deal.accessory_2_price || '',
       accessory_3_desc: deal.accessory_3_desc || '',
       accessory_3_price: deal.accessory_3_price || '',
+      // Co-Buyer
+      co_buyer_name: deal.co_buyer_name || '',
+      co_buyer_address: deal.co_buyer_address || '',
+      co_buyer_city: deal.co_buyer_city || '',
+      co_buyer_state: deal.co_buyer_state || '',
+      co_buyer_zip: deal.co_buyer_zip || '',
+      co_buyer_phone: deal.co_buyer_phone || '',
+      co_buyer_email: deal.co_buyer_email || '',
+      co_buyer_dl_number: deal.co_buyer_dl_number || '',
+      // Lienholder
+      lienholder_name: deal.lienholder_name || '',
+      lienholder_address: deal.lienholder_address || '',
+      lienholder_city: deal.lienholder_city || '',
+      lienholder_state: deal.lienholder_state || '',
+      lienholder_zip: deal.lienholder_zip || '',
       notes: deal.notes || '',
       date_of_sale: deal.date_of_sale || new Date().toISOString().split('T')[0]
     });
     setCustomerSearch(deal.purchaser_name || '');
     setShowAccessories(!!(deal.accessory_1_desc || deal.accessory_2_desc || deal.accessory_3_desc));
-    setShowTradeIn(!!(deal.trade_value || deal.trade_description));
+    setShowTradeIn(!!(deal.trade_value || deal.trade_description || deal.trade_year));
+    setShowCoBuyer(!!(deal.co_buyer_name));
+    setShowLienholder(!!(deal.lienholder_name));
+    setShowBuyerDetails(!!(deal.purchaser_dl || deal.purchaser_dob || deal.address));
     
     // Load generated documents for this deal
     await loadGeneratedDocs(deal.id);
@@ -597,6 +653,10 @@ export default function DealsPage() {
         total_of_payments: Math.round(dealAnalysis.totalOfPayments * 100) / 100,
         balance_due: Math.round(dealAnalysis.amountFinanced * 100) / 100,
         negative_equity: Math.round(dealAnalysis.negativeEquity * 100) / 100,
+        // Buyer ID
+        purchaser_dl: dealForm.purchaser_dl || null,
+        purchaser_dl_state: dealForm.purchaser_dl_state || null,
+        purchaser_dob: dealForm.purchaser_dob || null,
         // Other deal info
         salesman: dealForm.salesman || null,
         date_of_sale: dealForm.date_of_sale,
@@ -607,6 +667,10 @@ export default function DealsPage() {
         trade_acv: parseFloat(dealForm.trade_acv) || 0,
         trade_allowance: parseFloat(dealForm.trade_value) || 0,
         trade_description: dealForm.trade_description || null,
+        trade_year: dealForm.trade_year ? parseInt(dealForm.trade_year) : null,
+        trade_make: dealForm.trade_make || null,
+        trade_model: dealForm.trade_model || null,
+        trade_vin: dealForm.trade_vin || null,
         // Financing terms
         term_months: parseInt(dealForm.term_months) || 48,
         interest_rate: parseFloat(dealForm.interest_rate) || 18,
@@ -621,7 +685,22 @@ export default function DealsPage() {
         accessory_2_desc: dealForm.accessory_2_desc || null,
         accessory_2_price: parseFloat(dealForm.accessory_2_price) || 0,
         accessory_3_desc: dealForm.accessory_3_desc || null,
-        accessory_3_price: parseFloat(dealForm.accessory_3_price) || 0
+        accessory_3_price: parseFloat(dealForm.accessory_3_price) || 0,
+        // Co-Buyer
+        co_buyer_name: dealForm.co_buyer_name || null,
+        co_buyer_address: dealForm.co_buyer_address || null,
+        co_buyer_city: dealForm.co_buyer_city || null,
+        co_buyer_state: dealForm.co_buyer_state || null,
+        co_buyer_zip: dealForm.co_buyer_zip || null,
+        co_buyer_phone: dealForm.co_buyer_phone || null,
+        co_buyer_email: dealForm.co_buyer_email || null,
+        co_buyer_dl_number: dealForm.co_buyer_dl_number || null,
+        // Lienholder
+        lienholder_name: dealForm.lienholder_name || null,
+        lienholder_address: dealForm.lienholder_address || null,
+        lienholder_city: dealForm.lienholder_city || null,
+        lienholder_state: dealForm.lienholder_state || null,
+        lienholder_zip: dealForm.lienholder_zip || null
       };
 
       let result;
@@ -1006,6 +1085,31 @@ export default function DealsPage() {
                   </div>
                 </div>
 
+                {/* Buyer Details (Address, DL, DOB) */}
+                {showBuyerDetails ? (
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600' }}>BUYER DETAILS</span>
+                      <button onClick={() => setShowBuyerDetails(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '11px' }}>collapse</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
+                      <div><label style={labelStyle}>Address</label><input type="text" value={dealForm.address} onChange={(e) => setDealForm(prev => ({ ...prev, address: e.target.value }))} placeholder="123 Main St" style={inputStyle} /></div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>City</label><input type="text" value={dealForm.city} onChange={(e) => setDealForm(prev => ({ ...prev, city: e.target.value }))} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>State</label><input type="text" value={dealForm.state} onChange={(e) => setDealForm(prev => ({ ...prev, state: e.target.value }))} placeholder="UT" maxLength={2} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Zip</label><input type="text" value={dealForm.zip} onChange={(e) => setDealForm(prev => ({ ...prev, zip: e.target.value }))} style={inputStyle} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>Driver License #</label><input type="text" value={dealForm.purchaser_dl} onChange={(e) => setDealForm(prev => ({ ...prev, purchaser_dl: e.target.value }))} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>DL State</label><input type="text" value={dealForm.purchaser_dl_state} onChange={(e) => setDealForm(prev => ({ ...prev, purchaser_dl_state: e.target.value }))} placeholder="UT" maxLength={2} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>DOB</label><input type="date" value={dealForm.purchaser_dob} onChange={(e) => setDealForm(prev => ({ ...prev, purchaser_dob: e.target.value }))} style={inputStyle} /></div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowBuyerDetails(true)} style={{ padding: '10px', backgroundColor: 'transparent', border: `1px dashed ${theme.border}`, borderRadius: '8px', color: theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>+ Buyer Details (Address, DL, DOB)</button>
+                )}
+
                 {/* Deal Type & Stage */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                   <div>
@@ -1034,8 +1138,19 @@ export default function DealsPage() {
                 {/* Trade-In */}
                 {showTradeIn ? (
                   <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
-                    <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>TRADE-IN</div>
-                    <input type="text" value={dealForm.trade_description} onChange={(e) => setDealForm(prev => ({ ...prev, trade_description: e.target.value }))} placeholder="2018 Honda Civic" style={{ ...inputStyle, marginBottom: '8px' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600' }}>TRADE-IN</span>
+                      <button onClick={() => setShowTradeIn(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '11px' }}>collapse</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 2fr', gap: '8px', marginBottom: '8px' }}>
+                      <div><label style={labelStyle}>Year</label><input type="number" value={dealForm.trade_year} onChange={(e) => setDealForm(prev => ({ ...prev, trade_year: e.target.value }))} placeholder="2018" style={inputStyle} /></div>
+                      <div><label style={labelStyle}>Make</label><input type="text" value={dealForm.trade_make} onChange={(e) => setDealForm(prev => ({ ...prev, trade_make: e.target.value }))} placeholder="Honda" style={inputStyle} /></div>
+                      <div><label style={labelStyle}>Model</label><input type="text" value={dealForm.trade_model} onChange={(e) => setDealForm(prev => ({ ...prev, trade_model: e.target.value }))} placeholder="Civic" style={inputStyle} /></div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                      <div><label style={labelStyle}>Description</label><input type="text" value={dealForm.trade_description} onChange={(e) => setDealForm(prev => ({ ...prev, trade_description: e.target.value }))} placeholder="2018 Honda Civic EX" style={inputStyle} /></div>
+                      <div><label style={labelStyle}>Trade VIN</label><input type="text" value={dealForm.trade_vin} onChange={(e) => setDealForm(prev => ({ ...prev, trade_vin: e.target.value }))} placeholder="VIN" style={inputStyle} /></div>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
                       <div><label style={labelStyle}>Allowance</label><input type="number" value={dealForm.trade_value} onChange={(e) => setDealForm(prev => ({ ...prev, trade_value: e.target.value }))} style={inputStyle} /></div>
                       <div><label style={labelStyle}>Payoff</label><input type="number" value={dealForm.trade_payoff} onChange={(e) => setDealForm(prev => ({ ...prev, trade_payoff: e.target.value }))} style={inputStyle} /></div>
@@ -1093,6 +1208,53 @@ export default function DealsPage() {
                   </div>
                 ) : (
                   <button onClick={() => setShowAccessories(true)} style={{ padding: '10px', backgroundColor: 'transparent', border: `1px dashed ${theme.border}`, borderRadius: '8px', color: theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>+ Add Accessories</button>
+                )}
+
+                {/* Co-Buyer */}
+                {showCoBuyer ? (
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600' }}>CO-BUYER</span>
+                      <button onClick={() => setShowCoBuyer(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '11px' }}>collapse</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
+                      <div><label style={labelStyle}>Co-Buyer Name</label><input type="text" value={dealForm.co_buyer_name} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_name: e.target.value }))} style={inputStyle} /></div>
+                      <div><label style={labelStyle}>Address</label><input type="text" value={dealForm.co_buyer_address} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_address: e.target.value }))} style={inputStyle} /></div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>City</label><input type="text" value={dealForm.co_buyer_city} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_city: e.target.value }))} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>State</label><input type="text" value={dealForm.co_buyer_state} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_state: e.target.value }))} maxLength={2} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Zip</label><input type="text" value={dealForm.co_buyer_zip} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_zip: e.target.value }))} style={inputStyle} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>Phone</label><input type="tel" value={dealForm.co_buyer_phone} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_phone: e.target.value }))} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Email</label><input type="email" value={dealForm.co_buyer_email} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_email: e.target.value }))} style={inputStyle} /></div>
+                      </div>
+                      <div><label style={labelStyle}>DL Number</label><input type="text" value={dealForm.co_buyer_dl_number} onChange={(e) => setDealForm(prev => ({ ...prev, co_buyer_dl_number: e.target.value }))} style={inputStyle} /></div>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowCoBuyer(true)} style={{ padding: '10px', backgroundColor: 'transparent', border: `1px dashed ${theme.border}`, borderRadius: '8px', color: theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>+ Add Co-Buyer</button>
+                )}
+
+                {/* Lienholder */}
+                {showLienholder ? (
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600' }}>LIENHOLDER</span>
+                      <button onClick={() => setShowLienholder(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '11px' }}>collapse</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
+                      <div><label style={labelStyle}>Lienholder Name</label><input type="text" value={dealForm.lienholder_name} onChange={(e) => setDealForm(prev => ({ ...prev, lienholder_name: e.target.value }))} placeholder="Bank / Credit Union" style={inputStyle} /></div>
+                      <div><label style={labelStyle}>Address</label><input type="text" value={dealForm.lienholder_address} onChange={(e) => setDealForm(prev => ({ ...prev, lienholder_address: e.target.value }))} style={inputStyle} /></div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>City</label><input type="text" value={dealForm.lienholder_city} onChange={(e) => setDealForm(prev => ({ ...prev, lienholder_city: e.target.value }))} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>State</label><input type="text" value={dealForm.lienholder_state} onChange={(e) => setDealForm(prev => ({ ...prev, lienholder_state: e.target.value }))} maxLength={2} style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Zip</label><input type="text" value={dealForm.lienholder_zip} onChange={(e) => setDealForm(prev => ({ ...prev, lienholder_zip: e.target.value }))} style={inputStyle} /></div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowLienholder(true)} style={{ padding: '10px', backgroundColor: 'transparent', border: `1px dashed ${theme.border}`, borderRadius: '8px', color: theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>+ Add Lienholder</button>
                 )}
 
                 {/* Notes */}

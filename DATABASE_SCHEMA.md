@@ -444,6 +444,17 @@
 | `docs_generated_at` | timestamp with time zone | YES |  |
 | `customer_email` | text | YES |  |
 | `customer_phone` | text | YES |  |
+| `purchaser_dl` | text | YES |  |
+| `purchaser_dl_state` | text | YES |  |
+| `purchaser_dob` | date | YES |  |
+| `trade_year` | integer | YES |  |
+| `trade_make` | text | YES |  |
+| `trade_model` | text | YES |  |
+| `lienholder_name` | text | YES |  |
+| `lienholder_address` | text | YES |  |
+| `lienholder_city` | text | YES |  |
+| `lienholder_state` | text | YES |  |
+| `lienholder_zip` | text | YES |  |
 | `co_buyer_name` | text | YES |  |
 | `co_buyer_address` | text | YES |  |
 | `co_buyer_city` | text | YES |  |
