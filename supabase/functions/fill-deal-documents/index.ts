@@ -32,22 +32,40 @@ function formatNumber(value: number | string | null): string {
 // Maps our schema to form context values
 // ============================================
 function buildFormContext(deal: any, vehicle: any, dealer: any) {
-  const nameParts = (deal.purchaser_name || '').trim().split(' ');
-  const firstName = nameParts[0] || '';
-  const lastName = nameParts.slice(1).join(' ') || '';
+  // Parse buyer name
+  const buyerName = deal.purchaser_name || '';
+  const nameParts = buyerName.trim().split(' ');
+  const buyerFirst = nameParts[0] || '';
+  const buyerLast = nameParts.slice(1).join(' ') || '';
+
+  // Parse co-buyer name
+  const coBuyerName = deal.co_buyer_name || '';
+  const coNameParts = coBuyerName.trim().split(' ');
+  const coBuyerFirst = coNameParts[0] || '';
+  const coBuyerLast = coNameParts.slice(1).join(' ') || '';
+
+  // Calculated trade values
+  const tradeVal = parseFloat(deal.trade_value) || 0;
+  const tradePayoffVal = parseFloat(deal.trade_payoff) || 0;
+  const netTrade = tradeVal - tradePayoffVal;
+
+  // Calculated finance values
+  const totalPayments = parseFloat(deal.total_of_payments) || 0;
+  const amtFinanced = parseFloat(deal.amount_financed) || 0;
+
   const today = formatDate(new Date().toISOString());
+  const miles = formatNumber(vehicle?.miles || vehicle?.mileage || 0);
 
   return {
-    // === DEALER ===
+    // === DEALER (dot-prefix + aliases) ===
     'dealer.dealer_name': dealer?.dealer_name || dealer?.name || '',
-    'dealer.dealer_license': dealer?.dealer_license || dealer?.license_number || '',
+    'dealer.dealer_license': dealer?.dealer_license || '',
     'dealer.address': dealer?.address || '',
     'dealer.city': dealer?.city || '',
     'dealer.state': dealer?.state || '',
     'dealer.zip': dealer?.zip || '',
     'dealer.phone': dealer?.phone || '',
     'dealer.email': dealer?.email || '',
-    // Aliases
     dealer_name: dealer?.dealer_name || dealer?.name || '',
     dealer_license: dealer?.dealer_license || '',
     dealer_address: dealer?.address || '',
@@ -55,76 +73,134 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
     dealer_state: dealer?.state || '',
     dealer_zip: dealer?.zip || '',
     dealer_phone: dealer?.phone || '',
+    dealer_email: dealer?.email || '',
+    seller_name: dealer?.dealer_name || dealer?.name || '',
+    seller_address: dealer?.address || '',
+    seller_city: dealer?.city || '',
+    seller_state: dealer?.state || '',
+    seller_zip: dealer?.zip || '',
+    seller_phone: dealer?.phone || '',
 
-    // === VEHICLE ===
+    // === VEHICLE (dot-prefix + plain + vehicle_ prefix) ===
     'vehicle.vin': vehicle?.vin || '',
     'vehicle.year': String(vehicle?.year || ''),
     'vehicle.make': vehicle?.make || '',
     'vehicle.model': vehicle?.model || '',
     'vehicle.trim': vehicle?.trim || '',
     'vehicle.color': vehicle?.color || '',
-    'vehicle.mileage': formatNumber(vehicle?.miles || vehicle?.mileage || 0),
+    'vehicle.mileage': miles,
     'vehicle.stock_number': vehicle?.stock_number || '',
-    // Aliases
     vin: vehicle?.vin || '',
     year: String(vehicle?.year || ''),
     make: vehicle?.make || '',
     model: vehicle?.model || '',
+    trim: vehicle?.trim || '',
     color: vehicle?.color || '',
-    odometer: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
-    mileage: formatNumber(vehicle?.miles || vehicle?.mileage || 0),
+    odometer: miles,
+    mileage: miles,
     stock_number: vehicle?.stock_number || '',
+    vehicle_year: String(vehicle?.year || ''),
+    vehicle_make: vehicle?.make || '',
+    vehicle_model: vehicle?.model || '',
+    vehicle_vin: vehicle?.vin || '',
+    vehicle_miles: miles,
+    vehicle_mileage: miles,
+    vehicle_color: vehicle?.color || '',
+    vehicle_trim: vehicle?.trim || '',
+    vehicle_stock: vehicle?.stock_number || '',
 
-    // === DEAL (BUYER + PRICING) ===
-    'deal.purchaser_name': deal.purchaser_name || '',
+    // === BUYER (dot-prefix + buyer_ + customer_ + purchaser_) ===
+    'deal.purchaser_name': buyerName,
     'deal.purchaser_address': deal.address || '',
     'deal.date_of_sale': formatDate(deal.date_of_sale),
     'deal.price': formatCurrency(deal.price || deal.sale_price || 0),
     'deal.down_payment': formatCurrency(deal.down_payment || 0),
     'deal.sales_tax': formatCurrency(deal.sales_tax || 0),
-    'deal.total_price': formatCurrency(deal.total_price || deal.total_sale || 0),
-    // Aliases
-    purchaser_name: deal.purchaser_name || '',
-    buyer_name: deal.purchaser_name || '',
-    buyer_first_name: firstName,
-    buyer_last_name: lastName,
+    'deal.total_price': formatCurrency(deal.total_price || 0),
+    purchaser_name: buyerName,
+    buyer_name: buyerName,
+    buyer_first: buyerFirst,
+    buyer_last: buyerLast,
+    buyer_first_name: buyerFirst,
+    buyer_last_name: buyerLast,
     buyer_address: deal.address || '',
     buyer_city: deal.city || '',
     buyer_state: deal.state || '',
     buyer_zip: deal.zip || '',
     buyer_phone: deal.phone || '',
     buyer_email: deal.email || '',
+    buyer_dl_number: deal.dl_number || '',
+    buyer_dl_state: deal.dl_state || '',
+    customer_name: buyerName,
+    customer_address: deal.address || '',
+    customer_phone: deal.phone || '',
+    customer_email: deal.email || '',
+
+    // === CO-BUYER ===
+    co_buyer_name: coBuyerName,
+    co_buyer_first: coBuyerFirst,
+    co_buyer_last: coBuyerLast,
+    co_buyer_address: deal.co_buyer_address || '',
+    co_buyer_city: deal.co_buyer_city || '',
+    co_buyer_state: deal.co_buyer_state || '',
+    co_buyer_zip: deal.co_buyer_zip || '',
+    co_buyer_phone: deal.co_buyer_phone || '',
+    co_buyer_email: deal.co_buyer_email || '',
+    co_buyer_dl_number: deal.co_buyer_dl_number || '',
+
+    // === PRICING ===
     date_of_sale: formatDate(deal.date_of_sale),
     sale_date: formatDate(deal.date_of_sale),
     price: formatCurrency(deal.price || deal.sale_price || 0),
     sale_price: formatCurrency(deal.price || deal.sale_price || 0),
     down_payment: formatCurrency(deal.down_payment || 0),
     sales_tax: formatCurrency(deal.sales_tax || 0),
-    total_price: formatCurrency(deal.total_price || deal.total_sale || 0),
+    total_price: formatCurrency(deal.total_price || 0),
+    total_sale: formatCurrency(deal.total_price || 0),
     doc_fee: formatCurrency(deal.doc_fee || 0),
     balance_due: formatCurrency(deal.balance_due || 0),
 
     // === FINANCING ===
-    'financing.loan_amount': formatCurrency(deal.amount_financed || 0),
+    'financing.loan_amount': formatCurrency(amtFinanced),
     'financing.interest_rate': deal.interest_rate ? `${deal.interest_rate}%` : '',
     'financing.term_months': String(deal.term_months || ''),
     'financing.monthly_payment': formatCurrency(deal.monthly_payment || 0),
     'financing.apr': deal.apr ? `${deal.apr}%` : '',
-    // Aliases
-    amount_financed: formatCurrency(deal.amount_financed || 0),
+    amount_financed: formatCurrency(amtFinanced),
     apr: deal.apr ? `${deal.apr}%` : '',
     interest_rate: deal.interest_rate ? `${deal.interest_rate}%` : '',
     term_months: String(deal.term_months || ''),
     monthly_payment: formatCurrency(deal.monthly_payment || 0),
-    total_of_payments: formatCurrency(deal.total_of_payments || 0),
-    finance_charge: formatCurrency((deal.total_of_payments || 0) - (deal.amount_financed || 0)),
+    total_of_payments: formatCurrency(totalPayments),
+    finance_charge: formatCurrency(totalPayments - amtFinanced),
     first_payment_date: formatDate(deal.first_payment_date),
+    credit_score: String(deal.credit_score || ''),
 
-    // === TRADE ===
+    // === TRADE-IN ===
     trade_description: deal.trade_description || '',
-    trade_value: formatCurrency(deal.trade_value || 0),
-    trade_payoff: formatCurrency(deal.trade_payoff || 0),
+    trade_value: formatCurrency(tradeVal),
+    trade_allowance: formatCurrency(deal.trade_allowance || tradeVal),
+    trade_acv: formatCurrency(deal.trade_acv || tradeVal),
+    trade_payoff: formatCurrency(tradePayoffVal),
     trade_vin: deal.trade_vin || '',
+    net_trade: formatCurrency(netTrade),
+    negative_equity: netTrade < 0 ? formatCurrency(Math.abs(netTrade)) : '$0.00',
+
+    // === ADD-ONS ===
+    gap_insurance: formatCurrency(deal.gap_insurance || 0),
+    extended_warranty: formatCurrency(deal.extended_warranty || 0),
+    protection_package: formatCurrency(deal.protection_package || 0),
+    tire_wheel: formatCurrency(deal.tire_wheel || 0),
+    accessory_1_desc: deal.accessory_1_desc || '',
+    accessory_1_price: formatCurrency(deal.accessory_1_price || 0),
+    accessory_2_desc: deal.accessory_2_desc || '',
+    accessory_2_price: formatCurrency(deal.accessory_2_price || 0),
+    accessory_3_desc: deal.accessory_3_desc || '',
+    accessory_3_price: formatCurrency(deal.accessory_3_price || 0),
+
+    // === LIENHOLDER (dealer for BHPH) ===
+    lienholder_name: dealer?.dealer_name || '',
+    lienholder_address: dealer?.address || '',
 
     // === DATES ===
     today: today,
@@ -134,6 +210,7 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
     // === OTHER ===
     salesman: deal.salesman || '',
     deal_type: deal.deal_type || '',
+    deal_status: deal.deal_status || deal.stage || '',
     deal_number: String(deal.id || ''),
   };
 }

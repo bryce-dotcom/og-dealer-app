@@ -1838,6 +1838,21 @@ export default function DevConsolePage() {
       ]
     },
     {
+      group: 'Co-Buyer (from deals table)',
+      fields: [
+        'co_buyer_name',     // deal.co_buyer_name
+        'co_buyer_first',    // parsed from co_buyer_name
+        'co_buyer_last',     // parsed from co_buyer_name
+        'co_buyer_address',  // deal.co_buyer_address
+        'co_buyer_city',     // deal.co_buyer_city
+        'co_buyer_state',    // deal.co_buyer_state
+        'co_buyer_zip',      // deal.co_buyer_zip
+        'co_buyer_phone',    // deal.co_buyer_phone
+        'co_buyer_email',    // deal.co_buyer_email
+        'co_buyer_dl_number',// deal.co_buyer_dl_number
+      ]
+    },
+    {
       group: 'Vehicle (from inventory)',
       fields: [
         'vehicle_year',      // inventory.year
