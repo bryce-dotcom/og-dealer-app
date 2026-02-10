@@ -58,6 +58,7 @@
 - [`master_forms`](#master_forms)
 - [`shared_form_mappings`](#shared_form_mappings)
 - [`universal_fields`](#universal_fields)
+- [`dealer_custom_forms`](#dealer_custom_forms) *
 
 ### State & Compliance
 - [`state_metadata`](#state_metadata)
@@ -910,6 +911,28 @@
 | `description` | text | YES |  |
 | `format_hint` | text | YES |  |
 | `created_at` | timestamp with time zone | YES | now() |
+
+## dealer_custom_forms (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | YES |  |
+| `form_name` | text | NO |  |
+| `form_number` | text | YES |  |
+| `category` | text | YES | custom |
+| `description` | text | YES |  |
+| `storage_bucket` | text | YES | dealer-forms |
+| `storage_path` | text | YES |  |
+| `file_size_bytes` | integer | YES |  |
+| `is_fillable` | boolean | YES | true |
+| `detected_fields` | jsonb | YES | [] |
+| `field_mappings` | jsonb | YES | [] |
+| `mapping_confidence` | integer | YES | 0 |
+| `mapping_status` | text | YES | unmapped |
+| `status` | text | YES | active |
+| `created_at` | timestamp with time zone | YES | now() |
+| `updated_at` | timestamp with time zone | YES | now() |
 
 # State & Compliance
 

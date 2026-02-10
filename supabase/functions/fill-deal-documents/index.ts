@@ -488,7 +488,7 @@ serve(async (req) => {
     console.log(`[DOCS] Package has ${pkg.form_ids.length} forms`);
 
     // Get forms from form_library
-    const { data: forms, error: formsError } = await supabase
+    const { data: libraryForms, error: formsError } = await supabase
       .from('form_library')
       .select('id, form_number, form_name, download_url, source_url, field_mappings, is_fillable, storage_path, storage_bucket')
       .in('id', pkg.form_ids);
@@ -497,9 +497,25 @@ serve(async (req) => {
       throw new Error(`Error loading forms: ${formsError.message}`);
     }
 
+    const forms: any[] = [...(libraryForms || [])];
+
+    // Check dealer_custom_forms for any IDs not found in form_library
+    const foundIds = new Set(forms.map((f: any) => f.id));
+    const missingIds = pkg.form_ids.filter((id: string) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      const { data: customForms } = await supabase
+        .from('dealer_custom_forms')
+        .select('id, form_number, form_name, field_mappings, is_fillable, storage_path, storage_bucket')
+        .in('id', missingIds);
+      if (customForms?.length) {
+        console.log(`[DOCS] Found ${customForms.length} custom forms`);
+        forms.push(...customForms);
+      }
+    }
+
     // If no form_ids matched, fall back to docs text array for template matching
-    if (!forms?.length) {
-      console.log(`[DOCS] No form_library rows matched form_ids. Falling back to docs names.`);
+    if (forms.length === 0) {
+      console.log(`[DOCS] No form_library/custom rows matched form_ids. Falling back to docs names.`);
       // Re-fetch package with docs column
       const { data: fullPkg } = await supabase
         .from('document_packages')
@@ -528,7 +544,7 @@ serve(async (req) => {
 
       console.log(`[DOCS] Using ${pseudoForms.length} doc names from package: ${docNames.join(', ')}`);
       // Replace forms with pseudo-forms
-      (forms as any[]).push(...pseudoForms);
+      forms.push(...pseudoForms);
     }
 
     console.log(`[DOCS] Found ${forms.length} active forms to generate`);

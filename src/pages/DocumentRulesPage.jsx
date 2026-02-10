@@ -10,6 +10,7 @@ export default function DocumentRulesPage() {
   // Data
   const [forms, setForms] = useState([]);
   const [packages, setPackages] = useState([]);
+  const [dealerCustomForms, setDealerCustomForms] = useState([]);
 
   // UI State
   const [activeTab, setActiveTab] = useState('forms');
@@ -20,6 +21,9 @@ export default function DocumentRulesPage() {
   const [settingsModal, setSettingsModal] = useState(false);
   const [customDealTypes, setCustomDealTypes] = useState([]);
   const [newDealType, setNewDealType] = useState('');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadingForm, setUploadingForm] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ form_name: '', form_number: '', category: 'custom' });
 
   // Default deal types (user can add more via settings)
   const defaultDealTypes = ['Cash', 'BHPH', 'Financing', 'Wholesale'];
@@ -39,6 +43,7 @@ export default function DocumentRulesPage() {
     disclosure: '#ec4899',
     registration: '#06b6d4',
     compliance: '#f97316',
+    custom: '#f59e0b',
     other: '#71717a'
   };
 
@@ -97,6 +102,21 @@ export default function DocumentRulesPage() {
         }
       }
 
+      // Load dealer custom forms
+      if (dealerId) {
+        const { data: customData, error: customError } = await supabase
+          .from('dealer_custom_forms')
+          .select('*')
+          .eq('dealer_id', dealerId)
+          .order('created_at', { ascending: false });
+
+        if (customError) {
+          console.error('[DocumentRules] Custom forms error:', customError);
+        } else {
+          setDealerCustomForms(customData || []);
+        }
+      }
+
     } catch (err) {
       console.error('[DocumentRules] Load error:', err);
       showToast('Failed to load data: ' + err.message, 'error');
@@ -125,6 +145,93 @@ export default function DocumentRulesPage() {
   const removeCustomDealType = (type) => {
     saveCustomDealTypes(customDealTypes.filter(t => t !== type));
     showToast(`Removed "${type}" deal type`);
+  };
+
+  // === CUSTOM FORM FUNCTIONS ===
+  const handleCustomFormUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.name.endsWith('.pdf')) {
+      showToast('Please select a PDF file', 'error');
+      return;
+    }
+
+    setUploadingForm(true);
+    try {
+      // 1. Upload to storage
+      const fileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const storagePath = `${dealerId}/${Date.now()}_${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('dealer-forms')
+        .upload(storagePath, file, { contentType: 'application/pdf' });
+
+      if (uploadError) throw uploadError;
+
+      // 2. Extract form fields via edge function
+      const extractRes = await fetch(
+        `https://rlzudfinlxonpbwacxpt.supabase.co/functions/v1/extract-pdf-fields`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsenVkZmlubHhvbnBid2FjeHB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1OTk5MzksImV4cCI6MjA4NDE3NTkzOX0.93JAEAoYad2WStPpaZZbFAUR3cIKWF1PG5xEVmMkj4U` },
+          body: JSON.stringify({ storage_bucket: 'dealer-forms', storage_path: storagePath })
+        }
+      );
+      const extractResult = await extractRes.json();
+      if (!extractResult.success) throw new Error(extractResult.error || 'Field extraction failed');
+
+      // 3. Create database record
+      const { data: newForm, error: insertError } = await supabase
+        .from('dealer_custom_forms')
+        .insert({
+          dealer_id: dealerId,
+          form_name: uploadForm.form_name || file.name.replace('.pdf', ''),
+          form_number: uploadForm.form_number || null,
+          category: uploadForm.category || 'custom',
+          storage_bucket: 'dealer-forms',
+          storage_path: storagePath,
+          file_size_bytes: file.size,
+          detected_fields: extractResult.detected_fields.map(f => f.pdf_field),
+          field_mappings: extractResult.detected_fields,
+          is_fillable: extractResult.fields_count > 0,
+          mapping_status: extractResult.fields_count > 0 ? 'unmapped' : 'no_fields'
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      showToast(`Form uploaded - ${extractResult.fields_count} fillable fields detected`);
+      setShowUploadModal(false);
+      setUploadForm({ form_name: '', form_number: '', category: 'custom' });
+      loadData();
+
+      // Open mapping modal for the new form if it has fields
+      if (extractResult.fields_count > 0 && newForm) {
+        setMapperModal({ ...newForm, _isCustom: true });
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+      showToast('Upload failed: ' + err.message, 'error');
+    } finally {
+      setUploadingForm(false);
+    }
+  };
+
+  const deleteCustomForm = async (form) => {
+    if (!confirm(`Delete "${form.form_name}"? This cannot be undone.`)) return;
+    try {
+      // Delete from storage
+      if (form.storage_path) {
+        await supabase.storage.from(form.storage_bucket || 'dealer-forms').remove([form.storage_path]);
+      }
+      // Delete from database
+      const { error } = await supabase.from('dealer_custom_forms').delete().eq('id', form.id);
+      if (error) throw error;
+      showToast('Custom form deleted');
+      loadData();
+    } catch (err) {
+      showToast('Delete failed: ' + err.message, 'error');
+    }
   };
 
   // === PACKAGE FUNCTIONS ===
@@ -171,23 +278,27 @@ export default function DocumentRulesPage() {
   };
 
   // === HELPERS ===
-  const getFormById = (id) => forms.find(f => f.id === id);
+  const getFormById = (id) => forms.find(f => f.id === id) || dealerCustomForms.find(f => f.id === id);
 
-  const formsByCategory = forms.reduce((acc, form) => {
+  // Combine platform forms + custom forms for category grouping
+  const allForms = [...forms, ...dealerCustomForms.map(f => ({ ...f, _isCustom: true }))];
+
+  const formsByCategory = allForms.reduce((acc, form) => {
     const cat = form.category || 'other';
     if (!acc[cat]) acc[cat] = [];
     acc[cat].push(form);
     return acc;
   }, {});
 
-  const sortedCategories = ['deal', 'title', 'financing', 'tax', 'disclosure', 'registration', 'compliance', 'other']
+  const sortedCategories = ['deal', 'title', 'financing', 'tax', 'disclosure', 'registration', 'compliance', 'custom', 'other']
     .filter(cat => formsByCategory[cat]);
 
   const getFilteredForms = () => {
-    if (formFilter === 'all') return forms;
-    if (formFilter === 'mapped') return forms.filter(f => f.mapping_confidence >= 70);
-    if (formFilter === 'unmapped') return forms.filter(f => !f.detected_fields?.length);
-    return forms.filter(f => f.category === formFilter);
+    if (formFilter === 'all') return allForms;
+    if (formFilter === 'mapped') return allForms.filter(f => f.mapping_confidence >= 70);
+    if (formFilter === 'unmapped') return allForms.filter(f => !f.detected_fields?.length);
+    if (formFilter === 'custom') return dealerCustomForms.map(f => ({ ...f, _isCustom: true }));
+    return allForms.filter(f => f.category === formFilter);
   };
 
   // Styles
@@ -215,16 +326,24 @@ export default function DocumentRulesPage() {
           <div>
             <h1 style={{ fontSize: '24px', fontWeight: '700', margin: '0 0 8px 0' }}>Document Rules</h1>
             <p style={{ color: '#a1a1aa', margin: 0 }}>
-              {dealer?.state || 'UT'} • {forms.length} forms available • {packages.length} packages configured
+              {dealer?.state || 'UT'} • {forms.length} platform forms • {dealerCustomForms.length} custom • {packages.length} packages
             </p>
           </div>
-          <button
-            onClick={() => setSettingsModal(true)}
-            style={{ ...btnSecondary, display: 'flex', alignItems: 'center', gap: '8px' }}
-            title="Package Settings"
-          >
-            ⚙️ Settings
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setShowUploadModal(true)}
+              style={{ ...btnPrimary, backgroundColor: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              + Upload Custom Form
+            </button>
+            <button
+              onClick={() => setSettingsModal(true)}
+              style={{ ...btnSecondary, display: 'flex', alignItems: 'center', gap: '8px' }}
+              title="Package Settings"
+            >
+              Settings
+            </button>
+          </div>
         </div>
 
         {/* Stats Row */}
@@ -238,6 +357,10 @@ export default function DocumentRulesPage() {
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{forms.filter(f => f.mapping_confidence >= 70).length}</div>
           </div>
           <div style={cardStyle}>
+            <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Custom Forms</div>
+            <div style={{ fontSize: '28px', fontWeight: '700', color: '#f59e0b' }}>{dealerCustomForms.length}</div>
+          </div>
+          <div style={cardStyle}>
             <div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Packages</div>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#8b5cf6' }}>{packages.length}</div>
           </div>
@@ -246,7 +369,7 @@ export default function DocumentRulesPage() {
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '1px solid #3f3f46', paddingBottom: '4px' }}>
           {[
-            { id: 'forms', label: 'Form Library', count: forms.length },
+            { id: 'forms', label: 'Form Library', count: allForms.length },
             { id: 'packages', label: 'Doc Packages', count: packages.length },
           ].map(tab => (
             <button
@@ -271,7 +394,7 @@ export default function DocumentRulesPage() {
           <div>
             {/* Filters */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-              {['all', 'mapped', 'unmapped'].map(filter => (
+              {['all', 'mapped', 'unmapped', ...(dealerCustomForms.length > 0 ? ['custom'] : [])].map(filter => (
                 <button
                   key={filter}
                   onClick={() => setFormFilter(filter)}
@@ -281,7 +404,7 @@ export default function DocumentRulesPage() {
                     color: '#fff', textTransform: 'capitalize'
                   }}
                 >
-                  {filter === 'mapped' ? 'Ready' : filter === 'unmapped' ? 'Pending' : filter}
+                  {filter === 'mapped' ? 'Ready' : filter === 'unmapped' ? 'Pending' : filter === 'custom' ? `Custom (${dealerCustomForms.length})` : filter}
                 </button>
               ))}
             </div>
@@ -311,6 +434,7 @@ export default function DocumentRulesPage() {
                       const fieldsCount = form.detected_fields?.length || 0;
                       const confidence = form.mapping_confidence || 0;
                       const isReady = confidence >= 70;
+                      const isCustom = form._isCustom;
 
                       return (
                         <tr
@@ -319,7 +443,12 @@ export default function DocumentRulesPage() {
                           onClick={() => fieldsCount > 0 && setMapperModal(form)}
                         >
                           <td style={{ padding: '12px 8px' }}>
-                            <div style={{ fontWeight: '600' }}>{form.form_name}</div>
+                            <div style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {form.form_name}
+                              {isCustom && (
+                                <span style={{ padding: '1px 6px', borderRadius: '3px', fontSize: '9px', backgroundColor: '#f59e0b30', color: '#f59e0b', fontWeight: '700' }}>CUSTOM</span>
+                              )}
+                            </div>
                             {form.form_number && (
                               <div style={{ color: '#22c55e', fontSize: '11px', fontFamily: 'monospace' }}>{form.form_number}</div>
                             )}
@@ -340,10 +469,10 @@ export default function DocumentRulesPage() {
                             {fieldsCount > 0 ? (
                               <span style={{ color: '#a1a1aa' }}>{fieldsCount}</span>
                             ) : (
-                              <span style={{ color: '#52525b' }}>—</span>
+                              <span style={{ color: '#52525b' }}>-</span>
                             )}
                           </td>
-                          <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <td style={{ padding: '12px 8px', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                             {isReady ? (
                               <span style={{
                                 padding: '4px 10px', borderRadius: '4px', fontSize: '11px',
@@ -365,6 +494,15 @@ export default function DocumentRulesPage() {
                               }}>
                                 Pending
                               </span>
+                            )}
+                            {isCustom && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); deleteCustomForm(form); }}
+                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', padding: '4px 6px' }}
+                                title="Delete custom form"
+                              >
+                                Delete
+                              </button>
                             )}
                           </td>
                         </tr>
@@ -693,6 +831,90 @@ export default function DocumentRulesPage() {
 
             <div style={{ padding: '20px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'flex-end' }}>
               <button onClick={() => setSettingsModal(false)} style={btnPrimary}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === UPLOAD CUSTOM FORM MODAL === */}
+      {showUploadModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '480px', width: '100%', border: '1px solid #27272a' }}>
+            <div style={{ padding: '20px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>Upload Custom Form</h2>
+                <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '13px' }}>Add your own PDF forms to generate with deals</p>
+              </div>
+              <button onClick={() => { setShowUploadModal(false); setUploadForm({ form_name: '', form_number: '', category: 'custom' }); }} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>x</button>
+            </div>
+
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', fontWeight: '500', marginBottom: '6px' }}>Form Name *</label>
+                <input
+                  type="text"
+                  value={uploadForm.form_name}
+                  onChange={(e) => setUploadForm(prev => ({ ...prev, form_name: e.target.value }))}
+                  placeholder="e.g., Dealer Addendum"
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: '#fff', fontSize: '14px', outline: 'none' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', fontWeight: '500', marginBottom: '6px' }}>Form Number (optional)</label>
+                  <input
+                    type="text"
+                    value={uploadForm.form_number}
+                    onChange={(e) => setUploadForm(prev => ({ ...prev, form_number: e.target.value }))}
+                    placeholder="e.g., DA-001"
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: '#fff', fontSize: '14px', outline: 'none' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', fontWeight: '500', marginBottom: '6px' }}>Category</label>
+                  <select
+                    value={uploadForm.category}
+                    onChange={(e) => setUploadForm(prev => ({ ...prev, category: e.target.value }))}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: '#fff', fontSize: '14px', outline: 'none' }}
+                  >
+                    <option value="custom">Custom</option>
+                    <option value="deal">Deal</option>
+                    <option value="compliance">Compliance</option>
+                    <option value="financing">Financing</option>
+                    <option value="disclosure">Disclosure</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', fontWeight: '500', marginBottom: '6px' }}>PDF File *</label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleCustomFormUpload}
+                  disabled={uploadingForm || !uploadForm.form_name}
+                  style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: '#a1a1aa', fontSize: '13px' }}
+                />
+                {!uploadForm.form_name && (
+                  <p style={{ color: '#71717a', fontSize: '11px', marginTop: '4px' }}>Enter a form name first</p>
+                )}
+              </div>
+
+              {uploadingForm && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f59e0b', padding: '12px', backgroundColor: '#f59e0b15', borderRadius: '6px' }}>
+                  Uploading and analyzing form...
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '20px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowUploadModal(false); setUploadForm({ form_name: '', form_number: '', category: 'custom' }); }}
+                style={btnSecondary}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
