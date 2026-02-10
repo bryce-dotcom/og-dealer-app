@@ -143,46 +143,41 @@ serve(async (req) => {
   }
 
   try {
-    const { form_id, debug } = await req.json();
+    const { form_id, source_table, debug } = await req.json();
     if (!form_id) throw new Error("form_id is required");
 
-    console.log(`[MAP] Starting field mapping for form: ${form_id}${debug ? ' (DEBUG MODE)' : ''}`);
+    console.log(`[MAP] Starting field mapping for form: ${form_id}${source_table ? ` (source: ${source_table})` : ''}${debug ? ' (DEBUG MODE)' : ''}`);
 
-    // Get form from staging table first, then fall back to registry
+    // Get form - check source_table first if specified, then fall through all tables
     let form: any = null;
     let formError: any = null;
-    let sourceTable: string = "form_staging"; // Track which table we found the form in
+    let sourceTable: string = "";
 
-    // Try form_staging first (where discovered forms go)
-    const { data: stagingForm, error: stagingError } = await supabase
-      .from("form_staging")
-      .select("*")
-      .eq("id", form_id)
-      .single();
+    const tablesToCheck = source_table
+      ? [source_table, "form_staging", "form_registry", "form_library", "dealer_custom_forms"]
+      : ["form_staging", "form_registry", "form_library", "dealer_custom_forms"];
 
-    if (stagingForm) {
-      form = stagingForm;
-      sourceTable = "form_staging";
-      console.log(`[MAP] Found form in form_staging`);
-    } else {
-      // Fall back to form_registry (production forms)
-      const { data: registryForm, error: registryError } = await supabase
-        .from("form_registry")
+    // Deduplicate while preserving order
+    const uniqueTables = [...new Set(tablesToCheck)];
+
+    for (const table of uniqueTables) {
+      const { data, error } = await supabase
+        .from(table)
         .select("*")
         .eq("id", form_id)
         .single();
 
-      if (registryForm) {
-        form = registryForm;
-        sourceTable = "form_registry";
-        console.log(`[MAP] Found form in form_registry`);
-      } else {
-        formError = stagingError || registryError;
+      if (data) {
+        form = data;
+        sourceTable = table;
+        console.log(`[MAP] Found form in ${table}`);
+        break;
       }
+      if (!formError) formError = error;
     }
 
     if (!form) {
-      throw new Error(`Form not found in staging or registry: ${formError?.message || form_id}`);
+      throw new Error(`Form not found in any table: ${formError?.message || form_id}`);
     }
 
     console.log(`[MAP] Form: ${form.form_name} (${form.state})`);

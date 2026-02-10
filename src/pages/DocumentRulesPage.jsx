@@ -24,6 +24,7 @@ export default function DocumentRulesPage() {
   const [uploadingForm, setUploadingForm] = useState(false);
   const [uploadForm, setUploadForm] = useState({ form_name: '', form_number: '', category: 'custom' });
   const [mappingForm, setMappingForm] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   // Default deal types (user can add more via settings)
   const defaultDealTypes = ['Cash', 'BHPH', 'Financing', 'Wholesale'];
@@ -223,6 +224,65 @@ export default function DocumentRulesPage() {
     showToast(`Saved - ${mappedCount} mapped, ${highlightCount} highlighted, ${dismissedCount} dismissed (${confidence}%)`);
     setMappingForm(null);
     loadData();
+  };
+
+  // === ANALYZE / AUTO-MAP ===
+  const aiToUiFieldMap = {
+    'dealer.dealer_name': 'dealer_name', 'dealer.dealer_license': 'dealer_license',
+    'dealer.address': 'dealer_address', 'dealer.city': 'dealer_city', 'dealer.state': 'dealer_state',
+    'dealer.zip': 'dealer_zip', 'dealer.phone': 'dealer_phone', 'dealer.email': 'dealer_email',
+    'vehicle.vin': 'vin', 'vehicle.year': 'year', 'vehicle.make': 'make', 'vehicle.model': 'model',
+    'vehicle.trim': 'vehicle_trim', 'vehicle.color': 'color', 'vehicle.mileage': 'mileage',
+    'vehicle.stock_number': 'stock_number',
+    'deal.purchaser_name': 'purchaser_name', 'deal.purchaser_address': 'buyer_address',
+    'deal.date_of_sale': 'date_of_sale', 'deal.price': 'sale_price',
+    'deal.down_payment': 'down_payment', 'deal.sales_tax': 'sales_tax', 'deal.total_price': 'total_price',
+    'financing.loan_amount': 'amount_financed', 'financing.interest_rate': 'interest_rate',
+    'financing.term_months': 'term_months', 'financing.monthly_payment': 'monthly_payment', 'financing.apr': 'apr',
+  };
+
+  const analyzeFields = async () => {
+    if (!mappingForm) return;
+    setAnalyzing(true);
+    try {
+      const res = await fetch(
+        `https://rlzudfinlxonpbwacxpt.supabase.co/functions/v1/map-form-fields`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsenVkZmlubHhvbnBid2FjeHB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1OTk5MzksImV4cCI6MjA4NDE3NTkzOX0.93JAEAoYad2WStPpaZZbFAUR3cIKWF1PG5xEVmMkj4U`
+          },
+          body: JSON.stringify({
+            form_id: mappingForm.id,
+            source_table: mappingForm._isCustom ? 'dealer_custom_forms' : 'form_library'
+          })
+        }
+      );
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error || 'Analysis failed');
+
+      // Convert AI mappings (category.field) to UI format (flat field names)
+      const convertedMappings = (result.field_mappings || []).map(m => {
+        const uiField = m.universal_field ? (aiToUiFieldMap[m.universal_field] || m.universal_field.split('.').pop()) : null;
+        return {
+          pdf_field: m.pdf_field,
+          pdf_field_type: m.pdf_field_type || 'text',
+          universal_fields: uiField ? [uiField] : [],
+          status: uiField ? 'mapped' : 'unmapped',
+          confidence: m.confidence || 0,
+          matched: !!uiField
+        };
+      });
+
+      setMappingForm(prev => ({ ...prev, field_mappings: convertedMappings }));
+      showToast(`Auto-mapped ${result.mapped_count}/${result.detected_fields_count} fields (${result.mapping_confidence}%)`);
+    } catch (err) {
+      console.error('Analyze error:', err);
+      showToast('Analysis failed: ' + err.message, 'error');
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
   // === CUSTOM FORM FUNCTIONS ===
@@ -864,6 +924,13 @@ export default function DocumentRulesPage() {
               </div>
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={() => setMappingForm(null)} style={btnSecondary}>Cancel</button>
+                <button
+                  onClick={analyzeFields}
+                  disabled={analyzing}
+                  style={{ ...btnPrimary, backgroundColor: '#8b5cf6', opacity: analyzing ? 0.6 : 1 }}
+                >
+                  {analyzing ? 'Analyzing...' : 'Auto-Map'}
+                </button>
                 <button onClick={saveMappings} style={{ ...btnPrimary, backgroundColor: '#f97316' }}>Save Mappings</button>
               </div>
             </div>
