@@ -17,13 +17,13 @@ export default function DocumentRulesPage() {
   const [editingPackage, setEditingPackage] = useState(null);
   const [selectedForms, setSelectedForms] = useState([]);
   const [formFilter, setFormFilter] = useState('all');
-  const [mapperModal, setMapperModal] = useState(null);
   const [settingsModal, setSettingsModal] = useState(false);
   const [customDealTypes, setCustomDealTypes] = useState([]);
   const [newDealType, setNewDealType] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadingForm, setUploadingForm] = useState(false);
   const [uploadForm, setUploadForm] = useState({ form_name: '', form_number: '', category: 'custom' });
+  const [mappingForm, setMappingForm] = useState(null);
 
   // Default deal types (user can add more via settings)
   const defaultDealTypes = ['Cash', 'BHPH', 'Financing', 'Wholesale'];
@@ -46,6 +46,19 @@ export default function DocumentRulesPage() {
     custom: '#f59e0b',
     other: '#71717a'
   };
+
+  const fieldContextOptions = [
+    { group: 'Buyer', fields: ['buyer_name','buyer_first','buyer_last','buyer_address','buyer_city','buyer_state','buyer_zip','buyer_phone','buyer_email','buyer_dl_number','buyer_dl_state','buyer_dob','purchaser_name','customer_name'] },
+    { group: 'Co-Buyer', fields: ['co_buyer_name','co_buyer_first','co_buyer_last','co_buyer_address','co_buyer_city','co_buyer_state','co_buyer_zip','co_buyer_phone','co_buyer_email','co_buyer_dl_number'] },
+    { group: 'Vehicle', fields: ['vehicle_year','vehicle_make','vehicle_model','vehicle_vin','vin','vehicle_miles','odometer','mileage','vehicle_color','color','vehicle_stock','stock_number','year','make','model','vehicle_trim'] },
+    { group: 'Dealer', fields: ['dealer_name','dealer_address','dealer_city','dealer_state','dealer_zip','dealer_phone','dealer_email','dealer_license','seller_name','seller_address'] },
+    { group: 'Pricing', fields: ['sale_price','price','down_payment','doc_fee','sales_tax','total_price','total_sale','balance_due'] },
+    { group: 'Financing', fields: ['amount_financed','apr','interest_rate','term_months','monthly_payment','first_payment_date','total_of_payments','finance_charge','credit_score'] },
+    { group: 'Trade-In', fields: ['trade_description','trade_year','trade_make','trade_model','trade_value','trade_acv','trade_allowance','trade_payoff','trade_vin','negative_equity','net_trade'] },
+    { group: 'Add-Ons', fields: ['gap_insurance','extended_warranty','protection_package','tire_wheel','accessory_1_desc','accessory_1_price','accessory_2_desc','accessory_2_price','accessory_3_desc','accessory_3_price'] },
+    { group: 'Lienholder', fields: ['lienholder_name','lienholder_address','lienholder_city','lienholder_state','lienholder_zip'] },
+    { group: 'Other', fields: ['date_of_sale','sale_date','today','current_date','signature_date','salesman','deal_type','deal_status','deal_number'] },
+  ];
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -147,6 +160,71 @@ export default function DocumentRulesPage() {
     showToast(`Removed "${type}" deal type`);
   };
 
+  // === MAPPING MODAL FUNCTIONS ===
+  const openMappingModal = (form) => {
+    // Deep clone the form's field_mappings so edits don't mutate state
+    const mappings = (form.field_mappings || []).map(m => ({ ...m }));
+    setMappingForm({ ...form, field_mappings: mappings, _isCustom: !!form._isCustom });
+  };
+
+  const updateFieldMapping = (index, field, value) => {
+    setMappingForm(prev => {
+      if (!prev) return prev;
+      const newMappings = [...prev.field_mappings];
+      newMappings[index] = { ...newMappings[index], [field]: value };
+
+      // If setting a universal_field via dropdown, update status
+      if (field === 'universal_fields') {
+        newMappings[index].status = value.length > 0 ? 'mapped' : 'unmapped';
+        newMappings[index].matched = value.length > 0;
+        newMappings[index].confidence = value.length > 0 ? 1 : 0;
+      }
+
+      // If toggling highlight or dismissed, clear the mapping
+      if (field === 'status') {
+        if (value === 'highlight') {
+          newMappings[index].universal_fields = [];
+          newMappings[index].matched = false;
+          newMappings[index].highlight_color = newMappings[index].highlight_color || '#ffff00';
+        } else if (value === 'dismissed') {
+          newMappings[index].universal_fields = [];
+          newMappings[index].matched = false;
+        }
+      }
+
+      return { ...prev, field_mappings: newMappings };
+    });
+  };
+
+  const saveMappings = async () => {
+    if (!mappingForm) return;
+    const mappings = mappingForm.field_mappings || [];
+    const mappedCount = mappings.filter(f => f.status === 'mapped').length;
+    const dismissedCount = mappings.filter(f => f.status === 'dismissed').length;
+    const highlightCount = mappings.filter(f => f.status === 'highlight').length;
+    const scorableTotal = mappings.length - dismissedCount - highlightCount;
+    const confidence = scorableTotal > 0 ? Math.round((mappedCount / scorableTotal) * 100) : (mappings.length > 0 ? 100 : 0);
+
+    const table = mappingForm._isCustom ? 'dealer_custom_forms' : 'form_library';
+    const { error } = await supabase
+      .from(table)
+      .update({
+        field_mappings: mappings,
+        mapping_confidence: confidence,
+        mapping_status: mappedCount > 0 ? 'mapped' : 'unmapped',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', mappingForm.id);
+
+    if (error) {
+      showToast('Save failed: ' + error.message, 'error');
+      return;
+    }
+    showToast(`Saved - ${mappedCount} mapped, ${highlightCount} highlighted, ${dismissedCount} dismissed (${confidence}%)`);
+    setMappingForm(null);
+    loadData();
+  };
+
   // === CUSTOM FORM FUNCTIONS ===
   const handleCustomFormUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -207,7 +285,7 @@ export default function DocumentRulesPage() {
 
       // Open mapping modal for the new form if it has fields
       if (extractResult.fields_count > 0 && newForm) {
-        setMapperModal({ ...newForm, _isCustom: true });
+        openMappingModal({ ...newForm, _isCustom: true });
       }
     } catch (err) {
       console.error('Upload error:', err);
@@ -440,7 +518,7 @@ export default function DocumentRulesPage() {
                         <tr
                           key={form.id}
                           style={{ borderBottom: '1px solid #3f3f46', cursor: fieldsCount > 0 ? 'pointer' : 'default' }}
-                          onClick={() => fieldsCount > 0 && setMapperModal(form)}
+                          onClick={() => fieldsCount > 0 && openMappingModal(form)}
                         >
                           <td style={{ padding: '12px 8px' }}>
                             <div style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -659,83 +737,135 @@ export default function DocumentRulesPage() {
         </div>
       )}
 
-      {/* === FIELD MAPPER MODAL (View Only) === */}
-      {mapperModal && (
+      {/* === INTERACTIVE FIELD MAPPER MODAL === */}
+      {mappingForm && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
-          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '800px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '12px', maxWidth: '900px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #27272a' }}>
+            {/* Header */}
             <div style={{ padding: '20px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>Field Mappings</h2>
+                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>
+                  Field Mappings
+                  {mappingForm._isCustom && <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: '#f59e0b30', color: '#f59e0b' }}>CUSTOM</span>}
+                </h2>
                 <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '13px' }}>
-                  {mapperModal.form_name} • {mapperModal.detected_fields?.length || 0} fields
+                  {mappingForm.form_name} {mappingForm.form_number ? `(${mappingForm.form_number})` : ''} • {mappingForm.field_mappings?.length || 0} fields
                 </p>
               </div>
-              <button onClick={() => setMapperModal(null)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>×</button>
+              <button onClick={() => setMappingForm(null)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>x</button>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              <div style={{ display: 'grid', gap: '8px' }}>
-                {(mapperModal.field_mappings || []).map((mapping, idx) => {
+            {/* Field List */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+              <div style={{ display: 'grid', gap: '6px' }}>
+                {(mappingForm.field_mappings || []).map((mapping, idx) => {
                   const isHighlighted = mapping.status === 'highlight';
                   const isDismissed = mapping.status === 'dismissed';
-                  const isMapped = mapping.universal_fields?.length > 0 || !!mapping.universal_field;
+                  const isMapped = mapping.status === 'mapped' || (mapping.universal_fields?.length > 0);
                   return (
-                  <div key={idx} style={{
-                    display: 'flex', alignItems: 'center', gap: '12px', padding: '12px',
-                    backgroundColor: isHighlighted ? 'rgba(234,179,8,0.1)' : (isMapped ? '#22c55e10' : '#27272a'),
-                    borderRadius: '8px',
-                    border: isHighlighted ? '1px solid rgba(234,179,8,0.3)' : (isMapped ? '1px solid #22c55e30' : '1px solid transparent'),
-                    opacity: isDismissed ? 0.5 : 1
-                  }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: '600', fontSize: '13px', fontFamily: 'monospace' }}>
-                        {mapping.pdf_field}
+                    <div key={idx} style={{
+                      display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px',
+                      backgroundColor: isHighlighted ? 'rgba(234,179,8,0.08)' : isDismissed ? '#27272a' : isMapped ? 'rgba(34,197,94,0.06)' : '#27272a',
+                      borderRadius: '8px',
+                      border: isHighlighted ? '1px solid rgba(234,179,8,0.3)' : isMapped ? '1px solid rgba(34,197,94,0.2)' : '1px solid transparent',
+                      opacity: isDismissed ? 0.5 : 1
+                    }}>
+                      {/* Field Name */}
+                      <div style={{ width: '180px', flexShrink: 0 }}>
+                        <div style={{ fontWeight: '600', fontSize: '12px', fontFamily: 'monospace', color: '#e4e4e7' }}>{mapping.pdf_field}</div>
+                        <div style={{ fontSize: '10px', color: '#52525b' }}>{mapping.pdf_field_type || mapping.type || 'text'}</div>
                       </div>
-                      <div style={{ fontSize: '11px', color: '#71717a' }}>
-                        {mapping.pdf_field_type || 'text'}
-                      </div>
-                    </div>
-                    <div style={{ color: '#52525b' }}>→</div>
-                    <div style={{ flex: 1 }}>
+
+                      <div style={{ color: '#52525b', fontSize: '12px' }}>-&gt;</div>
+
+                      {/* Dropdown or status display */}
                       {isHighlighted ? (
-                        <div style={{ color: '#eab308', fontWeight: '500' }}>
-                          <span style={{ display: 'inline-block', width: '12px', height: '12px', backgroundColor: mapping.highlight_color || '#ffff00', borderRadius: '2px', marginRight: '6px', verticalAlign: 'middle' }}></span>
-                          Highlight{mapping.highlight_label ? `: "${mapping.highlight_label}"` : ''}
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ display: 'inline-block', width: '14px', height: '14px', backgroundColor: mapping.highlight_color || '#ffff00', borderRadius: '3px', border: '1px solid rgba(255,255,255,0.2)' }}></span>
+                          <span style={{ color: '#eab308', fontWeight: '500', fontSize: '13px' }}>Highlight</span>
+                          {mapping.highlight_label && <span style={{ color: '#a1a1aa', fontSize: '11px' }}>"{mapping.highlight_label}"</span>}
                         </div>
                       ) : isDismissed ? (
-                        <div style={{ color: '#71717a', fontStyle: 'italic', textDecoration: 'line-through' }}>Dismissed</div>
-                      ) : isMapped ? (
-                        <div style={{ color: '#22c55e', fontWeight: '500' }}>
-                          {mapping.universal_fields?.join(', ') || mapping.universal_field}
-                          <span style={{ marginLeft: '8px', fontSize: '10px', color: '#71717a' }}>
-                            ({Math.round((mapping.confidence || 0) * 100)}%)
-                          </span>
-                        </div>
+                        <div style={{ flex: 1, color: '#71717a', fontStyle: 'italic', fontSize: '13px' }}>Dismissed</div>
                       ) : (
-                        <div style={{ color: '#71717a', fontStyle: 'italic' }}>Not mapped</div>
+                        <select
+                          value={mapping.universal_fields?.[0] || ''}
+                          onChange={(e) => updateFieldMapping(idx, 'universal_fields', e.target.value ? [e.target.value] : [])}
+                          style={{ flex: 1, padding: '7px 10px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: isMapped ? '#22c55e' : '#a1a1aa', fontSize: '12px', outline: 'none', cursor: 'pointer' }}
+                        >
+                          <option value="">Not mapped</option>
+                          {fieldContextOptions.map(group => (
+                            <optgroup key={group.group} label={group.group}>
+                              {group.fields.map(f => (
+                                <option key={f} value={f}>{f}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
                       )}
+
+                      {/* Status badge */}
+                      <span style={{
+                        padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '600', flexShrink: 0,
+                        backgroundColor: isMapped ? '#22c55e20' : isHighlighted ? '#eab30820' : isDismissed ? '#3f3f46' : '#3f3f46',
+                        color: isMapped ? '#22c55e' : isHighlighted ? '#eab308' : isDismissed ? '#71717a' : '#71717a'
+                      }}>
+                        {isMapped ? 'Mapped' : isHighlighted ? 'Highlight' : isDismissed ? 'Dismissed' : 'Unmapped'}
+                      </span>
+
+                      {/* Action buttons */}
+                      <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                        <button
+                          onClick={() => updateFieldMapping(idx, 'status', isHighlighted ? 'unmapped' : 'highlight')}
+                          style={{
+                            padding: '4px 8px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px',
+                            backgroundColor: isHighlighted ? '#eab308' : '#3f3f46',
+                            color: isHighlighted ? '#000' : '#a1a1aa'
+                          }}
+                          title="Mark for manual entry (yellow highlight on printed form)"
+                        >
+                          HL
+                        </button>
+                        <button
+                          onClick={() => updateFieldMapping(idx, 'status', isDismissed ? 'unmapped' : 'dismissed')}
+                          style={{
+                            padding: '4px 8px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px',
+                            backgroundColor: isDismissed ? '#ef4444' : '#3f3f46',
+                            color: isDismissed ? '#fff' : '#a1a1aa'
+                          }}
+                          title="Ignore this field"
+                        >
+                          X
+                        </button>
+                      </div>
                     </div>
-                  </div>
                   );
                 })}
               </div>
 
-              {(!mapperModal.field_mappings || mapperModal.field_mappings.length === 0) && (
+              {(!mappingForm.field_mappings || mappingForm.field_mappings.length === 0) && (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
-                  No field mappings available for this form.
+                  No fields detected in this form.
                 </div>
               )}
             </div>
 
-            <div style={{ padding: '20px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* Footer */}
+            <div style={{ padding: '16px 20px', borderTop: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ color: '#a1a1aa', fontSize: '13px' }}>
-                {(mapperModal.field_mappings || []).filter(m => m.universal_fields?.length > 0 || m.universal_field).length} mapped
-                {(mapperModal.field_mappings || []).filter(m => m.status === 'highlight').length > 0 && (
-                  <span style={{ color: '#eab308' }}> / {(mapperModal.field_mappings || []).filter(m => m.status === 'highlight').length} highlight</span>
+                <span style={{ color: '#22c55e' }}>{(mappingForm.field_mappings || []).filter(m => m.status === 'mapped').length} mapped</span>
+                {(mappingForm.field_mappings || []).filter(m => m.status === 'highlight').length > 0 && (
+                  <span style={{ color: '#eab308' }}> / {(mappingForm.field_mappings || []).filter(m => m.status === 'highlight').length} highlight</span>
                 )}
-                {' / '}{mapperModal.field_mappings?.length || 0} total
+                {(mappingForm.field_mappings || []).filter(m => m.status === 'dismissed').length > 0 && (
+                  <span style={{ color: '#71717a' }}> / {(mappingForm.field_mappings || []).filter(m => m.status === 'dismissed').length} dismissed</span>
+                )}
+                {' / '}{mappingForm.field_mappings?.length || 0} total
               </div>
-              <button onClick={() => setMapperModal(null)} style={btnPrimary}>Close</button>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={() => setMappingForm(null)} style={btnSecondary}>Cancel</button>
+                <button onClick={saveMappings} style={{ ...btnPrimary, backgroundColor: '#f97316' }}>Save Mappings</button>
+              </div>
             </div>
           </div>
         </div>
