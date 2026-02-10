@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -171,29 +172,55 @@ serve(async (req) => {
 
           console.log(`Valid PDF: ${pdfBytes.byteLength} bytes`)
 
-          // === STEP E: Validate with Claude that this PDF matches what we're looking for ===
+          // === STEP E: Check if PDF has fillable form fields ===
+          let formFieldCount = 0
+          let formFieldNames: string[] = []
+          try {
+            const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true })
+            const pdfForm = pdfDoc.getForm()
+            const fields = pdfForm.getFields()
+            formFieldCount = fields.length
+            formFieldNames = fields.slice(0, 15).map((f: any) => f.getName())
+            console.log(`PDF has ${formFieldCount} form fields`)
+          } catch (e: any) {
+            console.log(`Could not read form fields: ${e.message}`)
+            formFieldCount = 0
+          }
+
+          // REJECT if no form fields - it's not a fillable form
+          if (formFieldCount === 0) {
+            console.log('REJECTED: No fillable form fields detected')
+            results.rejected.push({ ...form, url, reason: 'No fillable form fields - not an actual form' })
+            continue
+          }
+
+          console.log(`Form fields: ${formFieldNames.join(', ')}`)
+
+          // === STEP F: Validate with Claude using actual field data ===
           const validatePrompt = `I'm looking for this specific form:
 Form Name: ${form.form_name}
 Form Number: ${form.form_number || 'N/A'}
 Category: ${form.category}
 State: ${form.is_federal ? 'Federal' : state}
 
-I found a PDF at this URL: ${url}
-The page title was: ${result.title}
-The snippet was: ${result.snippet || 'N/A'}
+I found a PDF that has ${formFieldCount} fillable form fields.
+First field names: ${formFieldNames.join(', ')}
+URL: ${url}
+Page title: ${result.title}
 
-Is this PDF likely to be the ACTUAL FILLABLE FORM I'm looking for?
+Based on the FIELD NAMES, does this appear to be the correct form?
 
-REJECT if it's any of these:
-- A manual or handbook ABOUT the form (not the form itself)
-- A guide explaining how to fill out forms
-- A court case or legal document
-- A legislative bill or statute
-- Regulations or rules (not a fillable form)
-- A different form than what I'm searching for
-- An informational brochure
+For example:
+- A title application should have fields like: Year, Make, Model, VIN, Owner Name, Address
+- A bill of sale should have: Seller, Buyer, Vehicle, Price, Date
+- An odometer disclosure should have: Odometer Reading, Vehicle ID, Seller/Buyer signatures
 
-ACCEPT only if it appears to be the actual fillable government form.
+REJECT if the field names suggest this is:
+- A completely different form than what we're searching for
+- An internal government processing form (not for dealers/public)
+- A form from the wrong state
+
+ACCEPT if field names reasonably match what the form should contain.
 
 Respond with JSON only:
 {"decision": "ACCEPT" or "REJECT", "confidence": 0.0-1.0, "reason": "brief explanation"}`
@@ -233,7 +260,7 @@ Respond with JSON only:
             }
           }
 
-          // === STEP F: Save to form_staging ===
+          // === STEP G: Save to form_staging ===
           const sanitizedName = (form.form_number || form.form_name)
             .replace(/[^a-zA-Z0-9-]/g, '_')
             .substring(0, 50)
@@ -265,10 +292,11 @@ Respond with JSON only:
               storage_bucket: 'form-staging',
               storage_path: storagePath,
               file_size_bytes: pdfBytes.byteLength,
-              is_fillable: true,
+              is_fillable: formFieldCount > 0,
+              detected_fields: formFieldNames,
               ai_discovered: true,
               ai_confidence: 0.9,
-              ai_notes: 'Discovered via form_requirements checklist',
+              ai_notes: `${formFieldCount} fillable fields detected`,
               status: 'pending',
               created_at: new Date().toISOString()
             })
