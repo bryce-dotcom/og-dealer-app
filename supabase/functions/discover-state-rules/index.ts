@@ -6,6 +6,131 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// State name mapping
+const stateNames: Record<string, string> = {
+  'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas', 'CA': 'California',
+  'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware', 'FL': 'Florida', 'GA': 'Georgia',
+  'HI': 'Hawaii', 'ID': 'Idaho', 'IL': 'Illinois', 'IN': 'Indiana', 'IA': 'Iowa',
+  'KS': 'Kansas', 'KY': 'Kentucky', 'LA': 'Louisiana', 'ME': 'Maine', 'MD': 'Maryland',
+  'MA': 'Massachusetts', 'MI': 'Michigan', 'MN': 'Minnesota', 'MS': 'Mississippi', 'MO': 'Missouri',
+  'MT': 'Montana', 'NE': 'Nebraska', 'NV': 'Nevada', 'NH': 'New Hampshire', 'NJ': 'New Jersey',
+  'NM': 'New Mexico', 'NY': 'New York', 'NC': 'North Carolina', 'ND': 'North Dakota', 'OH': 'Ohio',
+  'OK': 'Oklahoma', 'OR': 'Oregon', 'PA': 'Pennsylvania', 'RI': 'Rhode Island', 'SC': 'South Carolina',
+  'SD': 'South Dakota', 'TN': 'Tennessee', 'TX': 'Texas', 'UT': 'Utah', 'VT': 'Vermont',
+  'VA': 'Virginia', 'WA': 'Washington', 'WV': 'West Virginia', 'WI': 'Wisconsin', 'WY': 'Wyoming'
+}
+
+// ============================================
+// UTAH GOLD STANDARD - HARDCODED BENCHMARK
+// This is the verified, correct data for Utah
+// Used as example structure for AI to follow
+// ============================================
+const UTAH_RULES_EXAMPLE = [
+  {
+    rule_code: 'UT-TITLE-001',
+    rule_name: 'Title Submission to DMV',
+    category: 'title_registration',
+    description: 'Submit title application to Utah DMV within 45 days of sale when temp permit is issued',
+    trigger_event: 'sale',
+    frequency: 'per_sale',
+    deadline_days: 45,
+    deadline_description: '45 days from date of sale',
+    required_form_numbers: ['TC-656'],
+    required_form_names: ['Vehicle Application for Utah Title'],
+    penalty_type: 'flat_fee',
+    penalty_amount: 25,
+    penalty_description: '$25 late fee per transaction',
+    source_agency: 'Utah DMV',
+    legal_citation: 'Utah Code 41-3-301(1)(a)',
+    source_url: 'https://le.utah.gov/xcode/Title41/Chapter3/41-3-S301.html',
+    is_federal: false
+  },
+  {
+    rule_code: 'UT-ODOM-001',
+    rule_name: 'Odometer Disclosure Statement',
+    category: 'disclosure',
+    description: 'Provide written odometer disclosure to buyer at time of sale',
+    trigger_event: 'sale',
+    frequency: 'per_sale',
+    deadline_days: 0,
+    deadline_description: 'At time of sale',
+    required_form_numbers: ['TC-891'],
+    required_form_names: ['Odometer Disclosure Statement'],
+    penalty_description: 'Federal criminal penalties - fines and imprisonment',
+    source_agency: 'Utah DMV / NHTSA',
+    legal_citation: 'Utah Code 41-1a-902',
+    source_url: 'https://tax.utah.gov/forms/current/tc-891.pdf',
+    is_federal: false
+  },
+  {
+    rule_code: 'UT-TAX-001',
+    rule_name: 'Monthly Sales Tax Return',
+    category: 'tax_reporting',
+    description: 'File sales tax return and remit collected tax. Monthly if annual liability >= $50,000',
+    trigger_event: 'month_end',
+    frequency: 'monthly',
+    deadline_day_of_month: 31,
+    deadline_description: 'Last day of month following filing period',
+    required_form_numbers: ['TC-62S', 'TC-62M'],
+    required_form_names: ['Sales and Use Tax Return'],
+    penalty_type: 'percentage',
+    penalty_percentage: 10,
+    penalty_description: '10% penalty plus interest. Monthly filers lose 1.31% seller discount if late.',
+    source_agency: 'Utah State Tax Commission',
+    legal_citation: 'Utah Code 59-12-107',
+    source_url: 'https://tax.utah.gov/sales/monthly',
+    is_federal: false
+  },
+  {
+    rule_code: 'UT-TEMP-001',
+    rule_name: 'Temporary Permit Expiration',
+    category: 'title_registration',
+    description: 'Buyer temporary permit expires - must have permanent registration by this date',
+    trigger_event: 'sale',
+    frequency: 'per_sale',
+    deadline_days: 45,
+    deadline_description: 'Permit expires 45 days from issue date',
+    penalty_description: 'Vehicle cannot be legally operated after permit expiration',
+    source_agency: 'Utah DMV',
+    legal_citation: 'Utah Code 41-3-302',
+    source_url: 'https://dmv.utah.gov/mved/dealers-overview/title-delivery/',
+    is_federal: false
+  },
+  {
+    rule_code: 'UT-DISC-001',
+    rule_name: 'Transaction Disclosure Form',
+    category: 'disclosure',
+    description: 'Provide transaction disclosure to buyer showing all fees and charges',
+    trigger_event: 'sale',
+    frequency: 'per_sale',
+    deadline_days: 0,
+    deadline_description: 'At time of sale',
+    required_form_numbers: ['TC-466'],
+    required_form_names: ['Transaction Disclosure Form'],
+    penalty_description: 'MVED enforcement action',
+    source_agency: 'Utah MVED',
+    legal_citation: 'Utah Code 41-3-401',
+    source_url: 'https://tax.utah.gov/forms/current/tc-466.pdf',
+    is_federal: false
+  }
+]
+
+const UTAH_FORMS_EXAMPLE = [
+  { deal_type: 'cash', form_number: 'TC-656', form_name: 'Vehicle Application for Utah Title', category: 'title', sort_order: 1 },
+  { deal_type: 'cash', form_number: 'TC-466', form_name: 'Transaction Disclosure Form', category: 'disclosure', sort_order: 2 },
+  { deal_type: 'cash', form_number: 'TC-891', form_name: 'Odometer Disclosure Statement', category: 'disclosure', sort_order: 3 },
+  { deal_type: 'cash', form_number: null, form_name: 'FTC Buyers Guide', category: 'disclosure', is_federal: true, sort_order: 4 },
+  { deal_type: 'cash', form_number: null, form_name: 'Bill of Sale', category: 'contract', sort_order: 5 },
+  { deal_type: 'bhph', form_number: 'TC-656', form_name: 'Vehicle Application for Utah Title', category: 'title', sort_order: 1 },
+  { deal_type: 'bhph', form_number: 'TC-466', form_name: 'Transaction Disclosure Form', category: 'disclosure', sort_order: 2 },
+  { deal_type: 'bhph', form_number: 'TC-891', form_name: 'Odometer Disclosure Statement', category: 'disclosure', sort_order: 3 },
+  { deal_type: 'bhph', form_number: null, form_name: 'FTC Buyers Guide', category: 'disclosure', is_federal: true, sort_order: 4 },
+  { deal_type: 'bhph', form_number: null, form_name: 'Retail Installment Sales Contract', category: 'financing', sort_order: 5 },
+  { deal_type: 'bhph', form_number: null, form_name: 'Truth in Lending Disclosure', category: 'disclosure', is_federal: true, sort_order: 6 },
+  { deal_type: 'bhph', form_number: null, form_name: 'Promissory Note', category: 'financing', sort_order: 7 },
+  { deal_type: 'bhph', form_number: null, form_name: 'Security Agreement', category: 'financing', sort_order: 8 }
+]
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -19,18 +144,9 @@ serve(async (req) => {
     }
 
     const stateUpper = state.toUpperCase()
-
-    // === GOLD STANDARD: Utah is manually curated, skip AI ===
-    if (stateUpper === 'UT') {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          state: 'UT',
-          message: 'Utah is the gold standard - rules are manually curated. Use the admin UI to manage UT rules.',
-          skipped: true
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    const stateName = stateNames[stateUpper]
+    if (!stateName) {
+      throw new Error(`Unknown state code: ${state}`)
     }
 
     const supabase = createClient(
@@ -39,131 +155,162 @@ serve(async (req) => {
     )
 
     const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY')
+    const serpApiKey = Deno.env.get('SERP_API_KEY')
+
     if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY not configured')
+    if (!serpApiKey) throw new Error('SERP_API_KEY not configured')
 
-    console.log(`Discovering compliance rules for ${stateUpper}...`)
+    console.log(`Discovering compliance rules for ${stateName} (${stateUpper}) using LIVE web data...`)
 
-    // === STEP A: Fetch Utah gold-standard rules as example ===
-    const { data: utahRules, error: utahError } = await supabase
-      .from('compliance_rules')
-      .select('rule_code, rule_name, category, description, trigger_event, frequency, deadline_days, deadline_day_of_month, deadline_description, reminder_days_before, reporting_period, aggregation_type, applies_to, required_form_numbers, required_form_names, penalty_type, penalty_amount, penalty_percentage, penalty_description, source_agency, legal_citation, source_url, is_federal')
-      .eq('state', 'UT')
-      .order('category')
+    // === STEP A: Web search for state dealer requirements ===
+    const searches = [
+      `${stateName} motor vehicle dealer title submission deadline days site:.gov`,
+      `${stateName} DMV dealer forms requirements site:.gov`,
+      `${stateName} dealer sales tax filing due date site:.gov`,
+      `${stateName} temporary tag permit duration dealer`,
+      `${stateName} dealer report of sale form number site:.gov`
+    ]
 
-    if (utahError) {
-      console.error('Failed to fetch Utah examples:', utahError.message)
+    let allSearchContent = ''
+    const foundUrls: string[] = []
+
+    for (const query of searches) {
+      console.log(`Searching: ${query}`)
+
+      try {
+        const searchUrl = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpApiKey}&num=5`
+        const searchResponse = await fetch(searchUrl)
+        const searchResults = await searchResponse.json()
+
+        const organicResults = searchResults.organic_results || []
+
+        for (const result of organicResults.slice(0, 3)) {
+          const url = result.link
+          const title = result.title
+          const snippet = result.snippet || ''
+
+          const isGov = url.includes('.gov')
+
+          allSearchContent += `\n\n--- SOURCE: ${title} ---\nURL: ${url}\nSnippet: ${snippet}\n`
+
+          if (isGov && !foundUrls.includes(url) && foundUrls.length < 8) {
+            foundUrls.push(url)
+
+            try {
+              console.log(`Fetching: ${url}`)
+              const pageResponse = await fetch(url, {
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                redirect: 'follow'
+              })
+
+              if (pageResponse.ok) {
+                const contentType = pageResponse.headers.get('content-type') || ''
+                if (contentType.includes('text/html')) {
+                  const html = await pageResponse.text()
+                  const textContent = html
+                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .substring(0, 8000)
+
+                  allSearchContent += `\n\n--- FULL PAGE CONTENT: ${url} ---\n${textContent}\n`
+                }
+              }
+            } catch (e: any) {
+              console.log(`Failed to fetch ${url}: ${e.message}`)
+            }
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 500))
+
+      } catch (e: any) {
+        console.log(`Search failed: ${e.message}`)
+      }
     }
 
-    const { data: utahForms, error: utahFormsError } = await supabase
-      .from('form_requirements')
-      .select('deal_type, form_number, form_name, is_required, is_federal, category, data_fields_needed, sort_order')
-      .eq('state', 'UT')
-      .order('deal_type')
-      .order('sort_order')
+    console.log(`Collected content from ${foundUrls.length} .gov pages`)
 
-    if (utahFormsError) {
-      console.error('Failed to fetch Utah form examples:', utahFormsError.message)
-    }
+    // === STEP B: Have Claude parse the LIVE content using HARDCODED Utah example ===
+    const parsePrompt = `You are an expert in US auto dealer compliance regulations. I have gathered LIVE web content about ${stateName} (${stateUpper}) motor vehicle dealer requirements.
 
-    const utahExampleRules = (utahRules || []).slice(0, 5)
-    const utahExampleForms = (utahForms || []).slice(0, 8)
+LIVE WEB CONTENT FROM ${stateName.toUpperCase()} GOVERNMENT SITES:
+${allSearchContent.substring(0, 25000)}
 
-    console.log(`Loaded ${utahRules?.length || 0} UT rules and ${utahForms?.length || 0} UT form requirements as examples`)
+=== UTAH GOLD STANDARD EXAMPLE ===
+Use this as the STRUCTURE and DETAIL LEVEL to follow. Your output must match this format exactly.
 
-    // === STEP B: Single AI call for BOTH rules and form requirements ===
-    const prompt = `You are an expert in US auto dealer compliance regulations. I need you to research and provide ALL compliance rules AND form requirements for licensed used car dealers in ${stateUpper}.
+UTAH COMPLIANCE RULES (example structure):
+${JSON.stringify(UTAH_RULES_EXAMPLE, null, 2)}
+
+UTAH FORM REQUIREMENTS (example structure):
+${JSON.stringify(UTAH_FORMS_EXAMPLE, null, 2)}
+
+=== YOUR TASK ===
+Extract ${stateName}'s ACTUAL dealer compliance rules from the LIVE WEB CONTENT above.
 
 CRITICAL REQUIREMENTS:
-1. Form numbers must be REAL, ACTUAL form numbers used by this state's DMV/MVD/tax commission
-2. Legal citations must be REAL statute/code references (e.g., "A.R.S. § 28-4414" for Arizona, NOT made-up codes)
-3. Source URLs must be REAL .gov URLs where the form or rule can be found
-4. Source agency must be the ACTUAL agency name (e.g., "Arizona Department of Transportation" NOT generic "State DMV")
-5. If you are not confident a form number is real, set form_number to null rather than guessing
+1. ONLY use information found in the web content above - do NOT make up data
+2. Extract the REAL form numbers for ${stateName} (will be different from Utah's TC-### format)
+3. Extract the REAL deadlines mentioned in the content
+4. Include the actual URLs where you found each piece of information
+5. If specific info is not in the content, use null - do NOT guess
+6. Match the Utah example structure EXACTLY
 
-HERE IS AN EXAMPLE of the quality and format I expect. These are REAL Utah rules:
-${JSON.stringify(utahExampleRules, null, 2)}
-
-And REAL Utah form requirements:
-${JSON.stringify(utahExampleForms, null, 2)}
-
-Now provide the SAME quality data for ${stateUpper}. Return a JSON object with this EXACT structure:
+Return this JSON structure:
 {
-  "state_name": "Full state name",
-  "dmv_website": "https://actual-state-dmv-or-mvd.gov",
-  "tax_commission_website": "https://actual-state-tax-agency.gov",
+  "state_name": "${stateName}",
+  "sources_used": ["URLs that had useful info"],
   "rules": [
     {
-      "rule_code": "${stateUpper}-XXX-001",
-      "rule_name": "Name of rule",
-      "category": "tax_reporting|title_registration|disclosure|licensing|record_keeping",
-      "description": "What the dealer must do",
-      "trigger_event": "sale|month_end|quarter_end|year_end",
-      "frequency": "per_sale|monthly|quarterly|annual",
-      "deadline_days": null or number,
-      "deadline_day_of_month": null or number,
-      "deadline_description": "Human readable deadline",
-      "reminder_days_before": [7, 3, 1],
-      "reporting_period": "single_transaction|monthly|quarterly|annual",
-      "aggregation_type": "none|count_sales|sum_tax|sum_gross",
-      "applies_to": ["all"] or ["cash", "financing", "bhph", "wholesale"],
-      "required_form_numbers": ["REAL-FORM-123"] or [],
-      "required_form_names": ["Actual Form Name"],
-      "penalty_type": "flat_fee|percentage|per_day|per_violation",
-      "penalty_amount": null or number,
-      "penalty_percentage": null or number,
-      "penalty_description": "Penalty details",
-      "source_agency": "Actual Agency Name",
-      "source_url": "https://actual-url.gov/page",
-      "legal_citation": "Real Statute § Reference",
-      "is_federal": false
+      "rule_code": "${stateUpper}-TITLE-001",
+      "rule_name": "Title Submission Deadline",
+      "category": "title_registration|tax_reporting|disclosure",
+      "description": "exact requirement from content",
+      "trigger_event": "sale|month_end",
+      "frequency": "per_sale|monthly|quarterly",
+      "deadline_days": number or null,
+      "deadline_day_of_month": number or null,
+      "deadline_description": "exact wording from source",
+      "reminder_days_before": [14, 7, 3],
+      "required_form_numbers": ["REAL form numbers from content"],
+      "required_form_names": ["form names from content"],
+      "penalty_type": "flat_fee|percentage|per_day",
+      "penalty_amount": number or null,
+      "penalty_description": "from content",
+      "source_agency": "agency name",
+      "legal_citation": "statute reference if found",
+      "source_url": "URL where found",
+      "is_federal": false,
+      "confidence": "high|medium|low"
     }
   ],
   "form_requirements": [
     {
       "deal_type": "cash|financing|bhph|wholesale",
-      "form_number": "REAL-123" or null,
-      "form_name": "Actual Form Name",
-      "is_required": true,
+      "form_number": "REAL number or null",
+      "form_name": "form name",
       "is_federal": false,
-      "category": "title|tax|disclosure|contract|financing|compliance",
-      "data_fields_needed": ["buyer_name", "vehicle_vin", "sale_price"],
+      "category": "title|disclosure|contract|financing",
       "sort_order": 1
     }
-  ]
+  ],
+  "notes": "anything important that didnt fit"
 }
 
-RULES TO DISCOVER:
-1. Sales tax reporting - frequency, due date, REAL form number, penalties
-2. Title/registration submission - days allowed, REAL forms, late fees
-3. Temporary tag/permit rules - duration, renewal
+RULES TO EXTRACT (if found in content):
+1. Title/registration submission deadline and forms
+2. Temporary permit/tag duration
+3. Sales tax filing frequency and due dates
 4. Dealer report of sale requirements
-5. Odometer disclosure (federal)
-6. FTC Buyers Guide (federal)
-7. Truth in Lending for BHPH/financing (federal)
-8. NMVTIS reporting (federal)
-9. State-specific disclosures (lemon law, damage, etc.)
-10. Record keeping requirements
-11. Consignment/wholesale rules
-12. Dealer bond/licensing renewal deadlines
+5. Required disclosures (odometer, buyers guide, etc.)
 
-DEAL TYPES FOR FORM REQUIREMENTS:
-1. cash - outright purchase
-2. financing - third-party lender
-3. bhph - buy here pay here (dealer financing)
-4. wholesale - dealer to dealer
+FORM REQUIREMENTS: Provide for each deal type (cash, financing, bhph, wholesale) based on what the content says is required.
 
-data_fields_needed should use these universal field names:
-buyer_name, buyer_address, buyer_city, buyer_state, buyer_zip, buyer_dl_number,
-vehicle_vin, vehicle_year, vehicle_make, vehicle_model, vehicle_mileage,
-sale_price, sale_date, down_payment, sales_tax, total_price,
-amount_financed, apr, finance_charge, monthly_payment, term_months,
-dealer_name, dealer_address, dealer_license,
-lienholder_name, lienholder_address
+Return ONLY valid JSON. No explanation text.`
 
-Include BOTH state-specific AND federal rules (mark is_federal: true for federal).
-Return ONLY valid JSON, no explanation.`
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const parseResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -172,34 +319,38 @@ Return ONLY valid JSON, no explanation.`
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 12000,
-        messages: [{ role: 'user', content: prompt }]
+        max_tokens: 8000,
+        messages: [{ role: 'user', content: parsePrompt }]
       })
     })
 
-    if (!response.ok) {
-      throw new Error(`Anthropic API error: ${response.status}`)
+    if (!parseResponse.ok) {
+      throw new Error(`Anthropic API error: ${parseResponse.status}`)
     }
 
-    const data = await response.json()
-    const content = data.content[0]?.text || ''
+    const parseData = await parseResponse.json()
+    const parseContent = parseData.content[0]?.text || ''
 
-    // Parse combined JSON response
-    let parsed: any
+    let parsedJson: any
     try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/)
-      parsed = JSON.parse(jsonMatch?.[0] || content)
+      const jsonMatch = parseContent.match(/\{[\s\S]*\}/)
+      parsedJson = JSON.parse(jsonMatch?.[0] || parseContent)
     } catch (e) {
-      console.error('Failed to parse response:', content.substring(0, 500))
+      console.error('Failed to parse response:', parseContent.substring(0, 1000))
       throw new Error('Failed to parse AI response')
     }
 
-    console.log(`Parsed: ${parsed.rules?.length || 0} rules, ${parsed.form_requirements?.length || 0} form requirements`)
+    console.log(`Extracted ${parsedJson.rules?.length || 0} rules from live content`)
 
-    // === STEP C: Insert rules into compliance_rules ===
+    // === STEP C: Insert rules (skip low confidence) ===
     const insertedRules: any[] = []
-    for (const rule of parsed.rules || []) {
-      const { data: ruleData, error } = await supabase
+    for (const rule of parsedJson.rules || []) {
+      if (rule.confidence === 'low') {
+        console.log(`Skipping low confidence: ${rule.rule_name}`)
+        continue
+      }
+
+      const { data, error } = await supabase
         .from('compliance_rules')
         .insert({
           state: stateUpper,
@@ -212,37 +363,34 @@ Return ONLY valid JSON, no explanation.`
           deadline_days: rule.deadline_days,
           deadline_day_of_month: rule.deadline_day_of_month,
           deadline_description: rule.deadline_description,
-          reminder_days_before: rule.reminder_days_before,
-          reporting_period: rule.reporting_period,
-          aggregation_type: rule.aggregation_type,
-          applies_to: rule.applies_to,
+          reminder_days_before: rule.reminder_days_before || [14, 7, 3],
+          reporting_period: rule.reporting_period || 'single_transaction',
+          aggregation_type: rule.aggregation_type || 'none',
+          applies_to: rule.applies_to || ['all'],
           required_form_numbers: rule.required_form_numbers,
           required_form_names: rule.required_form_names,
           penalty_type: rule.penalty_type,
           penalty_amount: rule.penalty_amount,
-          penalty_percentage: rule.penalty_percentage,
           penalty_description: rule.penalty_description,
           source_agency: rule.source_agency,
-          source_url: rule.source_url,
           legal_citation: rule.legal_citation,
+          source_url: rule.source_url,
           is_federal: rule.is_federal || false
         })
         .select()
         .single()
 
       if (error) {
-        console.error('Insert rule error:', error.message, rule.rule_name)
+        console.error('Insert rule error:', error.message)
       } else {
-        insertedRules.push(ruleData)
+        insertedRules.push(data)
       }
     }
 
-    console.log(`Inserted ${insertedRules.length} rules`)
-
     // === STEP D: Insert form requirements ===
     const insertedForms: any[] = []
-    for (const form of parsed.form_requirements || []) {
-      const { data: formData, error } = await supabase
+    for (const form of parsedJson.form_requirements || []) {
+      const { data, error } = await supabase
         .from('form_requirements')
         .insert({
           state: stateUpper,
@@ -252,43 +400,36 @@ Return ONLY valid JSON, no explanation.`
           is_required: form.is_required !== false,
           is_federal: form.is_federal || false,
           category: form.category,
-          data_fields_needed: form.data_fields_needed,
-          sort_order: form.sort_order
+          sort_order: form.sort_order || 1
         })
         .select()
         .single()
 
       if (error) {
-        console.error('Insert form error:', error.message, form.form_name)
+        console.error('Insert form error:', error.message)
       } else {
-        insertedForms.push(formData)
+        insertedForms.push(data)
       }
     }
 
-    console.log(`Inserted ${insertedForms.length} form requirements`)
-
-    // === Return summary ===
     return new Response(
       JSON.stringify({
         success: true,
         state: stateUpper,
-        state_name: parsed.state_name,
-        dmv_website: parsed.dmv_website,
-        tax_commission_website: parsed.tax_commission_website,
+        state_name: stateName,
+        method: 'live_web_search_with_hardcoded_benchmark',
+        sources_searched: foundUrls,
+        sources_used: parsedJson.sources_used,
         rules_count: insertedRules.length,
         forms_count: insertedForms.length,
         rules: insertedRules.map((r: any) => ({
           rule_code: r.rule_code,
           rule_name: r.rule_name,
-          legal_citation: r.legal_citation,
+          deadline_days: r.deadline_days,
+          form_numbers: r.required_form_numbers,
           source_url: r.source_url
         })),
-        form_requirements_by_deal_type: {
-          cash: insertedForms.filter((f: any) => f.deal_type === 'cash').length,
-          financing: insertedForms.filter((f: any) => f.deal_type === 'financing').length,
-          bhph: insertedForms.filter((f: any) => f.deal_type === 'bhph').length,
-          wholesale: insertedForms.filter((f: any) => f.deal_type === 'wholesale').length
-        }
+        notes: parsedJson.notes
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
