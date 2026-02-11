@@ -40,6 +40,7 @@ export default function DevConsolePage() {
   const stagingFileInputRef = useRef(null); // Ref for hidden file input
   const [libraryStateFilter, setLibraryStateFilter] = useState('all');
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(null);
+  const [ruleStateFilter, setRuleStateFilter] = useState('all');
   const [discoverState, setDiscoverState] = useState('all');
   const [discoverProgress, setDiscoverProgress] = useState('');
   const [promoteModal, setPromoteModal] = useState(null); // { form, selectedLibrary }
@@ -498,15 +499,22 @@ export default function DevConsolePage() {
     setLoading(true);
     try {
       const ruleData = {
+        rule_code: ruleModal.rule_code || null,
         rule_name: ruleModal.rule_name,
         state: ruleModal.state,
         category: ruleModal.category,
-        deadline_days: parseInt(ruleModal.deadline_days) || 0,
-        late_fee: parseFloat(ruleModal.late_fee) || 0,
-        agency: ruleModal.agency,
-        required_forms: ruleModal.required_forms,
-        description: ruleModal.description,
-        is_verified: ruleModal.is_verified || false,
+        description: ruleModal.description || null,
+        trigger_event: ruleModal.trigger_event || null,
+        frequency: ruleModal.frequency || null,
+        deadline_days: parseInt(ruleModal.deadline_days) || null,
+        deadline_description: ruleModal.deadline_description || null,
+        penalty_type: ruleModal.penalty_type || null,
+        penalty_amount: parseFloat(ruleModal.penalty_amount) || null,
+        penalty_description: ruleModal.penalty_description || null,
+        source_agency: ruleModal.source_agency || null,
+        legal_citation: ruleModal.legal_citation || null,
+        source_url: ruleModal.source_url || null,
+        is_federal: ruleModal.is_federal || false,
       };
       if (ruleModal.id) {
         await supabase.from('compliance_rules').update(ruleData).eq('id', ruleModal.id);
@@ -2354,7 +2362,7 @@ export default function DevConsolePage() {
               {[
                 { id: 'staging', label: 'Staging', count: formStaging.filter(f => f.status !== 'approved').length, color: '#eab308' },
                 { id: 'library', label: 'Library', count: formLibrary.length, color: '#22c55e' },
-                { id: 'rules', label: 'Rules', count: formLibrary.filter(f => f.has_deadline || f.cadence).length, color: '#ef4444', desc: 'Forms with deadlines' },
+                { id: 'rules', label: 'Rules', count: complianceRules.length, color: '#ef4444', desc: 'Compliance rules' },
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -2378,31 +2386,53 @@ export default function DevConsolePage() {
             </div>
 
             {/* === RULES TAB === */}
-            {/* Rules = Library forms that have deadlines or cadences (compliance-tracked docs) */}
+            {/* Rules = compliance_rules table populated by discover-state-rules */}
             {formLibraryTab === 'rules' && (() => {
-              const rulesFromLibrary = formLibrary.filter(f => f.has_deadline || f.cadence);
-              const docTypeColors = { deal: '#22c55e', finance: '#3b82f6', licensing: '#f97316', tax: '#ef4444', reporting: '#8b5cf6' };
-              const cadenceLabels = { per_transaction: 'Per Sale', monthly: 'Monthly', quarterly: 'Quarterly', annually: 'Annual' };
+              const categoryColors = { title_registration: '#3b82f6', tax_reporting: '#f97316', disclosure: '#8b5cf6', licensing: '#22c55e', record_keeping: '#71717a' };
+              const ruleStates = [...new Set(complianceRules.map(r => r.state))].sort();
+              const filteredRules = ruleStateFilter === 'all' ? complianceRules : complianceRules.filter(r => r.state === ruleStateFilter);
               return (
               <div>
+                {/* Header with Add Rule button */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Forms with compliance deadlines or filing cadences. These docs require tracking.</p>
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '14px' }}>Compliance rules from discover-state-rules. Real legal citations, penalties, and deadlines.</p>
+                  <button
+                    onClick={() => setRuleModal({ rule_code: '', rule_name: '', state: '', category: 'title_registration', description: '', trigger_event: 'sale', frequency: 'per_sale', deadline_days: '', deadline_description: '', penalty_type: 'flat_fee', penalty_amount: '', penalty_description: '', source_agency: '', legal_citation: '', source_url: '', is_federal: false })}
+                    style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', cursor: 'pointer', backgroundColor: '#22c55e', color: '#fff', fontWeight: '600' }}
+                  >
+                    + Add Rule
+                  </button>
+                </div>
+
+                {/* State Filter */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center' }}>
+                  <span style={{ color: '#a1a1aa', fontSize: '13px' }}>State:</span>
+                  <select
+                    value={ruleStateFilter}
+                    onChange={(e) => setRuleStateFilter(e.target.value)}
+                    style={{ backgroundColor: '#3f3f46', color: '#fff', padding: '8px 12px', borderRadius: '6px', border: 'none', fontSize: '13px', minWidth: '140px' }}
+                  >
+                    <option value="all">All States ({complianceRules.length})</option>
+                    {ruleStates.map(st => (
+                      <option key={st} value={st}>{st} ({complianceRules.filter(r => r.state === st).length})</option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Rules Stats */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Rules</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{rulesFromLibrary.length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Per Sale</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{rulesFromLibrary.filter(r => r.cadence === 'per_transaction').length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Periodic</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{rulesFromLibrary.filter(r => r.cadence && r.cadence !== 'per_transaction').length}</div></div>
-                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#f97316' }}>{[...new Set(rulesFromLibrary.map(r => r.state))].length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Total Rules</div><div style={{ fontSize: '24px', fontWeight: '700' }}>{filteredRules.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>States Covered</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#f97316' }}>{ruleStates.length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Federal</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{filteredRules.filter(r => r.is_federal).length}</div></div>
+                  <div style={cardStyle}><div style={{ color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Active</div><div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{filteredRules.filter(r => r.is_active !== false).length}</div></div>
                 </div>
 
-                {/* Rules by Doc Type */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px', marginBottom: '20px' }}>
-                  {['deal', 'finance', 'licensing', 'tax', 'reporting'].map(dt => (
-                    <div key={dt} style={{ ...cardStyle, padding: '12px', textAlign: 'center' }}>
-                      <div style={{ color: docTypeColors[dt], fontSize: '20px', fontWeight: '700' }}>{rulesFromLibrary.filter(r => r.doc_type === dt).length}</div>
-                      <div style={{ color: '#a1a1aa', fontSize: '11px', textTransform: 'uppercase' }}>{dt}</div>
+                {/* Rules by Category */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '8px', marginBottom: '20px' }}>
+                  {Object.entries(categoryColors).map(([cat, color]) => (
+                    <div key={cat} style={{ ...cardStyle, padding: '12px', textAlign: 'center' }}>
+                      <div style={{ color, fontSize: '20px', fontWeight: '700' }}>{filteredRules.filter(r => r.category === cat).length}</div>
+                      <div style={{ color: '#a1a1aa', fontSize: '11px', textTransform: 'uppercase' }}>{cat.replace('_', ' ')}</div>
                     </div>
                   ))}
                 </div>
@@ -2412,39 +2442,50 @@ export default function DevConsolePage() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid #3f3f46' }}>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Form</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Rule Code</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Rule Name</th>
                         <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>State</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Doc Type</th>
-                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Cadence</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Category</th>
                         <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Deadline</th>
-                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Description</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Penalty</th>
+                        <th style={{ textAlign: 'left', padding: '10px 8px', color: '#a1a1aa' }}>Source</th>
+                        <th style={{ textAlign: 'center', padding: '10px 8px', color: '#a1a1aa' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rulesFromLibrary.map(r => (
+                      {filteredRules.map(r => (
                         <tr key={r.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontSize: '12px', color: '#a1a1aa' }}>{r.rule_code || '-'}</td>
                           <td style={{ padding: '10px 8px' }}>
-                            <div style={{ fontWeight: '600' }}>{r.form_number}</div>
-                            <div style={{ fontSize: '11px', color: '#a1a1aa' }}>{r.form_name}</div>
+                            <div style={{ fontWeight: '600' }}>{r.rule_name}</div>
+                            {r.legal_citation && <div style={{ fontSize: '11px', color: '#71717a' }}>{r.legal_citation}</div>}
                           </td>
                           <td style={{ padding: '10px 8px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', backgroundColor: '#3f3f46' }}>{r.state}</span></td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: docTypeColors[r.doc_type] || '#71717a', textTransform: 'uppercase' }}>{r.doc_type || 'deal'}</span>
+                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: categoryColors[r.category] || '#71717a', textTransform: 'uppercase' }}>{(r.category || '').replace('_', ' ')}</span>
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', backgroundColor: r.cadence === 'per_transaction' ? '#22c55e' : '#3b82f6' }}>{cadenceLabels[r.cadence] || r.cadence || '-'}</span>
+                            <div style={{ fontFamily: 'monospace', color: r.deadline_days ? '#ef4444' : '#71717a', fontWeight: '600' }}>{r.deadline_days ? `${r.deadline_days}d` : '-'}</div>
+                            {r.deadline_description && <div style={{ fontSize: '10px', color: '#71717a', maxWidth: '120px' }}>{r.deadline_description}</div>}
                           </td>
-                          <td style={{ padding: '10px 8px', textAlign: 'center', fontFamily: 'monospace', color: r.deadline_days ? '#ef4444' : '#71717a' }}>
-                            {r.deadline_days ? `${r.deadline_days}d` : '-'}
+                          <td style={{ padding: '10px 8px', fontSize: '12px', color: '#a1a1aa', maxWidth: '160px' }}>
+                            {r.penalty_description || '-'}
                           </td>
-                          <td style={{ padding: '10px 8px', color: '#a1a1aa', fontSize: '12px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {r.deadline_description || '-'}
+                          <td style={{ padding: '10px 8px', fontSize: '12px' }}>
+                            <div style={{ color: '#a1a1aa' }}>{r.source_agency || '-'}</div>
+                            {r.source_url && <a href={r.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '11px', textDecoration: 'none' }}>View Source</a>}
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                              <button onClick={() => setRuleModal({ ...r })} style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', fontSize: '11px', cursor: 'pointer', backgroundColor: '#3b82f6', color: '#fff' }}>Edit</button>
+                              <button onClick={() => deleteRule(r.id)} style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', fontSize: '11px', cursor: 'pointer', backgroundColor: '#ef4444', color: '#fff' }}>Del</button>
+                            </div>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {rulesFromLibrary.length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No rules found. Promote forms with deadlines from Library, or run AI Discover to find forms with compliance requirements.</p>}
+                  {filteredRules.length === 0 && <p style={{ textAlign: 'center', color: '#71717a', padding: '40px' }}>No compliance rules found. Run discover-state-rules to populate rules, or click "+ Add Rule" to add manually.</p>}
                 </div>
               </div>
             );})()}
@@ -3519,32 +3560,112 @@ export default function DevConsolePage() {
       {/* RULE MODAL (Compliance Rules) */}
       {ruleModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
-          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
             <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>{ruleModal.id ? 'Edit' : 'Add'} Compliance Rule</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <input type="text" placeholder="Rule Name (e.g. Title Transfer Deadline)" value={ruleModal.rule_name || ''} onChange={(e) => setRuleModal({ ...ruleModal, rule_name: e.target.value })} style={inputStyle} />
+              {/* Rule Code & Name */}
               <div style={{ display: 'flex', gap: '8px' }}>
-                <input type="text" placeholder="State" value={ruleModal.state || ''} onChange={(e) => setRuleModal({ ...ruleModal, state: e.target.value.toUpperCase() })} style={{ ...inputStyle, flex: 1 }} maxLength={2} />
-                <select value={ruleModal.category || 'title'} onChange={(e) => setRuleModal({ ...ruleModal, category: e.target.value })} style={{ ...inputStyle, flex: 2 }}>
-                  {formCategories.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-                </select>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Rule Code</label>
+                  <input type="text" placeholder="UT-TITLE-001" value={ruleModal.rule_code || ''} onChange={(e) => setRuleModal({ ...ruleModal, rule_code: e.target.value })} style={inputStyle} />
+                </div>
+                <div style={{ flex: 2 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Rule Name</label>
+                  <input type="text" placeholder="Title Transfer Deadline" value={ruleModal.rule_name || ''} onChange={(e) => setRuleModal({ ...ruleModal, rule_name: e.target.value })} style={inputStyle} />
+                </div>
               </div>
+              {/* State & Category */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>State</label>
+                  <input type="text" placeholder="UT" value={ruleModal.state || ''} onChange={(e) => setRuleModal({ ...ruleModal, state: e.target.value.toUpperCase() })} style={inputStyle} maxLength={2} />
+                </div>
+                <div style={{ flex: 2 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Category</label>
+                  <select value={ruleModal.category || 'title_registration'} onChange={(e) => setRuleModal({ ...ruleModal, category: e.target.value })} style={inputStyle}>
+                    <option value="title_registration">Title Registration</option>
+                    <option value="tax_reporting">Tax Reporting</option>
+                    <option value="disclosure">Disclosure</option>
+                    <option value="licensing">Licensing</option>
+                    <option value="record_keeping">Record Keeping</option>
+                  </select>
+                </div>
+              </div>
+              {/* Description */}
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Description</label>
+                <textarea placeholder="Rule description..." value={ruleModal.description || ''} onChange={(e) => setRuleModal({ ...ruleModal, description: e.target.value })} rows={2} style={inputStyle} />
+              </div>
+              {/* Trigger & Frequency */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Trigger Event</label>
+                  <select value={ruleModal.trigger_event || 'sale'} onChange={(e) => setRuleModal({ ...ruleModal, trigger_event: e.target.value })} style={inputStyle}>
+                    <option value="sale">Sale</option>
+                    <option value="month_end">Month End</option>
+                    <option value="quarter_end">Quarter End</option>
+                    <option value="year_end">Year End</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Frequency</label>
+                  <select value={ruleModal.frequency || 'per_sale'} onChange={(e) => setRuleModal({ ...ruleModal, frequency: e.target.value })} style={inputStyle}>
+                    <option value="per_sale">Per Sale</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Quarterly</option>
+                    <option value="annually">Annually</option>
+                  </select>
+                </div>
+              </div>
+              {/* Deadline */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Deadline (days)</label>
                   <input type="number" placeholder="30" value={ruleModal.deadline_days || ''} onChange={(e) => setRuleModal({ ...ruleModal, deadline_days: e.target.value })} style={inputStyle} />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Late Fee ($)</label>
-                  <input type="number" placeholder="25" value={ruleModal.late_fee || ''} onChange={(e) => setRuleModal({ ...ruleModal, late_fee: e.target.value })} style={inputStyle} />
+                <div style={{ flex: 2 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Deadline Description</label>
+                  <input type="text" placeholder="45 days from date of sale" value={ruleModal.deadline_description || ''} onChange={(e) => setRuleModal({ ...ruleModal, deadline_description: e.target.value })} style={inputStyle} />
                 </div>
               </div>
-              <input type="text" placeholder="Agency (e.g. Utah DMV)" value={ruleModal.agency || ''} onChange={(e) => setRuleModal({ ...ruleModal, agency: e.target.value })} style={inputStyle} />
-              <input type="text" placeholder="Required Forms (comma separated)" value={ruleModal.required_forms || ''} onChange={(e) => setRuleModal({ ...ruleModal, required_forms: e.target.value })} style={inputStyle} />
-              <textarea placeholder="Description / Notes..." value={ruleModal.description || ''} onChange={(e) => setRuleModal({ ...ruleModal, description: e.target.value })} rows={3} style={inputStyle} />
+              {/* Penalty */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Penalty Type</label>
+                  <select value={ruleModal.penalty_type || 'flat_fee'} onChange={(e) => setRuleModal({ ...ruleModal, penalty_type: e.target.value })} style={inputStyle}>
+                    <option value="flat_fee">Flat Fee</option>
+                    <option value="percentage">Percentage</option>
+                    <option value="per_day">Per Day</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Penalty Amount ($)</label>
+                  <input type="number" placeholder="25" value={ruleModal.penalty_amount || ''} onChange={(e) => setRuleModal({ ...ruleModal, penalty_amount: e.target.value })} style={inputStyle} />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Penalty Description</label>
+                <input type="text" placeholder="$25 late fee per transaction" value={ruleModal.penalty_description || ''} onChange={(e) => setRuleModal({ ...ruleModal, penalty_description: e.target.value })} style={inputStyle} />
+              </div>
+              {/* Source */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Source Agency</label>
+                  <input type="text" placeholder="Utah DMV" value={ruleModal.source_agency || ''} onChange={(e) => setRuleModal({ ...ruleModal, source_agency: e.target.value })} style={inputStyle} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Legal Citation</label>
+                  <input type="text" placeholder="Utah Code 41-3-301" value={ruleModal.legal_citation || ''} onChange={(e) => setRuleModal({ ...ruleModal, legal_citation: e.target.value })} style={inputStyle} />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '12px', marginBottom: '4px' }}>Source URL</label>
+                <input type="text" placeholder="https://..." value={ruleModal.source_url || ''} onChange={(e) => setRuleModal({ ...ruleModal, source_url: e.target.value })} style={inputStyle} />
+              </div>
+              {/* Federal checkbox */}
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a1a1aa', fontSize: '14px' }}>
-                <input type="checkbox" checked={ruleModal.is_verified || false} onChange={(e) => setRuleModal({ ...ruleModal, is_verified: e.target.checked })} />
-                Verified (human-reviewed for accuracy)
+                <input type="checkbox" checked={ruleModal.is_federal || false} onChange={(e) => setRuleModal({ ...ruleModal, is_federal: e.target.checked })} />
+                Federal Rule (applies to all states)
               </label>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
