@@ -1040,6 +1040,9 @@ export default function DevConsolePage() {
 
       const { error: updateError } = await supabase.from('form_staging').update({
         source_url: publicUrl,
+        storage_bucket: 'form-pdfs',
+        storage_path: fileName,
+        file_size_bytes: file.size,
         pdf_validated: true,
         url_validated: true,
         url_validated_at: new Date().toISOString(),
