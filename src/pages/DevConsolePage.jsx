@@ -551,81 +551,32 @@ export default function DevConsolePage() {
   const [stagingMapperModal, setStagingMapperModal] = useState(null);
 
   const analyzeForm = async (form) => {
-    if (!form.storage_path) {
-      showToast('Please upload a PDF first before analyzing', 'error');
+    if (!form.storage_path && !form.source_url && !form.download_url) {
+      showToast('Please upload a PDF or provide a URL first', 'error');
       return;
     }
     setAnalyzingFormId(form.id);
     setLoading(true);
 
     try {
-      // Build URL from storage_path
-      let pdfUrl = form.storage_path
-        ? `https://rlzudfinlxonpbwacxpt.supabase.co/storage/v1/object/public/${form.storage_bucket}/${form.storage_path}`
-        : form.source_url;
-      const isExternalUrl = !pdfUrl.includes('supabase.co/storage');
+      showToast(`Analyzing ${form.form_name}...`);
 
-      // If it's an external URL, try to fetch and upload to our storage first
-      if (isExternalUrl) {
-        showToast(`Fetching PDF from external link...`);
-        try {
-          const response = await fetch(pdfUrl);
-          if (!response.ok) {
-            throw new Error(`Link returned ${response.status} - please upload manually`);
-          }
-
-          const contentType = response.headers.get('content-type') || '';
-          if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
-            throw new Error(`Link is not a PDF (${contentType}) - please upload manually`);
-          }
-
-          const blob = await response.blob();
-          const fileName = `${form.state}/${form.form_name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.pdf`;
-
-          showToast(`Uploading to storage...`);
-          const { error: uploadError } = await supabase.storage
-            .from('form-pdfs')
-            .upload(fileName, blob, { contentType: 'application/pdf' });
-
-          if (uploadError) throw uploadError;
-
-          const { data: { publicUrl } } = supabase.storage
-            .from('form-pdfs')
-            .getPublicUrl(fileName);
-
-          // Update the form with our storage URL
-          await supabase.from('form_staging').update({
-            source_url: publicUrl,
-            pdf_validated: true,
-            url_validated: true,
-            url_validated_at: new Date().toISOString()
-          }).eq('id', form.id);
-
-          pdfUrl = publicUrl;
-          showToast(`PDF saved to storage. Analyzing...`);
-        } catch (fetchErr) {
-          // CORS or network error - try analyzing directly via edge function
-          showToast(`Browser can't fetch link (CORS). Trying server-side...`);
-          // The edge function will try to fetch it
-        }
-      } else {
-        showToast(`Analyzing ${form.form_name}...`);
-      }
-
-      // Now analyze the PDF
+      // The edge function will handle getting the PDF from storage or URLs
       const { data, error } = await supabase.functions.invoke('map-form-fields', {
-        body: { form_id: form.id, pdf_url: pdfUrl }
+        body: { form_id: form.id }
       });
+
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
       const mapped = data?.mapped_count || 0;
-      const total = data?.pdf_fields_found || 0;
-      const pct = total > 0 ? Math.round((mapped / total) * 100) : 0;
+      const total = data?.detected_fields_count || 0;
+      const pct = data?.mapping_confidence || 0;
 
-      showToast(`Analysis complete - ${mapped}/${total} fields mapped (${pct}%)`);
+      showToast(`Analysis complete - ${mapped}/${total} fields mapped (${pct}% confidence)`);
       loadAllData();
     } catch (err) {
+      console.error('Analyze error:', err);
       showToast('Analysis failed: ' + err.message, 'error');
     }
     setAnalyzingFormId(null);

@@ -204,50 +204,55 @@ serve(async (req) => {
 
     let pdfBytes: Uint8Array;
 
-    // Try to get PDF from storage first (most reliable)
-    if (form.storage_bucket && form.storage_path) {
-      console.log(`[MAP] Reading from storage: ${form.storage_bucket}/${form.storage_path}`);
+    try {
+      // Try to get PDF from storage first (most reliable)
+      if (form.storage_bucket && form.storage_path) {
+        console.log(`[MAP] Reading from storage: ${form.storage_bucket}/${form.storage_path}`);
 
-      const { data: storageData, error: storageError } = await supabase.storage
-        .from(form.storage_bucket)
-        .download(form.storage_path);
+        const { data: storageData, error: storageError } = await supabase.storage
+          .from(form.storage_bucket)
+          .download(form.storage_path);
 
-      if (storageError) {
-        console.log(`[MAP] Storage read failed: ${storageError.message}, trying URL fallback`);
-      } else if (storageData) {
-        pdfBytes = new Uint8Array(await storageData.arrayBuffer());
-        console.log(`[MAP] Loaded ${pdfBytes.length} bytes from storage`);
-      }
-    }
-
-    // Fallback to URL if storage didn't work
-    if (!pdfBytes) {
-      const pdfUrl = form.download_url || form.source_url;
-      if (!pdfUrl) {
-        throw new Error("Form has no PDF in storage and no URL. Please upload a PDF first.");
+        if (storageError) {
+          console.log(`[MAP] Storage read failed: ${storageError.message}, trying URL fallback`);
+        } else if (storageData) {
+          pdfBytes = new Uint8Array(await storageData.arrayBuffer());
+          console.log(`[MAP] Loaded ${pdfBytes.length} bytes from storage`);
+        }
       }
 
-      console.log(`[MAP] Fetching PDF from URL: ${pdfUrl}`);
+      // Fallback to URL if storage didn't work
+      if (!pdfBytes) {
+        const pdfUrl = form.download_url || form.source_url;
+        if (!pdfUrl) {
+          throw new Error("Form has no PDF in storage and no URL. Please upload a PDF first.");
+        }
 
-      const pdfResponse = await fetch(pdfUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
-      });
+        console.log(`[MAP] Fetching PDF from URL: ${pdfUrl}`);
 
-      if (!pdfResponse.ok) {
-        throw new Error(`Failed to download PDF: ${pdfResponse.status}`);
+        const pdfResponse = await fetch(pdfUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+        });
+
+        if (!pdfResponse.ok) {
+          throw new Error(`Failed to download PDF: ${pdfResponse.status} ${pdfResponse.statusText}`);
+        }
+
+        const pdfBuffer = await pdfResponse.arrayBuffer();
+        pdfBytes = new Uint8Array(pdfBuffer);
       }
 
-      const pdfBuffer = await pdfResponse.arrayBuffer();
-      pdfBytes = new Uint8Array(pdfBuffer);
-    }
+      // Verify PDF
+      const header = String.fromCharCode(...pdfBytes.slice(0, 5));
+      if (!header.startsWith("%PDF")) {
+        throw new Error("URL does not contain a valid PDF file");
+      }
 
-    // Verify PDF
-    const header = String.fromCharCode(...pdfBytes.slice(0, 5));
-    if (!header.startsWith("%PDF")) {
-      throw new Error("URL does not contain a valid PDF file");
+      console.log(`[MAP] Downloaded PDF: ${pdfBytes.length} bytes`);
+    } catch (pdfDownloadError) {
+      console.error(`[MAP] PDF download error:`, pdfDownloadError);
+      throw new Error(`Failed to download PDF: ${pdfDownloadError.message}. Form storage: ${form.storage_bucket || 'none'}/${form.storage_path || 'none'}, URL: ${form.download_url || form.source_url || 'none'}`);
     }
-
-    console.log(`[MAP] Downloaded PDF: ${pdfBytes.length} bytes`);
 
     // ============================================
     // EXTRACT PDF FIELDS using pdf-lib
@@ -392,8 +397,14 @@ serve(async (req) => {
 
   } catch (error) {
     console.error("[MAP] Error:", error);
+    console.error("[MAP] Error stack:", error.stack);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({
+        success: false,
+        error: error.message,
+        error_type: error.name,
+        stack: error.stack
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
