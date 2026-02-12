@@ -1729,16 +1729,51 @@ export default function DevConsolePage() {
     if (!formModal) return;
     setLoading(true);
     try {
+      let sourceUrl = formModal.source_url || null;
+      let storageBucket = null;
+      let storagePath = null;
+      let fileSizeBytes = null;
+
+      // Handle file upload if file is provided
+      if (formModal.file) {
+        const fileExt = formModal.file.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const state = formModal.state.toUpperCase();
+        const safeFormNumber = formModal.form_number.replace(/[^a-zA-Z0-9-]/g, '_');
+        const fileName = `${state}/${safeFormNumber}_${Date.now()}.${fileExt}`;
+
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('form-pdfs')
+          .upload(fileName, formModal.file, {
+            contentType: formModal.file.type,
+            upsert: true
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from('form-pdfs')
+          .getPublicUrl(fileName);
+
+        sourceUrl = urlData.publicUrl;
+        storageBucket = 'form-pdfs';
+        storagePath = fileName;
+        fileSizeBytes = formModal.file.size;
+      }
+
       const formData = {
         form_number: formModal.form_number,
         form_name: formModal.form_name,
         state: formModal.state,
         county: formModal.county,
         category: formModal.category,
-        source_url: formModal.source_url,
+        source_url: sourceUrl,
+        storage_bucket: storageBucket,
+        storage_path: storagePath,
+        file_size_bytes: fileSizeBytes,
         description: formModal.description,
         is_active: formModal.is_active ?? true,
       };
+
       if (formModal.id) {
         await supabase.from('form_library').update(formData).eq('id', formModal.id);
         await logAudit('UPDATE', 'form_library', formModal.id);
@@ -3546,6 +3581,18 @@ export default function DevConsolePage() {
                 {formCategories.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
               <input type="url" placeholder="Source URL (link to PDF)" value={formModal.source_url || ''} onChange={(e) => setFormModal({ ...formModal, source_url: e.target.value })} style={inputStyle} />
+              <div>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>Or upload PDF file:</label>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={(e) => setFormModal({ ...formModal, file: e.target.files?.[0] || null })}
+                  style={{ ...inputStyle, padding: '8px' }}
+                />
+                {formModal.file && (
+                  <p style={{ color: '#22c55e', fontSize: '12px', marginTop: '4px' }}>Selected: {formModal.file.name}</p>
+                )}
+              </div>
               <textarea placeholder="Description..." value={formModal.description || ''} onChange={(e) => setFormModal({ ...formModal, description: e.target.value })} rows={3} style={inputStyle} />
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a1a1aa', fontSize: '14px' }}>
                 <input type="checkbox" checked={formModal.is_active ?? true} onChange={(e) => setFormModal({ ...formModal, is_active: e.target.checked })} />
