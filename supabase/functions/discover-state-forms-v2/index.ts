@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -180,6 +181,18 @@ serve(async (req) => {
               const headerStr = String.fromCharCode(...header)
               if (!headerStr.startsWith('%PDF')) continue
 
+              // Detect form fields
+              let formFieldCount = 0
+              try {
+                const pdfDoc = await PDFDocument.load(pdfBuffer)
+                const pdfForm = pdfDoc.getForm()
+                const fields = pdfForm.getFields()
+                formFieldCount = fields.length
+                console.log('[STEP D] PDF form fields detected: ' + formFieldCount)
+              } catch (e) {
+                console.log('[STEP D] Could not detect form fields: ' + e.message)
+              }
+
               const fileName = (form.form_number || form.form_name.replace(/[^a-zA-Z0-9]/g, '_')) + '.pdf'
               const storagePath = 'staging/' + stateUpper + '/' + fileName
 
@@ -208,7 +221,8 @@ serve(async (req) => {
                   storage_bucket: 'form-staging',
                   storage_path: storagePath,
                   file_size_bytes: pdfBuffer.byteLength,
-                  is_fillable: true,
+                  form_field_count: formFieldCount,
+                  is_fillable: formFieldCount > 0,
                   ai_discovered: true,
                   ai_confidence: 0.8,
                   ai_notes: 'Found via SerpAPI search',
@@ -217,7 +231,23 @@ serve(async (req) => {
                 })
 
               if (insertError) {
-                console.log('Insert error: ' + insertError.message)
+                console.error('❌ DATABASE INSERT ERROR:')
+                console.error('  Error Code: ' + (insertError.code || 'unknown'))
+                console.error('  Message: ' + insertError.message)
+                console.error('  Details: ' + (insertError.details || 'none'))
+                console.error('  Hint: ' + (insertError.hint || 'none'))
+                console.error('  Form: ' + form.form_number + ' - ' + form.form_name)
+
+                // Add to results with error info
+                results.found.push({
+                  form_number: form.form_number,
+                  form_name: form.form_name,
+                  url,
+                  storage_path: storagePath,
+                  error: insertError.message,
+                  error_code: insertError.code
+                })
+                continue
               }
 
               results.found.push({
