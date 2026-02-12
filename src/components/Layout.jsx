@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import AIAssistant from './AIAssistant';
 import FeedbackButton from './FeedbackButton';
@@ -17,6 +18,7 @@ export default function Layout() {
   const [showAI, setShowAI] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [authChecking, setAuthChecking] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem('sidebarOpen');
     return saved !== null ? saved === 'true' : true;
@@ -26,9 +28,43 @@ export default function Layout() {
     return saved !== null ? saved === 'true' : true;
   });
 
-  const { dealer, clearDealer } = useStore();
+  const { dealer, setDealer, clearDealer } = useStore();
   const navigate = useNavigate();
   const isAdmin = dealer?.dealer_name === 'OG DiX Motor Club';
+
+  // Auth protection - check session on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.user) {
+        navigate('/login');
+        return;
+      }
+
+      // Load dealer if not already in store
+      if (!dealer) {
+        const { data: dealerData, error } = await supabase
+          .from('dealer_settings')
+          .select('*')
+          .eq('owner_user_id', session.user.id)
+          .single();
+
+        if (dealerData) {
+          setDealer(dealerData);
+        } else {
+          // No dealer found, redirect to login
+          await supabase.auth.signOut();
+          navigate('/login');
+          return;
+        }
+      }
+
+      setAuthChecking(false);
+    };
+
+    checkAuth();
+  }, []);
 
   useEffect(() => {
     const handleResize = () => {
@@ -65,7 +101,11 @@ export default function Layout() {
     root.style.setProperty('--accent-bg', darkMode ? 'rgba(249,115,22,0.15)' : 'rgba(249,115,22,0.1)');
   }, [darkMode]);
 
-  const handleLogout = async () => { await clearDealer(); navigate('/login'); };
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    clearDealer();
+    navigate('/login');
+  };
 
   // Organized navigation with sections
   const navSections = [
@@ -320,6 +360,39 @@ export default function Layout() {
       </div>
     </>
   );
+
+  // Show loading screen while checking auth
+  if (authChecking) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        backgroundColor: theme.bg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: theme.text
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: '60px',
+            height: '60px',
+            backgroundColor: theme.accent,
+            borderRadius: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 16px',
+            fontSize: '24px',
+            fontWeight: '700',
+            color: '#fff'
+          }}>
+            OG
+          </div>
+          <div style={{ fontSize: '14px', color: theme.textSecondary }}>Loading...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <ThemeContext.Provider value={{ darkMode, setDarkMode, theme }}>
