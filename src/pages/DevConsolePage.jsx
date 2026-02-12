@@ -1254,6 +1254,9 @@ export default function DevConsolePage() {
     setLoading(true);
     try {
       let sourceUrl = uploadFormModal.source_url || null;
+      let storageBucket = null;
+      let storagePath = null;
+      let fileSizeBytes = null;
       let pdfValidated = false;
       let urlValidated = false;
 
@@ -1288,6 +1291,9 @@ export default function DevConsolePage() {
         } else {
           const { data: urlData } = supabase.storage.from('form-pdfs').getPublicUrl(fileName);
           sourceUrl = urlData.publicUrl;
+          storageBucket = 'form-pdfs';
+          storagePath = fileName;
+          fileSizeBytes = uploadFormModal.file.size;
           pdfValidated = true; // We uploaded it ourselves, so it's valid
           urlValidated = true;
           console.log('[UPLOAD] Public URL:', sourceUrl);
@@ -1297,6 +1303,7 @@ export default function DevConsolePage() {
       console.log('[UPLOAD] Inserting form_staging record:', {
         form_number: uploadFormModal.form_number.toUpperCase().trim(),
         source_url: sourceUrl,
+        storage_path: storagePath,
         pdf_validated: pdfValidated
       });
 
@@ -1305,6 +1312,9 @@ export default function DevConsolePage() {
         form_name: uploadFormModal.form_name.trim(),
         state: uploadFormModal.state.toUpperCase(),
         source_url: sourceUrl,
+        storage_bucket: storageBucket,
+        storage_path: storagePath,
+        file_size_bytes: fileSizeBytes,
         pdf_validated: pdfValidated,
         url_validated: urlValidated,
         url_validated_at: pdfValidated ? new Date().toISOString() : null,
