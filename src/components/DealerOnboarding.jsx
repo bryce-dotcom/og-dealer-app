@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Sparkles, Search, FileText, CheckCircle2, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Sparkles, Search, FileText, CheckCircle2, Loader2, DollarSign } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import { getFeeScheduleInfo } from '../lib/feeCalculator';
 
 const STEPS = ['Details', 'Discovery', 'Forms', 'Complete'];
 
@@ -26,6 +27,8 @@ export default function DealerOnboarding({ onComplete }) {
   const [loading, setLoading] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoveredForms, setDiscoveredForms] = useState([]);
+  const [discoveredFees, setDiscoveredFees] = useState([]);
+  const [feeDiscoveryStatus, setFeeDiscoveryStatus] = useState('pending'); // 'pending', 'checking', 'discovering', 'found', 'not_found'
   const [formData, setFormData] = useState({
     dealer_name: '',
     state: 'Utah',
@@ -50,6 +53,8 @@ export default function DealerOnboarding({ onComplete }) {
     setDiscovering(true);
     try {
       const stateCode = STATE_CODES[formData.state] || formData.state.substring(0, 2).toUpperCase();
+
+      // Discover forms
       const { data: forms, error } = await supabase
         .from('form_registry')
         .select('id, form_number, form_name, category, description')
@@ -58,10 +63,48 @@ export default function DealerOnboarding({ onComplete }) {
         .order('category');
       if (error) throw error;
       setDiscoveredForms(forms || []);
+
+      // Check for fee schedules
+      setFeeDiscoveryStatus('checking');
+      const feeInfo = await getFeeScheduleInfo(stateCode, supabase);
+
+      if (feeInfo && feeInfo.has_schedules) {
+        // Fee schedules already exist
+        setDiscoveredFees(feeInfo.schedules || []);
+        setFeeDiscoveryStatus('found');
+        console.log(`[ONBOARDING] Found ${feeInfo.count} existing fee schedules for ${stateCode}`);
+      } else {
+        // No schedules - attempt discovery
+        console.log(`[ONBOARDING] No fee schedules for ${stateCode}, attempting discovery...`);
+        setFeeDiscoveryStatus('discovering');
+
+        try {
+          const { data: feeData, error: feeError } = await supabase.functions.invoke('discover-state-fees', {
+            body: { state: stateCode }
+          });
+
+          if (feeError) {
+            console.error('[ONBOARDING] Fee discovery error:', feeError);
+            setFeeDiscoveryStatus('not_found');
+          } else if (feeData?.success && feeData?.newly_discovered > 0) {
+            setDiscoveredFees(feeData.fees || []);
+            setFeeDiscoveryStatus('found');
+            console.log(`[ONBOARDING] Discovered ${feeData.newly_discovered} new fees for ${stateCode}`);
+          } else {
+            setFeeDiscoveryStatus('not_found');
+            console.log(`[ONBOARDING] No fees discovered for ${stateCode}`);
+          }
+        } catch (feeErr) {
+          console.error('[ONBOARDING] Fee discovery exception:', feeErr);
+          setFeeDiscoveryStatus('not_found');
+        }
+      }
+
       setTimeout(() => setStep(3), 2000);
     } catch (err) {
       console.error('Form discovery error:', err);
       setDiscoveredForms([]);
+      setFeeDiscoveryStatus('not_found');
       setTimeout(() => setStep(3), 2000);
     } finally {
       setDiscovering(false);
@@ -186,10 +229,31 @@ export default function DealerOnboarding({ onComplete }) {
         {step === 2 && (
           <div style={{ textAlign: 'center', padding: '60px 0' }}>
             <div style={{ width: '100px', height: '100px', borderRadius: '50%', backgroundColor: 'rgba(249, 115, 22, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 32px auto' }}><Search color="#f97316" size={48} /></div>
-            <h2 style={{ fontSize: '32px', fontWeight: '700', color: '#fff', marginBottom: '8px' }}>Discovering Required Forms</h2>
-            <p style={{ fontSize: '18px', color: '#a1a1aa', marginBottom: '40px' }}>OG Arnie is searching for all required forms for {formData.state} dealerships...</p>
-            <div style={{ backgroundColor: '#27272a', borderRadius: '16px', padding: '32px', maxWidth: '500px', margin: '0 auto' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}><Loader2 className="animate-spin" color="#f97316" size={28} /><span style={{ color: '#d4d4d8', fontSize: '18px' }}>Searching DMV requirements...</span></div>
+            <h2 style={{ fontSize: '32px', fontWeight: '700', color: '#fff', marginBottom: '8px' }}>Discovering Requirements</h2>
+            <p style={{ fontSize: '18px', color: '#a1a1aa', marginBottom: '40px' }}>OG Arnie is configuring {formData.state} dealership settings...</p>
+            <div style={{ backgroundColor: '#27272a', borderRadius: '16px', padding: '32px', maxWidth: '500px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <Loader2 className="animate-spin" color="#f97316" size={28} />
+                <span style={{ color: '#d4d4d8', fontSize: '18px' }}>Searching required forms...</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                {feeDiscoveryStatus === 'pending' ? (
+                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#3f3f46' }} />
+                ) : feeDiscoveryStatus === 'checking' || feeDiscoveryStatus === 'discovering' ? (
+                  <Loader2 className="animate-spin" color="#f97316" size={28} />
+                ) : feeDiscoveryStatus === 'found' ? (
+                  <CheckCircle2 color="#22c55e" size={28} />
+                ) : (
+                  <DollarSign color="#71717a" size={28} />
+                )}
+                <span style={{ color: '#d4d4d8', fontSize: '18px' }}>
+                  {feeDiscoveryStatus === 'pending' ? 'Waiting for fee discovery...' :
+                   feeDiscoveryStatus === 'checking' ? 'Checking fee schedules...' :
+                   feeDiscoveryStatus === 'discovering' ? 'Discovering state fees...' :
+                   feeDiscoveryStatus === 'found' ? 'Fee schedules configured ✓' :
+                   'Fee schedules not found'}
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -197,14 +261,47 @@ export default function DealerOnboarding({ onComplete }) {
         {step === 3 && (
           <div style={{ textAlign: 'center', padding: '60px 0' }}>
             <div style={{ width: '100px', height: '100px', borderRadius: '50%', backgroundColor: 'rgba(249, 115, 22, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 32px auto' }}><FileText color="#f97316" size={48} /></div>
-            <h2 style={{ fontSize: '32px', fontWeight: '700', color: '#fff', marginBottom: '8px' }}>{discoveredForms.length > 0 ? `${discoveredForms.length} Forms Found` : 'Forms Ready'}</h2>
-            <p style={{ fontSize: '18px', color: '#a1a1aa', marginBottom: '40px' }}>{discoveredForms.length > 0 ? `We found ${discoveredForms.length} required forms for your ${formData.state} dealership.` : `Default forms will be configured for your ${formData.state} dealership.`}</p>
-            <div style={{ backgroundColor: '#27272a', borderRadius: '16px', padding: '32px', maxWidth: '500px', margin: '0 auto', textAlign: 'left', maxHeight: '300px', overflowY: 'auto' }}>
-              {discoveredForms.length > 0 ? discoveredForms.map((form, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '16px', color: '#d4d4d8', fontSize: '16px', padding: '10px 0', borderBottom: i === discoveredForms.length - 1 ? 'none' : '1px solid #3f3f46' }}><CheckCircle2 color="#22c55e" size={22} /><div><div style={{ fontWeight: '500' }}>{form.form_name}</div>{form.form_number && <div style={{ fontSize: '13px', color: '#71717a' }}>{form.form_number}</div>}</div></div>
-              )) : ['Bill of Sale', 'Title Application', 'Odometer Disclosure', "Buyer's Guide"].map((form, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '16px', color: '#d4d4d8', fontSize: '16px', padding: '10px 0', borderBottom: i === 3 ? 'none' : '1px solid #3f3f46' }}><CheckCircle2 color="#22c55e" size={22} />{form}</div>
-              ))}
+            <h2 style={{ fontSize: '32px', fontWeight: '700', color: '#fff', marginBottom: '8px' }}>Configuration Complete</h2>
+            <p style={{ fontSize: '18px', color: '#a1a1aa', marginBottom: '40px' }}>
+              {discoveredForms.length > 0 ? `Found ${discoveredForms.length} forms` : 'Default forms configured'}
+              {discoveredFees.length > 0 && ` and ${discoveredFees.length} fee schedules`} for {formData.state}
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: discoveredFees.length > 0 ? '1fr 1fr' : '1fr', gap: '24px', maxWidth: '900px', margin: '0 auto' }}>
+              {/* Forms */}
+              <div style={{ backgroundColor: '#27272a', borderRadius: '16px', padding: '32px', textAlign: 'left', maxHeight: '300px', overflowY: 'auto' }}>
+                <div style={{ color: '#f97316', fontSize: '14px', fontWeight: '600', marginBottom: '16px' }}>📄 FORMS</div>
+                {discoveredForms.length > 0 ? discoveredForms.map((form, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#d4d4d8', fontSize: '15px', padding: '8px 0', borderBottom: i === discoveredForms.length - 1 ? 'none' : '1px solid #3f3f46' }}>
+                    <CheckCircle2 color="#22c55e" size={20} />
+                    <div>
+                      <div style={{ fontWeight: '500' }}>{form.form_name}</div>
+                      {form.form_number && <div style={{ fontSize: '12px', color: '#71717a' }}>{form.form_number}</div>}
+                    </div>
+                  </div>
+                )) : ['Bill of Sale', 'Title Application', 'Odometer Disclosure', "Buyer's Guide"].map((form, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#d4d4d8', fontSize: '15px', padding: '8px 0', borderBottom: i === 3 ? 'none' : '1px solid #3f3f46' }}>
+                    <CheckCircle2 color="#22c55e" size={20} />
+                    {form}
+                  </div>
+                ))}
+              </div>
+
+              {/* Fees (if discovered) */}
+              {discoveredFees.length > 0 && (
+                <div style={{ backgroundColor: '#27272a', borderRadius: '16px', padding: '32px', textAlign: 'left', maxHeight: '300px', overflowY: 'auto' }}>
+                  <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: '600', marginBottom: '16px' }}>💰 FEE SCHEDULES</div>
+                  {discoveredFees.map((fee, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#d4d4d8', fontSize: '15px', padding: '8px 0', borderBottom: i === discoveredFees.length - 1 ? 'none' : '1px solid #3f3f46' }}>
+                      <CheckCircle2 color="#22c55e" size={20} />
+                      <div>
+                        <div style={{ fontWeight: '500' }}>{fee.fee_name}</div>
+                        {fee.verified && <div style={{ fontSize: '12px', color: '#22c55e' }}>✓ Verified</div>}
+                        {fee.ai_discovered && !fee.verified && <div style={{ fontSize: '12px', color: '#f97316' }}>⚠ Needs verification</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -218,7 +315,15 @@ export default function DealerOnboarding({ onComplete }) {
               <p style={{ color: '#71717a', fontSize: '14px', marginBottom: '8px' }}>Your setup:</p>
               <p style={{ color: '#fff', fontSize: '24px', fontWeight: '600' }}>{formData.dealer_name || 'Your Dealership'}</p>
               <p style={{ color: '#a1a1aa', fontSize: '18px', marginTop: '4px' }}>{formData.city}{formData.city && formData.state ? ', ' : ''}{formData.state}</p>
-              <p style={{ color: '#71717a', fontSize: '14px', marginTop: '16px' }}>{discoveredForms.length} forms configured</p>
+              <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <p style={{ color: '#71717a', fontSize: '14px' }}>✓ {discoveredForms.length || 'Default'} forms configured</p>
+                {discoveredFees.length > 0 && (
+                  <p style={{ color: '#71717a', fontSize: '14px' }}>✓ {discoveredFees.length} fee schedules configured</p>
+                )}
+                {feeDiscoveryStatus === 'not_found' && (
+                  <p style={{ color: '#f97316', fontSize: '14px' }}>⚠ Fee schedules require manual entry</p>
+                )}
+              </div>
             </div>
           </div>
         )}

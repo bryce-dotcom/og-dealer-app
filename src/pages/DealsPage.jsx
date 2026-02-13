@@ -6,6 +6,7 @@ import { useLocation } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import { calculateFees } from '../lib/feeCalculator';
 
 // ============ CONSTANTS ============
 const STAGES = [
@@ -203,6 +204,10 @@ export default function DealsPage() {
   const [dragOverStage, setDragOverStage] = useState(null);
   const draggedDealRef = useRef(null);
 
+  // Fee calculation state
+  const [feesAutoCalculated, setFeesAutoCalculated] = useState(false);
+  const [calculatingFees, setCalculatingFees] = useState(false);
+
   // ============ FINANCIAL CALCULATIONS ============
   const calculateDeal = useMemo(() => {
     const vehicleCashPrice = parseFloat(dealForm.vehicle_cash_price) || 0;
@@ -288,6 +293,70 @@ export default function DealsPage() {
       totalOfPayments
     };
   }, [dealForm]);
+
+  // ============ AUTO-CALCULATE FEES ============
+  const autoCalculateFees = async () => {
+    if (!dealForm.vehicle_id || !dealer?.state) {
+      console.log('[FEES] Cannot calculate: missing vehicle or dealer state');
+      return;
+    }
+
+    setCalculatingFees(true);
+
+    try {
+      // Get selected vehicle
+      const vehicle = inventory.find(v => v.id === dealForm.vehicle_id);
+      if (!vehicle) {
+        console.log('[FEES] Vehicle not found in inventory');
+        setCalculatingFees(false);
+        return;
+      }
+
+      // Prepare vehicle object for fee calculation
+      const vehicleData = {
+        year: vehicle.year,
+        make: vehicle.make,
+        model: vehicle.model,
+        price: parseFloat(dealForm.vehicle_cash_price) || parseFloat(vehicle.sale_price) || 0,
+        msrp: parseFloat(vehicle.msrp) || parseFloat(vehicle.sale_price) || 0,
+        weight: parseFloat(vehicle.weight) || 0,
+        mileage: parseFloat(vehicle.mileage) || 0
+      };
+
+      console.log('[FEES] Calculating fees for:', dealer.state, vehicleData);
+
+      const fees = await calculateFees(dealer.state, vehicleData, supabase);
+
+      if (!fees) {
+        console.log(`[FEES] No fee schedules found for ${dealer.state} - manual entry required`);
+        setToast({ type: 'info', message: `No fee schedules found for ${dealer.state}. Please enter fees manually or run fee discovery.` });
+        setCalculatingFees(false);
+        return;
+      }
+
+      // Update form with calculated fees
+      setDealForm(prev => ({
+        ...prev,
+        license_fee: fees.license?.amount?.toFixed(2) || '0',
+        registration_fee: fees.registration?.amount?.toFixed(2) || '0',
+        title_fee: fees.title?.amount?.toFixed(2) || '0',
+        property_tax_fee: fees.property_tax?.amount?.toFixed(2) || '0',
+        inspection_fee: fees.inspection?.amount?.toFixed(2) || '0',
+        emissions_fee: fees.emissions?.amount?.toFixed(2) || '0',
+        waste_tire_fee: fees.waste_tire?.amount?.toFixed(2) || '0'
+      }));
+
+      setFeesAutoCalculated(true);
+      setToast({ type: 'success', message: `Auto-filled ${fees.schedules_count} fees for ${fees.state}` });
+      console.log('[FEES] Auto-calculated fees:', fees);
+
+    } catch (err) {
+      console.error('[FEES] Error calculating fees:', err);
+      setToast({ type: 'error', message: 'Failed to calculate fees' });
+    }
+
+    setCalculatingFees(false);
+  };
 
   // ============ LOAD DOC PACKAGES FROM DATABASE ============
   // State for library forms (approved forms from staging)
@@ -1224,7 +1293,19 @@ export default function DealsPage() {
                 {/* Vehicle Selection */}
                 <div>
                   <label style={labelStyle}>Vehicle</label>
-                  <select value={dealForm.vehicle_id} onChange={(e) => { const v = inventory.find(x => x.id == e.target.value); setDealForm(prev => ({ ...prev, vehicle_id: e.target.value, price: v?.sale_price || prev.price })); }} style={inputStyle}>
+                  <select value={dealForm.vehicle_id} onChange={(e) => {
+                    const v = inventory.find(x => x.id == e.target.value);
+                    setDealForm(prev => ({
+                      ...prev,
+                      vehicle_id: e.target.value,
+                      price: v?.sale_price || prev.price,
+                      vehicle_cash_price: v?.sale_price || prev.vehicle_cash_price
+                    }));
+                    // Auto-calculate fees when vehicle is selected
+                    if (e.target.value) {
+                      setTimeout(() => autoCalculateFees(), 100);
+                    }
+                  }} style={inputStyle}>
                     <option value="">Select Vehicle</option>
                     {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} - ${(v.sale_price || 0).toLocaleString()}</option>)}
                   </select>
@@ -1373,7 +1454,28 @@ export default function DealsPage() {
 
                 {/* ============ FEES ============ */}
                 <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
-                  <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>FEES</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600' }}>
+                      FEES {feesAutoCalculated && <span style={{ color: '#22c55e', marginLeft: '6px' }}>✓ Auto-Calculated</span>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={autoCalculateFees}
+                      disabled={!dealForm.vehicle_id || calculatingFees}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        backgroundColor: calculatingFees ? theme.border : theme.accentBg,
+                        color: calculatingFees ? theme.textMuted : theme.accent,
+                        border: `1px solid ${theme.accent}`,
+                        borderRadius: '4px',
+                        cursor: (!dealForm.vehicle_id || calculatingFees) ? 'not-allowed' : 'pointer',
+                        opacity: (!dealForm.vehicle_id || calculatingFees) ? 0.5 : 1
+                      }}
+                    >
+                      {calculatingFees ? 'Calculating...' : 'Recalculate Fees'}
+                    </button>
+                  </div>
                   <div style={{ display: 'grid', gap: '8px' }}>
                     <div><label style={labelStyle}>Service Contract Price</label><input type="number" value={dealForm.service_contract_price} onChange={(e) => setDealForm(prev => ({ ...prev, service_contract_price: e.target.value }))} style={inputStyle} placeholder="0" /></div>
                     <div><label style={labelStyle}>Doc Fee</label><input type="number" value={dealForm.doc_fee} onChange={(e) => setDealForm(prev => ({ ...prev, doc_fee: e.target.value }))} style={inputStyle} placeholder="299" /></div>
