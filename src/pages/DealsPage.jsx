@@ -90,7 +90,7 @@ const INITIAL_DEAL_FORM = {
   stage: 'Lead',
   price: '',
   down_payment: '',
-  // Trade-in
+  // Trade-in (legacy)
   trade_value: '',
   trade_payoff: '',
   trade_acv: '',
@@ -129,7 +129,39 @@ const INITIAL_DEAL_FORM = {
   lienholder_state: '',
   lienholder_zip: '',
   notes: '',
-  date_of_sale: new Date().toISOString().split('T')[0]
+  date_of_sale: new Date().toISOString().split('T')[0],
+
+  // ============ NEW COMPREHENSIVE FINANCIAL FIELDS ============
+  // Vehicle Pricing
+  vehicle_cash_price: '',
+  accessories_total: '0',
+  rebate_amount: '0',
+  rebate_applied: '0',
+
+  // Trade-In (new detailed fields)
+  trade_in_year: '',
+  trade_in_make: '',
+  trade_in_model: '',
+  trade_in_vin: '',
+  trade_in_mileage: '',
+  trade_in_allowance: '0',
+  trade_in_payoff: '0',
+  trade_in_payoff_to: '',
+
+  // Fees
+  service_contract_price: '0',
+  gap_insurance_price: '0',
+  tax_rate: '0.0725',
+  license_fee: '0',
+  registration_fee: '0',
+  title_fee: '0',
+  property_tax_fee: '0',
+  inspection_fee: '0',
+  emissions_fee: '0',
+  waste_tire_fee: '0',
+
+  // Financing
+  apr: '18'
 };
 
 export default function DealsPage() {
@@ -170,6 +202,92 @@ export default function DealsPage() {
   // Drag and drop
   const [dragOverStage, setDragOverStage] = useState(null);
   const draggedDealRef = useRef(null);
+
+  // ============ FINANCIAL CALCULATIONS ============
+  const calculateDeal = useMemo(() => {
+    const vehicleCashPrice = parseFloat(dealForm.vehicle_cash_price) || 0;
+    const accessoriesTotal = parseFloat(dealForm.accessories_total) || 0;
+    const rebateAmount = parseFloat(dealForm.rebate_amount) || 0;
+    const rebateApplied = parseFloat(dealForm.rebate_applied) || 0;
+
+    // Vehicle Pricing
+    const totalCashPrice = vehicleCashPrice + accessoriesTotal;
+    const subtotalPrice = totalCashPrice - rebateApplied;
+
+    // Trade-In
+    const tradeInAllowance = parseFloat(dealForm.trade_in_allowance) || 0;
+    const tradeInPayoff = parseFloat(dealForm.trade_in_payoff) || 0;
+    const netTradeAllowance = tradeInAllowance - tradeInPayoff;
+
+    // Payment
+    const downPayment = parseFloat(dealForm.down_payment) || 0;
+    const totalCredits = downPayment + (netTradeAllowance > 0 ? netTradeAllowance : 0);
+
+    // Fees
+    const serviceContractPrice = parseFloat(dealForm.service_contract_price) || 0;
+    const docFee = parseFloat(dealForm.doc_fee) || 299;
+    const gapInsurancePrice = parseFloat(dealForm.gap_insurance_price) || 0;
+    const taxRate = parseFloat(dealForm.tax_rate) || 0.0725;
+
+    const licenseFee = parseFloat(dealForm.license_fee) || 0;
+    const registrationFee = parseFloat(dealForm.registration_fee) || 0;
+    const titleFee = parseFloat(dealForm.title_fee) || 0;
+    const propertyTaxFee = parseFloat(dealForm.property_tax_fee) || 0;
+    const inspectionFee = parseFloat(dealForm.inspection_fee) || 0;
+    const emissionsFee = parseFloat(dealForm.emissions_fee) || 0;
+    const wasteTireFee = parseFloat(dealForm.waste_tire_fee) || 0;
+
+    const totalFees = licenseFee + registrationFee + titleFee + propertyTaxFee +
+                      inspectionFee + emissionsFee + wasteTireFee;
+
+    const subtotalTaxable = subtotalPrice + serviceContractPrice + gapInsurancePrice + docFee;
+    const netTaxableAmount = subtotalTaxable - (netTradeAllowance > 0 ? netTradeAllowance : 0);
+    const taxAmount = netTaxableAmount * taxRate;
+    const totalDue = subtotalTaxable + taxAmount + totalFees;
+    const balanceDue = totalDue - totalCredits;
+
+    // Financing
+    const amountFinanced = balanceDue;
+    const apr = parseFloat(dealForm.apr) || 0;
+    const termMonths = parseInt(dealForm.term_months) || 48;
+
+    let monthlyPayment = 0;
+    let financeCharge = 0;
+    let totalOfPayments = 0;
+
+    if (amountFinanced > 0 && apr > 0 && termMonths > 0) {
+      const monthlyRate = apr / 100 / 12;
+      monthlyPayment = (amountFinanced * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) /
+                       (Math.pow(1 + monthlyRate, termMonths) - 1);
+      totalOfPayments = monthlyPayment * termMonths;
+      financeCharge = totalOfPayments - amountFinanced;
+    }
+
+    return {
+      // Vehicle Pricing
+      totalCashPrice,
+      subtotalPrice,
+
+      // Trade-In
+      netTradeAllowance,
+
+      // Payment
+      totalCredits,
+
+      // Fees
+      subtotalTaxable,
+      netTaxableAmount,
+      taxAmount,
+      totalDue,
+      balanceDue,
+
+      // Financing
+      amountFinanced,
+      financeCharge,
+      monthlyPayment,
+      totalOfPayments
+    };
+  }, [dealForm]);
 
   // ============ LOAD DOC PACKAGES FROM DATABASE ============
   // State for library forms (approved forms from staging)
@@ -561,8 +679,28 @@ export default function DealsPage() {
       customer_phone: deal.customer_phone || deal.phone || '',
       deal_type: deal.deal_type || 'Cash',
       stage: deal.stage || 'Lead',
+
+      // New comprehensive financial fields
+      vehicle_cash_price: deal.vehicle_cash_price || deal.price || deal.sale_price || '',
+      accessories_total: deal.accessories_total || '0',
+      rebate_amount: deal.rebate_amount || '0',
+      rebate_applied: deal.rebate_applied || '0',
+
+      // Legacy price fields
       price: deal.price || deal.sale_price || '',
       down_payment: deal.down_payment || '',
+
+      // New trade-in fields
+      trade_in_year: deal.trade_in_year || deal.trade_year || '',
+      trade_in_make: deal.trade_in_make || deal.trade_make || '',
+      trade_in_model: deal.trade_in_model || deal.trade_model || '',
+      trade_in_vin: deal.trade_in_vin || deal.trade_vin || '',
+      trade_in_mileage: deal.trade_in_mileage || '',
+      trade_in_allowance: deal.trade_in_allowance || deal.trade_value || '',
+      trade_in_payoff: deal.trade_in_payoff || deal.trade_payoff || '',
+      trade_in_payoff_to: deal.trade_in_payoff_to || '',
+
+      // Legacy trade-in fields
       trade_value: deal.trade_value || '',
       trade_payoff: deal.trade_payoff || '',
       trade_acv: deal.trade_acv || '',
@@ -571,8 +709,23 @@ export default function DealsPage() {
       trade_make: deal.trade_make || '',
       trade_model: deal.trade_model || '',
       trade_vin: deal.trade_vin || '',
+
+      // New fee fields
+      service_contract_price: deal.service_contract_price || '0',
+      gap_insurance_price: deal.gap_insurance_price || '0',
+      tax_rate: deal.tax_rate || '0.0725',
+      license_fee: deal.license_fee || '0',
+      registration_fee: deal.registration_fee || '0',
+      title_fee: deal.title_fee || '0',
+      property_tax_fee: deal.property_tax_fee || '0',
+      inspection_fee: deal.inspection_fee || '0',
+      emissions_fee: deal.emissions_fee || '0',
+      waste_tire_fee: deal.waste_tire_fee || '0',
+
+      // Financing fields
       term_months: deal.term_months || '48',
       interest_rate: deal.interest_rate || deal.apr || '18',
+      apr: deal.apr || deal.interest_rate || '18',
       doc_fee: deal.doc_fee || '299',
       salesman: deal.salesman || '',
       credit_score: deal.credit_score || '',
@@ -639,20 +792,46 @@ export default function DealsPage() {
         customer_phone: dealForm.customer_phone || dealForm.phone || null,
         deal_type: dealForm.deal_type,
         stage: dealForm.stage,
-        // Input prices
-        price: parseFloat(dealForm.price) || 0,
-        sale_price: parseFloat(dealForm.price) || 0,
+
+        // ============ NEW COMPREHENSIVE FINANCIAL FIELDS ============
+        // Vehicle Pricing (inputs)
+        vehicle_cash_price: parseFloat(dealForm.vehicle_cash_price) || 0,
+        accessories_total: parseFloat(dealForm.accessories_total) || 0,
+        rebate_amount: parseFloat(dealForm.rebate_amount) || 0,
+        rebate_applied: parseFloat(dealForm.rebate_applied) || 0,
+
+        // Legacy price fields (keep for backwards compatibility)
+        price: parseFloat(dealForm.vehicle_cash_price) || 0,
+        sale_price: parseFloat(dealForm.vehicle_cash_price) || 0,
         down_payment: parseFloat(dealForm.down_payment) || 0,
         doc_fee: parseFloat(dealForm.doc_fee) || 299,
-        // CALCULATED VALUES from dealAnalysis
-        sales_tax: Math.round(dealAnalysis.salesTax * 100) / 100,
-        total_sale: Math.round(dealAnalysis.totalSale * 100) / 100,
-        total_price: Math.round(dealAnalysis.totalSale * 100) / 100,
-        amount_financed: Math.round(dealAnalysis.amountFinanced * 100) / 100,
-        monthly_payment: Math.round(dealAnalysis.monthlyPayment * 100) / 100,
-        total_of_payments: Math.round(dealAnalysis.totalOfPayments * 100) / 100,
-        balance_due: Math.round(dealAnalysis.amountFinanced * 100) / 100,
-        negative_equity: Math.round(dealAnalysis.negativeEquity * 100) / 100,
+
+        // Payment (inputs)
+
+        // Fees (inputs)
+        service_contract_price: parseFloat(dealForm.service_contract_price) || 0,
+        gap_insurance_price: parseFloat(dealForm.gap_insurance_price) || 0,
+        tax_rate: parseFloat(dealForm.tax_rate) || 0.0725,
+        license_fee: parseFloat(dealForm.license_fee) || 0,
+        registration_fee: parseFloat(dealForm.registration_fee) || 0,
+        title_fee: parseFloat(dealForm.title_fee) || 0,
+        property_tax_fee: parseFloat(dealForm.property_tax_fee) || 0,
+        inspection_fee: parseFloat(dealForm.inspection_fee) || 0,
+        emissions_fee: parseFloat(dealForm.emissions_fee) || 0,
+        waste_tire_fee: parseFloat(dealForm.waste_tire_fee) || 0,
+
+        // Financing (inputs)
+        apr: parseFloat(dealForm.apr) || 18,
+
+        // CALCULATED VALUES from calculateDeal
+        sales_tax: Math.round(calculateDeal.taxAmount * 100) / 100,
+        total_sale: Math.round(calculateDeal.totalDue * 100) / 100,
+        total_price: Math.round(calculateDeal.totalDue * 100) / 100,
+        amount_financed: Math.round(calculateDeal.amountFinanced * 100) / 100,
+        monthly_payment: Math.round(calculateDeal.monthlyPayment * 100) / 100,
+        total_of_payments: Math.round(calculateDeal.totalOfPayments * 100) / 100,
+        balance_due: Math.round(calculateDeal.balanceDue * 100) / 100,
+        negative_equity: Math.max(0, parseFloat(dealForm.trade_in_payoff) || 0 - parseFloat(dealForm.trade_in_allowance) || 0),
         // Buyer ID
         purchaser_dl: dealForm.purchaser_dl || null,
         purchaser_dl_state: dealForm.purchaser_dl_state || null,
@@ -661,20 +840,30 @@ export default function DealsPage() {
         salesman: dealForm.salesman || null,
         date_of_sale: dealForm.date_of_sale,
         notes: dealForm.notes || null,
-        // Trade-in
-        trade_value: parseFloat(dealForm.trade_value) || 0,
-        trade_payoff: parseFloat(dealForm.trade_payoff) || 0,
+        // Trade-in (new comprehensive fields)
+        trade_in_year: dealForm.trade_in_year ? parseInt(dealForm.trade_in_year) : null,
+        trade_in_make: dealForm.trade_in_make || null,
+        trade_in_model: dealForm.trade_in_model || null,
+        trade_in_vin: dealForm.trade_in_vin || null,
+        trade_in_mileage: dealForm.trade_in_mileage ? parseInt(dealForm.trade_in_mileage) : null,
+        trade_in_allowance: parseFloat(dealForm.trade_in_allowance) || 0,
+        trade_in_payoff: parseFloat(dealForm.trade_in_payoff) || 0,
+        trade_in_payoff_to: dealForm.trade_in_payoff_to || null,
+
+        // Trade-in (legacy fields for backwards compatibility)
+        trade_value: parseFloat(dealForm.trade_in_allowance) || parseFloat(dealForm.trade_value) || 0,
+        trade_payoff: parseFloat(dealForm.trade_in_payoff) || parseFloat(dealForm.trade_payoff) || 0,
         trade_acv: parseFloat(dealForm.trade_acv) || 0,
-        trade_allowance: parseFloat(dealForm.trade_value) || 0,
+        trade_allowance: parseFloat(dealForm.trade_in_allowance) || parseFloat(dealForm.trade_value) || 0,
         trade_description: dealForm.trade_description || null,
-        trade_year: dealForm.trade_year ? parseInt(dealForm.trade_year) : null,
-        trade_make: dealForm.trade_make || null,
-        trade_model: dealForm.trade_model || null,
-        trade_vin: dealForm.trade_vin || null,
+        trade_year: dealForm.trade_in_year ? parseInt(dealForm.trade_in_year) : (dealForm.trade_year ? parseInt(dealForm.trade_year) : null),
+        trade_make: dealForm.trade_in_make || dealForm.trade_make || null,
+        trade_model: dealForm.trade_in_model || dealForm.trade_model || null,
+        trade_vin: dealForm.trade_in_vin || dealForm.trade_vin || null,
+
         // Financing terms
         term_months: parseInt(dealForm.term_months) || 48,
-        interest_rate: parseFloat(dealForm.interest_rate) || 18,
-        apr: parseFloat(dealForm.interest_rate) || 18,
+        interest_rate: parseFloat(dealForm.apr) || parseFloat(dealForm.interest_rate) || 18,
         credit_score: dealForm.credit_score ? parseInt(dealForm.credit_score) : null,
         // Products/Add-ons
         gap_insurance: dealForm.gap_insurance ? 595 : 0,
@@ -1129,46 +1318,101 @@ export default function DealsPage() {
                   </div>
                 </div>
 
-                {/* Price & Down */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  <div><label style={labelStyle}>Sale Price</label><input type="number" value={dealForm.price} onChange={(e) => setDealForm(prev => ({ ...prev, price: e.target.value }))} style={inputStyle} /></div>
-                  <div><label style={labelStyle}>Down Payment</label><input type="number" value={dealForm.down_payment} onChange={(e) => setDealForm(prev => ({ ...prev, down_payment: e.target.value }))} style={inputStyle} /></div>
+                {/* ============ VEHICLE PRICING ============ */}
+                <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                  <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>VEHICLE PRICING</div>
+                  <div style={{ display: 'grid', gap: '8px' }}>
+                    <div><label style={labelStyle}>Vehicle Cash Price</label><input type="number" value={dealForm.vehicle_cash_price} onChange={(e) => setDealForm(prev => ({ ...prev, vehicle_cash_price: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    <div><label style={labelStyle}>Accessories Total</label><input type="number" value={dealForm.accessories_total} onChange={(e) => setDealForm(prev => ({ ...prev, accessories_total: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div><label style={labelStyle}>Rebate Amount</label><input type="number" value={dealForm.rebate_amount} onChange={(e) => setDealForm(prev => ({ ...prev, rebate_amount: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                      <div><label style={labelStyle}>Rebate Applied</label><input type="number" value={dealForm.rebate_applied} onChange={(e) => setDealForm(prev => ({ ...prev, rebate_applied: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    </div>
+                    <div><label style={labelStyle}>Total Cash Price (calculated)</label><input type="number" value={calculateDeal.totalCashPrice.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                    <div><label style={labelStyle}>Subtotal Price (calculated)</label><input type="number" value={calculateDeal.subtotalPrice.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                  </div>
                 </div>
 
-                {/* Trade-In */}
+                {/* ============ TRADE-IN ============ */}
                 {showTradeIn ? (
-                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                       <span style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600' }}>TRADE-IN</span>
                       <button onClick={() => setShowTradeIn(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '11px' }}>collapse</button>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 2fr', gap: '8px', marginBottom: '8px' }}>
-                      <div><label style={labelStyle}>Year</label><input type="number" value={dealForm.trade_year} onChange={(e) => setDealForm(prev => ({ ...prev, trade_year: e.target.value }))} placeholder="2018" style={inputStyle} /></div>
-                      <div><label style={labelStyle}>Make</label><input type="text" value={dealForm.trade_make} onChange={(e) => setDealForm(prev => ({ ...prev, trade_make: e.target.value }))} placeholder="Honda" style={inputStyle} /></div>
-                      <div><label style={labelStyle}>Model</label><input type="text" value={dealForm.trade_model} onChange={(e) => setDealForm(prev => ({ ...prev, trade_model: e.target.value }))} placeholder="Civic" style={inputStyle} /></div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                      <div><label style={labelStyle}>Description</label><input type="text" value={dealForm.trade_description} onChange={(e) => setDealForm(prev => ({ ...prev, trade_description: e.target.value }))} placeholder="2018 Honda Civic EX" style={inputStyle} /></div>
-                      <div><label style={labelStyle}>Trade VIN</label><input type="text" value={dealForm.trade_vin} onChange={(e) => setDealForm(prev => ({ ...prev, trade_vin: e.target.value }))} placeholder="VIN" style={inputStyle} /></div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                      <div><label style={labelStyle}>Allowance</label><input type="number" value={dealForm.trade_value} onChange={(e) => setDealForm(prev => ({ ...prev, trade_value: e.target.value }))} style={inputStyle} /></div>
-                      <div><label style={labelStyle}>Payoff</label><input type="number" value={dealForm.trade_payoff} onChange={(e) => setDealForm(prev => ({ ...prev, trade_payoff: e.target.value }))} style={inputStyle} /></div>
-                      <div><label style={labelStyle}>ACV</label><input type="number" value={dealForm.trade_acv} onChange={(e) => setDealForm(prev => ({ ...prev, trade_acv: e.target.value }))} style={inputStyle} /></div>
+                    <div style={{ display: 'grid', gap: '8px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 2fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>Year</label><input type="number" value={dealForm.trade_in_year} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_year: e.target.value }))} placeholder="2018" style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Make</label><input type="text" value={dealForm.trade_in_make} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_make: e.target.value }))} placeholder="Honda" style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Model</label><input type="text" value={dealForm.trade_in_model} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_model: e.target.value }))} placeholder="Civic" style={inputStyle} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>Trade VIN</label><input type="text" value={dealForm.trade_in_vin} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_vin: e.target.value }))} placeholder="VIN" style={inputStyle} /></div>
+                        <div><label style={labelStyle}>Mileage</label><input type="number" value={dealForm.trade_in_mileage} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_mileage: e.target.value }))} placeholder="0" style={inputStyle} /></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>Trade Allowance</label><input type="number" value={dealForm.trade_in_allowance} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_allowance: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                        <div><label style={labelStyle}>Trade Payoff</label><input type="number" value={dealForm.trade_in_payoff} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_payoff: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                      </div>
+                      <div><label style={labelStyle}>Payoff To</label><input type="text" value={dealForm.trade_in_payoff_to} onChange={(e) => setDealForm(prev => ({ ...prev, trade_in_payoff_to: e.target.value }))} style={inputStyle} placeholder="Lender Name" /></div>
+                      <div><label style={labelStyle}>Net Trade Allowance (calculated)</label><input type="number" value={calculateDeal.netTradeAllowance.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
                     </div>
                   </div>
                 ) : (
                   <button onClick={() => setShowTradeIn(true)} style={{ padding: '10px', backgroundColor: 'transparent', border: `1px dashed ${theme.border}`, borderRadius: '8px', color: theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>+ Add Trade-In</button>
                 )}
 
-                {/* BHPH Financing */}
-                {(dealForm.deal_type === 'BHPH' || dealForm.deal_type === 'Financing') && (
-                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
-                    <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>FINANCING</div>
+                {/* ============ PAYMENT ============ */}
+                <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                  <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>PAYMENT</div>
+                  <div style={{ display: 'grid', gap: '8px' }}>
+                    <div><label style={labelStyle}>Down Payment</label><input type="number" value={dealForm.down_payment} onChange={(e) => setDealForm(prev => ({ ...prev, down_payment: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    <div><label style={labelStyle}>Total Credits (calculated)</label><input type="number" value={calculateDeal.totalCredits.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                  </div>
+                </div>
+
+                {/* ============ FEES ============ */}
+                <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                  <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>FEES</div>
+                  <div style={{ display: 'grid', gap: '8px' }}>
+                    <div><label style={labelStyle}>Service Contract Price</label><input type="number" value={dealForm.service_contract_price} onChange={(e) => setDealForm(prev => ({ ...prev, service_contract_price: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    <div><label style={labelStyle}>Doc Fee</label><input type="number" value={dealForm.doc_fee} onChange={(e) => setDealForm(prev => ({ ...prev, doc_fee: e.target.value }))} style={inputStyle} placeholder="299" /></div>
+                    <div><label style={labelStyle}>GAP Insurance Price</label><input type="number" value={dealForm.gap_insurance_price} onChange={(e) => setDealForm(prev => ({ ...prev, gap_insurance_price: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    <div><label style={labelStyle}>Tax Rate (decimal)</label><input type="number" step="0.0001" value={dealForm.tax_rate} onChange={(e) => setDealForm(prev => ({ ...prev, tax_rate: e.target.value }))} style={inputStyle} placeholder="0.0725" /></div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div><label style={labelStyle}>License Fee</label><input type="number" value={dealForm.license_fee} onChange={(e) => setDealForm(prev => ({ ...prev, license_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                      <div><label style={labelStyle}>Registration Fee</label><input type="number" value={dealForm.registration_fee} onChange={(e) => setDealForm(prev => ({ ...prev, registration_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div><label style={labelStyle}>Title Fee</label><input type="number" value={dealForm.title_fee} onChange={(e) => setDealForm(prev => ({ ...prev, title_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                      <div><label style={labelStyle}>Property Tax Fee</label><input type="number" value={dealForm.property_tax_fee} onChange={(e) => setDealForm(prev => ({ ...prev, property_tax_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                      <div><label style={labelStyle}>Term</label><select value={dealForm.term_months} onChange={(e) => setDealForm(prev => ({ ...prev, term_months: e.target.value }))} style={inputStyle}>{[24,36,48,60,72].map(m => <option key={m} value={m}>{m} mo</option>)}</select></div>
-                      <div><label style={labelStyle}>Rate %</label><input type="number" value={dealForm.interest_rate} onChange={(e) => setDealForm(prev => ({ ...prev, interest_rate: e.target.value }))} style={inputStyle} /></div>
-                      <div><label style={labelStyle}>Credit</label><input type="number" value={dealForm.credit_score} onChange={(e) => setDealForm(prev => ({ ...prev, credit_score: e.target.value }))} placeholder="Optional" style={inputStyle} /></div>
+                      <div><label style={labelStyle}>Inspection Fee</label><input type="number" value={dealForm.inspection_fee} onChange={(e) => setDealForm(prev => ({ ...prev, inspection_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                      <div><label style={labelStyle}>Emissions Fee</label><input type="number" value={dealForm.emissions_fee} onChange={(e) => setDealForm(prev => ({ ...prev, emissions_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                      <div><label style={labelStyle}>Waste Tire Fee</label><input type="number" value={dealForm.waste_tire_fee} onChange={(e) => setDealForm(prev => ({ ...prev, waste_tire_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    </div>
+                    <div><label style={labelStyle}>Subtotal Taxable (calculated)</label><input type="number" value={calculateDeal.subtotalTaxable.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                    <div><label style={labelStyle}>Net Taxable Amount (calculated)</label><input type="number" value={calculateDeal.netTaxableAmount.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                    <div><label style={labelStyle}>Tax Amount (calculated)</label><input type="number" value={calculateDeal.taxAmount.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                    <div><label style={labelStyle}>Total Due (calculated)</label><input type="number" value={calculateDeal.totalDue.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                    <div><label style={labelStyle}>Balance Due (calculated)</label><input type="number" value={calculateDeal.balanceDue.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                  </div>
+                </div>
+
+                {/* ============ FINANCING ============ */}
+                {(dealForm.deal_type === 'BHPH' || dealForm.deal_type === 'Financing') && (
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                    <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>FINANCING</div>
+                    <div style={{ display: 'grid', gap: '8px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div><label style={labelStyle}>APR %</label><input type="number" step="0.01" value={dealForm.apr} onChange={(e) => setDealForm(prev => ({ ...prev, apr: e.target.value }))} style={inputStyle} placeholder="18" /></div>
+                        <div><label style={labelStyle}>Term (months)</label><select value={dealForm.term_months} onChange={(e) => setDealForm(prev => ({ ...prev, term_months: e.target.value }))} style={inputStyle}>{[24,36,48,60,72].map(m => <option key={m} value={m}>{m} mo</option>)}</select></div>
+                      </div>
+                      <div><label style={labelStyle}>Amount Financed (calculated)</label><input type="number" value={calculateDeal.amountFinanced.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                      <div><label style={labelStyle}>Finance Charge (calculated)</label><input type="number" value={calculateDeal.financeCharge.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                      <div><label style={labelStyle}>Monthly Payment (calculated)</label><input type="number" value={calculateDeal.monthlyPayment.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
+                      <div><label style={labelStyle}>Total of Payments (calculated)</label><input type="number" value={calculateDeal.totalOfPayments.toFixed(2)} disabled style={{ ...inputStyle, backgroundColor: 'rgba(212,175,55,0.1)', color: '#D4AF37', cursor: 'not-allowed' }} /></div>
                     </div>
                   </div>
                 )}
@@ -1276,6 +1520,43 @@ export default function DealsPage() {
 
             {/* MIDDLE: DOCUMENTS */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '320px' }}>
+              {/* Financial Summary */}
+              <div style={{ ...cardStyle, alignSelf: 'flex-start', width: '100%' }}>
+                <h3 style={{ color: theme.text, margin: '0 0 12px', fontSize: '15px' }}>Deal Summary</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', backgroundColor: theme.bg, borderRadius: '6px' }}>
+                    <span style={{ color: theme.textMuted, fontSize: '12px' }}>Subtotal Price:</span>
+                    <span style={{ color: theme.text, fontSize: '12px', fontWeight: '600' }}>${calculateDeal.subtotalPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', backgroundColor: theme.bg, borderRadius: '6px' }}>
+                    <span style={{ color: theme.textMuted, fontSize: '12px' }}>Net Trade:</span>
+                    <span style={{ color: calculateDeal.netTradeAllowance >= 0 ? '#22c55e' : '#ef4444', fontSize: '12px', fontWeight: '600' }}>${calculateDeal.netTradeAllowance.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', backgroundColor: theme.bg, borderRadius: '6px' }}>
+                    <span style={{ color: theme.textMuted, fontSize: '12px' }}>Total Credits:</span>
+                    <span style={{ color: '#22c55e', fontSize: '12px', fontWeight: '600' }}>${calculateDeal.totalCredits.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', backgroundColor: theme.bg, borderRadius: '6px' }}>
+                    <span style={{ color: theme.textMuted, fontSize: '12px' }}>Tax Amount:</span>
+                    <span style={{ color: theme.text, fontSize: '12px', fontWeight: '600' }}>${calculateDeal.taxAmount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: 'rgba(212,175,55,0.1)', borderRadius: '6px', border: '1px solid rgba(212,175,55,0.3)' }}>
+                    <span style={{ color: '#D4AF37', fontSize: '13px', fontWeight: '600' }}>Total Due:</span>
+                    <span style={{ color: '#D4AF37', fontSize: '14px', fontWeight: '700' }}>${calculateDeal.totalDue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: 'rgba(249,115,22,0.1)', borderRadius: '6px', border: '1px solid rgba(249,115,22,0.3)' }}>
+                    <span style={{ color: theme.accent, fontSize: '13px', fontWeight: '600' }}>Balance Due:</span>
+                    <span style={{ color: theme.accent, fontSize: '14px', fontWeight: '700' }}>${calculateDeal.balanceDue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                  </div>
+                  {(dealForm.deal_type === 'BHPH' || dealForm.deal_type === 'Financing') && calculateDeal.monthlyPayment > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: '#3b82f620', borderRadius: '6px', border: '1px solid #3b82f640', marginTop: '4px' }}>
+                      <span style={{ color: '#3b82f6', fontSize: '13px', fontWeight: '600' }}>Monthly Payment:</span>
+                      <span style={{ color: '#3b82f6', fontSize: '14px', fontWeight: '700' }}>${calculateDeal.monthlyPayment.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}/mo</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Required Documents Package */}
               <div style={{ ...cardStyle, alignSelf: 'flex-start', width: '100%' }}>
                 <h3 style={{ color: theme.text, margin: '0 0 16px', fontSize: '15px' }}>Required Documents</h3>
