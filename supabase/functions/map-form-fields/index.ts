@@ -27,62 +27,242 @@ const allUniversalFields = Object.entries(universalSchema)
   .flatMap(([category, fields]) => fields.map(f => `${category}.${f}`));
 
 // ============================================
+// NORMALIZE FIELD NAMES
+// ============================================
+function normalizeFieldName(fieldName: string): string {
+  return fieldName
+    .toLowerCase()
+    // Handle camelCase: "buyerName" → "buyer name"
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    // Replace underscores, hyphens, dots with spaces
+    .replace(/[_\-\.]/g, ' ')
+    // Remove special characters (keep letters, numbers, spaces)
+    .replace(/[^a-z0-9\s]/g, '')
+    // Collapse multiple spaces
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ============================================
 // AUTO-MAP FIELD NAMES (Pattern Matching)
 // ============================================
 function autoMapField(pdfFieldName: string): { field: string | null; confidence: number } {
-  const name = pdfFieldName.toLowerCase().trim();
+  const name = normalizeFieldName(pdfFieldName);
 
-  // Direct mappings
+  // Direct mappings with many variations
   const mappings: Record<string, { field: string; confidence: number }> = {
-    // Vehicle
+    // Vehicle - VIN
     'vin': { field: 'vehicle.vin', confidence: 0.98 },
+    'vehicle identification number': { field: 'vehicle.vin', confidence: 0.98 },
+    'vehicle id number': { field: 'vehicle.vin', confidence: 0.95 },
+    'vehicle vin': { field: 'vehicle.vin', confidence: 0.98 },
+    'v i n': { field: 'vehicle.vin', confidence: 0.95 },
+
+    // Vehicle - Year
     'year': { field: 'vehicle.year', confidence: 0.95 },
+    'vehicle year': { field: 'vehicle.year', confidence: 0.98 },
+    'model year': { field: 'vehicle.year', confidence: 0.98 },
+    'yr': { field: 'vehicle.year', confidence: 0.9 },
+
+    // Vehicle - Make
     'make': { field: 'vehicle.make', confidence: 0.95 },
+    'vehicle make': { field: 'vehicle.make', confidence: 0.98 },
+    'manufacturer': { field: 'vehicle.make', confidence: 0.9 },
+    'mfg': { field: 'vehicle.make', confidence: 0.85 },
+
+    // Vehicle - Model
     'model': { field: 'vehicle.model', confidence: 0.95 },
+    'vehicle model': { field: 'vehicle.model', confidence: 0.98 },
+
+    // Vehicle - Color
     'color': { field: 'vehicle.color', confidence: 0.9 },
+    'vehicle color': { field: 'vehicle.color', confidence: 0.95 },
+    'exterior color': { field: 'vehicle.color', confidence: 0.95 },
+
+    // Vehicle - Mileage
     'odometer': { field: 'vehicle.mileage', confidence: 0.95 },
-    'mileage': { field: 'vehicle.mileage', confidence: 0.9 },
+    'mileage': { field: 'vehicle.mileage', confidence: 0.95 },
     'miles': { field: 'vehicle.mileage', confidence: 0.85 },
+    'odometer reading': { field: 'vehicle.mileage', confidence: 0.98 },
+    'current mileage': { field: 'vehicle.mileage', confidence: 0.95 },
+    'vehicle mileage': { field: 'vehicle.mileage', confidence: 0.95 },
+
+    // Vehicle - Stock Number
     'stock': { field: 'vehicle.stock_number', confidence: 0.85 },
     'stock number': { field: 'vehicle.stock_number', confidence: 0.95 },
+    'stock no': { field: 'vehicle.stock_number', confidence: 0.95 },
+    'stock num': { field: 'vehicle.stock_number', confidence: 0.95 },
+    'inventory number': { field: 'vehicle.stock_number', confidence: 0.9 },
+    'vehicle number': { field: 'vehicle.stock_number', confidence: 0.8 },
 
-    // Deal
+    // Deal - Purchaser Name
+    'purchaser name': { field: 'deal.purchaser_name', confidence: 0.98 },
+    'buyer name': { field: 'deal.purchaser_name', confidence: 0.95 },
+    'customer name': { field: 'deal.purchaser_name', confidence: 0.95 },
+    'purchaser': { field: 'deal.purchaser_name', confidence: 0.85 },
+    'buyer': { field: 'deal.purchaser_name', confidence: 0.8 },
+    'name of buyer': { field: 'deal.purchaser_name', confidence: 0.95 },
+    'name of purchaser': { field: 'deal.purchaser_name', confidence: 0.98 },
+
+    // Deal - Purchaser Address
+    'purchaser address': { field: 'deal.purchaser_address', confidence: 0.98 },
+    'buyer address': { field: 'deal.purchaser_address', confidence: 0.95 },
+    'customer address': { field: 'deal.purchaser_address', confidence: 0.95 },
+    'address of buyer': { field: 'deal.purchaser_address', confidence: 0.95 },
+    'address of purchaser': { field: 'deal.purchaser_address', confidence: 0.98 },
+
+    // Deal - Price
     'price': { field: 'deal.price', confidence: 0.8 },
     'sale price': { field: 'deal.price', confidence: 0.95 },
     'selling price': { field: 'deal.price', confidence: 0.9 },
     'purchase price': { field: 'deal.price', confidence: 0.9 },
+    'vehicle price': { field: 'deal.price', confidence: 0.9 },
+    'sales price': { field: 'deal.price', confidence: 0.95 },
+    'cash price': { field: 'deal.vehicle_cash_price', confidence: 0.95 },
+    'vehicle cash price': { field: 'deal.vehicle_cash_price', confidence: 0.98 },
+
+    // Deal - Down Payment
     'down payment': { field: 'deal.down_payment', confidence: 0.95 },
+    'down': { field: 'deal.down_payment', confidence: 0.8 },
+    'deposit': { field: 'deal.down_payment', confidence: 0.85 },
+    'initial payment': { field: 'deal.down_payment', confidence: 0.9 },
+    'cash down': { field: 'deal.down_payment', confidence: 0.95 },
+
+    // Deal - Trade-In
+    'trade in allowance': { field: 'deal.trade_in_allowance', confidence: 0.98 },
+    'trade allowance': { field: 'deal.trade_in_allowance', confidence: 0.95 },
+    'trade in value': { field: 'deal.trade_in_allowance', confidence: 0.95 },
+    'trade value': { field: 'deal.trade_in_allowance', confidence: 0.9 },
+    'trade in payoff': { field: 'deal.trade_in_payoff', confidence: 0.98 },
+    'trade payoff': { field: 'deal.trade_in_payoff', confidence: 0.95 },
+
+    // Deal - Tax
     'sales tax': { field: 'deal.sales_tax', confidence: 0.95 },
+    'tax': { field: 'deal.sales_tax', confidence: 0.75 },
+    'tax amount': { field: 'deal.sales_tax', confidence: 0.95 },
+
+    // Deal - Total
     'total': { field: 'deal.total_price', confidence: 0.7 },
     'total price': { field: 'deal.total_price', confidence: 0.95 },
+    'grand total': { field: 'deal.total_price', confidence: 0.95 },
+    'total amount': { field: 'deal.total_price', confidence: 0.95 },
+    'amount due': { field: 'deal.total_price', confidence: 0.9 },
+
+    // Deal - Date
     'date': { field: 'deal.date_of_sale', confidence: 0.7 },
     'date of sale': { field: 'deal.date_of_sale', confidence: 0.98 },
     'sale date': { field: 'deal.date_of_sale', confidence: 0.95 },
+    'purchase date': { field: 'deal.date_of_sale', confidence: 0.95 },
+    'transaction date': { field: 'deal.date_of_sale', confidence: 0.9 },
 
-    // Financing
+    // Financing - APR
     'apr': { field: 'financing.apr', confidence: 0.98 },
+    'annual percentage rate': { field: 'financing.apr', confidence: 0.98 },
+    'a p r': { field: 'financing.apr', confidence: 0.95 },
     'interest rate': { field: 'financing.interest_rate', confidence: 0.95 },
+    'rate': { field: 'financing.interest_rate', confidence: 0.75 },
+
+    // Financing - Term
     'term': { field: 'financing.term_months', confidence: 0.8 },
+    'term months': { field: 'financing.term_months', confidence: 0.95 },
+    'loan term': { field: 'financing.term_months', confidence: 0.95 },
+    'number of months': { field: 'financing.term_months', confidence: 0.9 },
     'months': { field: 'financing.term_months', confidence: 0.7 },
+    'no of payments': { field: 'financing.term_months', confidence: 0.85 },
+    'number of payments': { field: 'financing.term_months', confidence: 0.85 },
+
+    // Financing - Monthly Payment
     'monthly payment': { field: 'financing.monthly_payment', confidence: 0.95 },
     'payment': { field: 'financing.monthly_payment', confidence: 0.7 },
-    'loan amount': { field: 'financing.loan_amount', confidence: 0.95 },
-    'amount financed': { field: 'financing.loan_amount', confidence: 0.9 },
+    'payment amount': { field: 'financing.monthly_payment', confidence: 0.9 },
+    'monthly pmt': { field: 'financing.monthly_payment', confidence: 0.95 },
+    'mo payment': { field: 'financing.monthly_payment', confidence: 0.95 },
 
-    // Fees
+    // Financing - Loan Amount
+    'loan amount': { field: 'financing.loan_amount', confidence: 0.95 },
+    'amount financed': { field: 'financing.loan_amount', confidence: 0.95 },
+    'finance amount': { field: 'financing.loan_amount', confidence: 0.95 },
+    'principal': { field: 'financing.loan_amount', confidence: 0.85 },
+    'loan principal': { field: 'financing.loan_amount', confidence: 0.95 },
+
+    // Fees - License
     'license fee': { field: 'fees.license_fee', confidence: 0.98 },
+    'license': { field: 'fees.license_fee', confidence: 0.85 },
+    'license plate fee': { field: 'fees.license_fee', confidence: 0.98 },
+    'plate fee': { field: 'fees.license_fee', confidence: 0.95 },
+
+    // Fees - Registration
     'registration fee': { field: 'fees.registration_fee', confidence: 0.98 },
+    'registration': { field: 'fees.registration_fee', confidence: 0.85 },
+    'vehicle registration': { field: 'fees.registration_fee', confidence: 0.95 },
+    'reg fee': { field: 'fees.registration_fee', confidence: 0.95 },
+
+    // Fees - Title
     'title fee': { field: 'fees.title_fee', confidence: 0.98 },
+    'title': { field: 'fees.title_fee', confidence: 0.75 },
+    'vehicle title fee': { field: 'fees.title_fee', confidence: 0.98 },
+    'titling fee': { field: 'fees.title_fee', confidence: 0.95 },
+
+    // Fees - Property Tax
     'property tax': { field: 'fees.property_tax_fee', confidence: 0.95 },
     'property tax fee': { field: 'fees.property_tax_fee', confidence: 0.98 },
+    'prop tax': { field: 'fees.property_tax_fee', confidence: 0.95 },
+    'vehicle property tax': { field: 'fees.property_tax_fee', confidence: 0.98 },
+    'ad valorem tax': { field: 'fees.property_tax_fee', confidence: 0.95 },
+
+    // Fees - Inspection
     'inspection fee': { field: 'fees.inspection_fee', confidence: 0.98 },
+    'inspection': { field: 'fees.inspection_fee', confidence: 0.85 },
+    'safety inspection': { field: 'fees.inspection_fee', confidence: 0.98 },
+    'vehicle inspection': { field: 'fees.inspection_fee', confidence: 0.95 },
+
+    // Fees - Emissions
     'emissions fee': { field: 'fees.emissions_fee', confidence: 0.98 },
+    'emissions': { field: 'fees.emissions_fee', confidence: 0.85 },
+    'emissions testing': { field: 'fees.emissions_fee', confidence: 0.95 },
+    'emission fee': { field: 'fees.emissions_fee', confidence: 0.98 },
+    'smog fee': { field: 'fees.emissions_fee', confidence: 0.9 },
+
+    // Fees - Waste Tire
     'waste tire fee': { field: 'fees.waste_tire_fee', confidence: 0.98 },
+    'tire fee': { field: 'fees.waste_tire_fee', confidence: 0.95 },
+    'tire disposal fee': { field: 'fees.waste_tire_fee', confidence: 0.98 },
+    'tire recycling fee': { field: 'fees.waste_tire_fee', confidence: 0.98 },
+
+    // Fees - Doc Fee
     'doc fee': { field: 'fees.doc_fee', confidence: 0.98 },
-    'documentation fee': { field: 'fees.doc_fee', confidence: 0.95 },
-    'service contract': { field: 'fees.service_contract_price', confidence: 0.9 },
-    'gap insurance': { field: 'fees.gap_insurance_price', confidence: 0.9 },
+    'documentation fee': { field: 'fees.doc_fee', confidence: 0.98 },
+    'document fee': { field: 'fees.doc_fee', confidence: 0.98 },
+    'processing fee': { field: 'fees.doc_fee', confidence: 0.9 },
+    'dealer fee': { field: 'fees.doc_fee', confidence: 0.85 },
+
+    // Fees - Service Contract
+    'service contract': { field: 'fees.service_contract_price', confidence: 0.95 },
+    'service contract price': { field: 'fees.service_contract_price', confidence: 0.98 },
+    'warranty': { field: 'fees.service_contract_price', confidence: 0.8 },
+    'extended warranty': { field: 'fees.service_contract_price', confidence: 0.9 },
+
+    // Fees - GAP Insurance
+    'gap insurance': { field: 'fees.gap_insurance_price', confidence: 0.95 },
+    'gap': { field: 'fees.gap_insurance_price', confidence: 0.85 },
+    'gap coverage': { field: 'fees.gap_insurance_price', confidence: 0.95 },
+    'gap insurance price': { field: 'fees.gap_insurance_price', confidence: 0.98 },
+
+    // Fees - Tax Rate
     'tax rate': { field: 'fees.tax_rate', confidence: 0.95 },
+    'sales tax rate': { field: 'fees.tax_rate', confidence: 0.98 },
+
+    // Dealer Info
+    'dealer name': { field: 'dealer.dealer_name', confidence: 0.98 },
+    'dealership name': { field: 'dealer.dealer_name', confidence: 0.98 },
+    'seller name': { field: 'dealer.dealer_name', confidence: 0.9 },
+    'dealer license': { field: 'dealer.dealer_license', confidence: 0.98 },
+    'dealer license number': { field: 'dealer.dealer_license', confidence: 0.98 },
+    'license number': { field: 'dealer.dealer_license', confidence: 0.85 },
+    'dealer address': { field: 'dealer.address', confidence: 0.98 },
+    'dealership address': { field: 'dealer.address', confidence: 0.98 },
+    'dealer phone': { field: 'dealer.phone', confidence: 0.98 },
+    'dealer email': { field: 'dealer.email', confidence: 0.98 },
   };
 
   if (mappings[name]) return mappings[name];
