@@ -1950,6 +1950,26 @@ export default function DevConsolePage() {
       ]
     },
     {
+      group: 'Fees & Taxes (from deals)',
+      fields: [
+        'license_fee',       // deal.license_fee
+        'registration_fee',  // deal.registration_fee
+        'title_fee',         // deal.title_fee
+        'property_tax_fee',  // deal.property_tax_fee
+        'inspection_fee',    // deal.inspection_fee
+        'emissions_fee',     // deal.emissions_fee
+        'waste_tire_fee',    // deal.waste_tire_fee
+        'service_contract_price', // deal.service_contract_price
+        'gap_insurance_price',    // deal.gap_insurance_price
+        'tax_rate',          // deal.tax_rate
+        'vehicle_cash_price', // deal.vehicle_cash_price
+        'accessories_total',  // deal.accessories_total
+        'rebate_amount',     // deal.rebate_amount
+        'trade_in_allowance', // deal.trade_in_allowance
+        'trade_in_payoff',   // deal.trade_in_payoff
+      ]
+    },
+    {
       group: 'Add-Ons (from deals)',
       fields: [
         'gap_insurance',     // deal.gap_insurance
