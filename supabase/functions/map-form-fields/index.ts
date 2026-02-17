@@ -331,7 +331,7 @@ function autoMapField(pdfFieldName: string): { field: string | null; confidence:
 function buildMappingPrompt(formName: string, pdfFields: { name: string; type: string }[]): string {
   const fieldsList = pdfFields.map(f => `- "${f.name}" (${f.type})`).join('\n');
 
-  return `You are mapping PDF form fields to a dealer management system schema.
+  return `You are an expert at mapping PDF form fields to a dealer management system schema. Your job is to map as many fields as possible.
 
 FORM: ${formName}
 
@@ -345,16 +345,36 @@ OUR UNIVERSAL SCHEMA:
 - financing: loan_amount, interest_rate, term_months, monthly_payment, apr
 - fees: license_fee, registration_fee, title_fee, property_tax_fee, inspection_fee, emissions_fee, waste_tire_fee, doc_fee, service_contract_price, gap_insurance_price, tax_rate
 
-RESPOND WITH VALID JSON ONLY - an array of mappings:
+MAPPING EXAMPLES:
+- "CITY" or "City" or "DEALER CITY" → "dealer.city" (confidence: 0.9)
+- "PHONE" or "Phone Number" → "dealer.phone" (confidence: 0.9)
+- "STATE" or "St" → "dealer.state" (confidence: 0.9)
+- "VIN" or "Vehicle ID" → "vehicle.vin" (confidence: 0.95)
+- "SALES PERSON" or "Salesman" → "deal.salesman" (confidence: 0.9)
+- "10. Trade-in Allowance" → "deal.trade_in_allowance" (confidence: 0.95)
+- "16. Service Contract" → "fees.service_contract_price" (confidence: 0.95)
+- "23. License and Registration Fee" → "fees.registration_fee" (confidence: 0.95)
+- "SIGNATURE X" → null (signature field)
+- "PURCHASER AGREES TO..." → null (checkbox/agreement text)
+
+IMPORTANT RULES:
+1. Map field names even if they're abbreviated (ST → state, ZIP → zip)
+2. Handle numbered fields (e.g., "10. Trade-in Allowance" → deal.trade_in_allowance)
+3. If a field clearly matches our schema, MAP IT - don't be overly cautious
+4. Signature fields, checkboxes, agreement text should be null
+5. If there are duplicate fields (CITY, CITY_2), map the first one with higher confidence
+6. Use confidence 0.95+ for exact matches, 0.8-0.9 for good matches, 0.6-0.7 for uncertain
+
+RESPOND WITH VALID JSON ONLY - an array with ALL fields:
 [
   {
-    "pdf_field": "exact PDF field name",
-    "universal_field": "category.field_name or null if no match",
+    "pdf_field": "exact PDF field name from the list above",
+    "universal_field": "category.field_name or null",
     "confidence": 0.0 to 1.0
   }
 ]
 
-Map each PDF field to the most appropriate universal field. Use null for fields that don't match our schema (like signature fields, checkboxes, etc).`;
+Map every single field in the list. Be aggressive - map anything that could reasonably fit our schema.`;
 }
 
 // ============================================
