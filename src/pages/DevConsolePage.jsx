@@ -1784,6 +1784,22 @@ export default function DevConsolePage() {
       // Null out generated_documents that reference this form
       await supabase.from('generated_documents').update({ form_library_id: null }).eq('form_library_id', id);
 
+      // Remove from compliance_rules.required_forms arrays
+      const { data: rulesWithForm } = await supabase
+        .from('compliance_rules')
+        .select('id, required_forms')
+        .contains('required_forms', [id]);
+
+      if (rulesWithForm && rulesWithForm.length > 0) {
+        for (const rule of rulesWithForm) {
+          const updatedForms = (rule.required_forms || []).filter(fid => fid !== id);
+          await supabase
+            .from('compliance_rules')
+            .update({ required_forms: updatedForms })
+            .eq('id', rule.id);
+        }
+      }
+
       // Get the library form first to find its promoted_from id
       const { data: libForm } = await supabase.from('form_library').select('promoted_from').eq('id', id).single();
 
