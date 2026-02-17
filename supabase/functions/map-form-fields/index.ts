@@ -18,8 +18,9 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const universalSchema = {
   dealer: ["dealer_name", "dealer_license", "address", "city", "state", "zip", "phone", "email"],
   vehicle: ["vin", "year", "make", "model", "trim", "color", "mileage", "stock_number"],
-  deal: ["purchaser_name", "purchaser_address", "date_of_sale", "price", "down_payment", "sales_tax", "total_price"],
-  financing: ["loan_amount", "interest_rate", "term_months", "monthly_payment", "apr"]
+  deal: ["purchaser_name", "purchaser_address", "date_of_sale", "price", "down_payment", "sales_tax", "total_price", "vehicle_cash_price", "accessories_total", "rebate_amount", "trade_in_allowance", "trade_in_payoff"],
+  financing: ["loan_amount", "interest_rate", "term_months", "monthly_payment", "apr"],
+  fees: ["license_fee", "registration_fee", "title_fee", "property_tax_fee", "inspection_fee", "emissions_fee", "waste_tire_fee", "doc_fee", "service_contract_price", "gap_insurance_price", "tax_rate"]
 };
 
 const allUniversalFields = Object.entries(universalSchema)
@@ -67,6 +68,21 @@ function autoMapField(pdfFieldName: string): { field: string | null; confidence:
     'payment': { field: 'financing.monthly_payment', confidence: 0.7 },
     'loan amount': { field: 'financing.loan_amount', confidence: 0.95 },
     'amount financed': { field: 'financing.loan_amount', confidence: 0.9 },
+
+    // Fees
+    'license fee': { field: 'fees.license_fee', confidence: 0.98 },
+    'registration fee': { field: 'fees.registration_fee', confidence: 0.98 },
+    'title fee': { field: 'fees.title_fee', confidence: 0.98 },
+    'property tax': { field: 'fees.property_tax_fee', confidence: 0.95 },
+    'property tax fee': { field: 'fees.property_tax_fee', confidence: 0.98 },
+    'inspection fee': { field: 'fees.inspection_fee', confidence: 0.98 },
+    'emissions fee': { field: 'fees.emissions_fee', confidence: 0.98 },
+    'waste tire fee': { field: 'fees.waste_tire_fee', confidence: 0.98 },
+    'doc fee': { field: 'fees.doc_fee', confidence: 0.98 },
+    'documentation fee': { field: 'fees.doc_fee', confidence: 0.95 },
+    'service contract': { field: 'fees.service_contract_price', confidence: 0.9 },
+    'gap insurance': { field: 'fees.gap_insurance_price', confidence: 0.9 },
+    'tax rate': { field: 'fees.tax_rate', confidence: 0.95 },
   };
 
   if (mappings[name]) return mappings[name];
@@ -100,6 +116,32 @@ function autoMapField(pdfFieldName: string): { field: string | null; confidence:
     return { field: 'financing.apr', confidence: 0.9 };
   }
 
+  // Fee pattern matching
+  if (name.includes('license') && name.includes('fee')) {
+    return { field: 'fees.license_fee', confidence: 0.9 };
+  }
+  if (name.includes('registration') && name.includes('fee')) {
+    return { field: 'fees.registration_fee', confidence: 0.9 };
+  }
+  if (name.includes('title') && name.includes('fee')) {
+    return { field: 'fees.title_fee', confidence: 0.9 };
+  }
+  if (name.includes('property') && name.includes('tax')) {
+    return { field: 'fees.property_tax_fee', confidence: 0.9 };
+  }
+  if (name.includes('inspection') && name.includes('fee')) {
+    return { field: 'fees.inspection_fee', confidence: 0.9 };
+  }
+  if (name.includes('emission') && name.includes('fee')) {
+    return { field: 'fees.emissions_fee', confidence: 0.9 };
+  }
+  if (name.includes('tire') && name.includes('fee')) {
+    return { field: 'fees.waste_tire_fee', confidence: 0.9 };
+  }
+  if ((name.includes('doc') || name.includes('documentation')) && name.includes('fee')) {
+    return { field: 'fees.doc_fee', confidence: 0.9 };
+  }
+
   return { field: null, confidence: 0 };
 }
 
@@ -119,8 +161,9 @@ ${fieldsList}
 OUR UNIVERSAL SCHEMA:
 - dealer: dealer_name, dealer_license, address, city, state, zip, phone, email
 - vehicle: vin, year, make, model, trim, color, mileage, stock_number
-- deal: purchaser_name, purchaser_address, date_of_sale, price, down_payment, sales_tax, total_price
+- deal: purchaser_name, purchaser_address, date_of_sale, price, down_payment, sales_tax, total_price, vehicle_cash_price, accessories_total, rebate_amount, trade_in_allowance, trade_in_payoff
 - financing: loan_amount, interest_rate, term_months, monthly_payment, apr
+- fees: license_fee, registration_fee, title_fee, property_tax_fee, inspection_fee, emissions_fee, waste_tire_fee, doc_fee, service_contract_price, gap_insurance_price, tax_rate
 
 RESPOND WITH VALID JSON ONLY - an array of mappings:
 [
