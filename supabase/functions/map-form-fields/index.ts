@@ -527,10 +527,9 @@ serve(async (req) => {
 
     console.log(`[MAP] Auto-mapped ${mappedCount}/${detectedFields.length} fields`);
 
-    // If many fields unmapped, use AI to help
-    const unmappedCount = detectedFields.length - mappedCount;
-    if (unmappedCount > 3 && anthropicApiKey) {
-      console.log(`[MAP] Calling AI to help map ${unmappedCount} unmapped fields...`);
+    // Always use AI to improve mappings (AI is better than pattern matching)
+    if (anthropicApiKey && detectedFields.length > 0) {
+      console.log(`[MAP] Calling AI to map all ${detectedFields.length} fields...`);
 
       try {
         const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -559,14 +558,27 @@ serve(async (req) => {
           if (jsonMatch) {
             const aiMappings = JSON.parse(jsonMatch[0]);
 
-            // Merge AI mappings with auto-mappings (prefer AI for unmapped fields)
+            // Merge AI mappings with auto-mappings (prefer AI if higher confidence)
             for (const aiMap of aiMappings) {
               const existing = fieldMappings.find(f => f.pdf_field === aiMap.pdf_field);
-              if (existing && !existing.universal_field && aiMap.universal_field) {
+              if (!existing) continue;
+
+              const aiConfidence = aiMap.confidence || 0.8;
+              const autoConfidence = existing.confidence || 0;
+
+              // If unmapped, always use AI mapping
+              if (!existing.universal_field && aiMap.universal_field) {
                 existing.universal_field = aiMap.universal_field;
-                existing.confidence = aiMap.confidence || 0.8;
+                existing.confidence = aiConfidence;
                 existing.ai_mapped = true;
                 mappedCount++;
+              }
+              // If AI has higher confidence, override auto-mapping
+              else if (existing.universal_field && aiMap.universal_field && aiConfidence > autoConfidence) {
+                existing.universal_field = aiMap.universal_field;
+                existing.confidence = aiConfidence;
+                existing.ai_mapped = true;
+                existing.auto_mapped = false;
               }
             }
 
