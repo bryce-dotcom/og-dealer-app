@@ -10,6 +10,7 @@ import SettingsPage from './pages/SettingsPage';
 import EmbedInventory from './pages/EmbedInventory';
 import EmbedFindRig from './pages/EmbedFindRig';
 import CustomersPage from './pages/CustomersPage';
+import EmailMarketingPage from './pages/EmailMarketingPage';
 import TeamPage from './pages/TeamPage';
 import CommissionsPage from './pages/CommissionsPage';
 import BooksPage from './pages/BooksPage';
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/deals" element={<DealsPage />} />
           <Route path="/bhph" element={<BHPHPage />} />
           <Route path="/customers" element={<CustomersPage />} />
+          <Route path="/email-marketing" element={<EmailMarketingPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/commissions" element={<CommissionsPage />} />
           <Route path="/books" element={<BooksPage />} />
