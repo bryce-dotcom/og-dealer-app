@@ -1,6 +1,4 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import Anthropic from 'https://esm.sh/@anthropic-ai/sdk@0.24.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,10 +20,10 @@ serve(async (req) => {
       );
     }
 
-    // Initialize Anthropic client
-    const anthropic = new Anthropic({
-      apiKey: Deno.env.get('ANTHROPIC_API_KEY'),
-    });
+    const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error('Missing ANTHROPIC_API_KEY');
+    }
 
     // Build the AI prompt based on campaign goal
     let systemPrompt = `You are an expert email marketing copywriter for automotive dealerships.
@@ -126,19 +124,28 @@ IMPORTANT:
 - End with dealership signature and contact info
 - Return ONLY the JSON object, no other text`;
 
-    // Call Claude API
-    const message = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [{
-        role: 'user',
-        content: userPrompt
-      }],
+    // Call Claude API using fetch (works in Deno)
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
     });
 
-    // Extract the generated content
-    const content = message.content[0].type === 'text' ? message.content[0].text : '';
+    if (!response.ok) {
+      throw new Error(`Anthropic API error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const content = result.content?.[0]?.text || '';
 
     // Parse JSON from response (Claude might wrap it in markdown)
     let jsonMatch = content.match(/\{[\s\S]*\}/);
