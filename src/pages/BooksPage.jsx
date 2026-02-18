@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { useTheme } from '../components/Layout';
@@ -117,17 +117,24 @@ export default function BooksPage() {
     onSuccess: onPlaidSuccess,
   });
 
+  // Track if we should auto-open when ready
+  const shouldOpenRef = useRef(false);
+
+  // Auto-open Plaid Link when token is ready
+  useEffect(() => {
+    if (ready && linkToken && shouldOpenRef.current) {
+      console.log('[PLAID] Link is ready, opening modal...');
+      shouldOpenRef.current = false;
+      open();
+    }
+  }, [ready, linkToken, open]);
+
   // Handle connect button click
   async function handleConnectClick() {
+    console.log('[PLAID] Button clicked, creating token...');
+    shouldOpenRef.current = true;
     const success = await createLinkToken();
-    if (success) {
-      // Wait a bit for the Plaid Link hook to be ready with the new token
-      setTimeout(() => {
-        if (ready) {
-          open();
-        }
-      }, 100);
-    }
+    console.log('[PLAID] Token creation result:', success);
   }
 
   // Sync transactions for an account
