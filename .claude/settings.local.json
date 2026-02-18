@@ -49,7 +49,11 @@
       "Bash(psql:*)",
       "Bash(scoop install:*)",
       "Bash(npx supabase@latest:*)",
-      "Bash(npm --version:*)"
+      "Bash(npm --version:*)",
+      "Bash(gh api:*)",
+      "Bash(find:*)",
+      "WebSearch",
+      "Bash(grep:*)"
     ]
   }
 }

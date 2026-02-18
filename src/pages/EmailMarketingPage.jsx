@@ -188,7 +188,7 @@ export default function EmailMarketingPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{ fontSize: '28px', fontWeight: '700', color: theme.text, margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
-            ✉️ Email Marketing
+            💬 Connect
             <span style={{ fontSize: '14px', fontWeight: '500', color: theme.textMuted, backgroundColor: theme.bgCard, padding: '4px 12px', borderRadius: '12px', border: `1px solid ${theme.border}` }}>
               AI-Powered
             </span>
