@@ -205,6 +205,36 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
     accessory_3_desc: deal.accessory_3_desc || '',
     accessory_3_price: formatCurrency(deal.accessory_3_price || 0),
 
+    // === FEES & TAXES (auto-calculated state fees) ===
+    'fees.license_fee': formatCurrency(deal.license_fee || 0),
+    'fees.registration_fee': formatCurrency(deal.registration_fee || 0),
+    'fees.title_fee': formatCurrency(deal.title_fee || 0),
+    'fees.property_tax_fee': formatCurrency(deal.property_tax_fee || 0),
+    'fees.inspection_fee': formatCurrency(deal.inspection_fee || 0),
+    'fees.emissions_fee': formatCurrency(deal.emissions_fee || 0),
+    'fees.waste_tire_fee': formatCurrency(deal.waste_tire_fee || 0),
+    'fees.service_contract_price': formatCurrency(deal.service_contract_price || 0),
+    'fees.gap_insurance_price': formatCurrency(deal.gap_insurance_price || 0),
+    'fees.tax_rate': deal.tax_rate || '0',
+    license_fee: formatCurrency(deal.license_fee || 0),
+    registration_fee: formatCurrency(deal.registration_fee || 0),
+    title_fee: formatCurrency(deal.title_fee || 0),
+    property_tax_fee: formatCurrency(deal.property_tax_fee || 0),
+    property_tax: formatCurrency(deal.property_tax_fee || 0),
+    inspection_fee: formatCurrency(deal.inspection_fee || 0),
+    emissions_fee: formatCurrency(deal.emissions_fee || 0),
+    waste_tire_fee: formatCurrency(deal.waste_tire_fee || 0),
+    tire_fee: formatCurrency(deal.waste_tire_fee || 0),
+    service_contract_price: formatCurrency(deal.service_contract_price || 0),
+    service_contract: formatCurrency(deal.service_contract_price || 0),
+    gap_insurance_price: formatCurrency(deal.gap_insurance_price || 0),
+    tax_rate: deal.tax_rate || '0',
+    vehicle_cash_price: formatCurrency(deal.vehicle_cash_price || 0),
+    accessories_total: formatCurrency(deal.accessories_total || 0),
+    rebate_amount: formatCurrency(deal.rebate_amount || 0),
+    trade_in_allowance: formatCurrency(deal.trade_in_allowance || deal.trade_value || 0),
+    trade_in_payoff: formatCurrency(deal.trade_in_payoff || deal.trade_payoff || 0),
+
     // === LIENHOLDER (from deal, fallback to dealer for BHPH) ===
     lienholder_name: deal.lienholder_name || dealer?.dealer_name || '',
     lienholder_address: deal.lienholder_address || dealer?.address || '',
@@ -249,12 +279,23 @@ function resolveFieldValue(mapping: any, context: Record<string, any>): string {
     // Try exact match first
     if (context[field] !== undefined && context[field] !== '') {
       values.push(String(context[field]));
+      // DEBUG: Log fee field resolutions
+      if (field.includes('fee') || field.includes('tax')) {
+        console.log(`[DEBUG] Resolved ${field} = "${context[field]}" (exact match)`);
+      }
       continue;
     }
     // Try without category prefix (e.g. "vehicle.year" -> "year")
     const fieldName = field.split('.').pop();
     if (fieldName && context[fieldName] !== undefined && context[fieldName] !== '') {
       values.push(String(context[fieldName]));
+      // DEBUG: Log fee field resolutions
+      if (field.includes('fee') || field.includes('tax')) {
+        console.log(`[DEBUG] Resolved ${field} = "${context[fieldName]}" (via ${fieldName})`);
+      }
+    } else if (field.includes('fee') || field.includes('tax')) {
+      // DEBUG: Log when fee field is NOT resolved
+      console.log(`[DEBUG] Could NOT resolve ${field} - not in context`);
     }
   }
 
@@ -473,6 +514,25 @@ serve(async (req) => {
     const context = buildFormContext(deal, vehicle, dealer);
     console.log(`[DOCS] Context built with ${Object.keys(context).length} fields`);
 
+    // DEBUG: Log fee values from deal
+    console.log(`[DEBUG] Deal fee values:`, {
+      license_fee: deal.license_fee,
+      registration_fee: deal.registration_fee,
+      title_fee: deal.title_fee,
+      property_tax_fee: deal.property_tax_fee,
+      inspection_fee: deal.inspection_fee,
+      emissions_fee: deal.emissions_fee,
+      waste_tire_fee: deal.waste_tire_fee
+    });
+
+    // DEBUG: Log fee context values
+    console.log(`[DEBUG] Context fee values:`, {
+      'fees.license_fee': context['fees.license_fee'],
+      'license_fee': context['license_fee'],
+      'fees.registration_fee': context['fees.registration_fee'],
+      'registration_fee': context['registration_fee']
+    });
+
     // Get document package for this deal type
     const { data: pkg } = await supabase
       .from('document_packages')
@@ -600,6 +660,15 @@ serve(async (req) => {
                   pdf_field: k,
                   universal_field: typeof v === 'string' ? v : v?.universal_field || ''
                 }));
+
+            // DEBUG: Log fee-related mappings
+            const feeMappings = mappings.filter((m: any) => {
+              const field = m.universal_field || (m.universal_fields && m.universal_fields[0]) || '';
+              return field.includes('fee') || field.includes('tax');
+            });
+            if (feeMappings.length > 0) {
+              console.log(`[DEBUG] Fee mappings for this form:`, feeMappings);
+            }
 
             const fillResult = await fillPdfForm(templateBytes, mappings, context);
             pdfBytes = fillResult.pdfBytes;

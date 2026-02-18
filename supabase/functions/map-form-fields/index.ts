@@ -328,8 +328,17 @@ function autoMapField(pdfFieldName: string): { field: string | null; confidence:
 // ============================================
 // AI MAPPING PROMPT
 // ============================================
-function buildMappingPrompt(formName: string, pdfFields: { name: string; type: string }[]): string {
+function buildMappingPrompt(formName: string, pdfFields: { name: string; type: string }[], attemptNumber: number = 0): string {
   const fieldsList = pdfFields.map(f => `- "${f.name}" (${f.type})`).join('\n');
+
+  // Add variation instructions for retry attempts
+  const retryInstructions = attemptNumber > 0
+    ? `\n\nIMPORTANT: This is attempt #${attemptNumber + 1}. Please provide ALTERNATIVE mappings that are different from typical first choices. Consider:
+- Less obvious but still valid field mappings
+- Alternative interpretations of ambiguous field names
+- Fields that might serve dual purposes
+- Be creative while staying reasonable - suggest mappings you'd rate 0.6-0.85 confidence instead of just the 0.9+ obvious ones\n`
+    : '';
 
   return `You are an expert at mapping PDF form fields to a dealer management system schema. Your job is to map as many fields as possible.
 
@@ -356,7 +365,7 @@ MAPPING EXAMPLES:
 - "23. License and Registration Fee" → "fees.registration_fee" (confidence: 0.95)
 - "SIGNATURE X" → null (signature field)
 - "PURCHASER AGREES TO..." → null (checkbox/agreement text)
-
+${retryInstructions}
 IMPORTANT RULES:
 1. Map field names even if they're abbreviated (ST → state, ZIP → zip)
 2. Handle numbered fields (e.g., "10. Trade-in Allowance" → deal.trade_in_allowance)
@@ -547,9 +556,13 @@ serve(async (req) => {
 
     console.log(`[MAP] Auto-mapped ${mappedCount}/${detectedFields.length} fields`);
 
+    // Determine attempt number based on whether form already has mappings
+    const attemptNumber = (form.field_mappings && form.field_mappings.length > 0) ?
+      ((form.mapping_attempt_count || 0) + 1) : 0;
+
     // Always use AI to improve mappings (AI is better than pattern matching)
     if (anthropicApiKey && detectedFields.length > 0) {
-      console.log(`[MAP] Calling AI to map all ${detectedFields.length} fields...`);
+      console.log(`[MAP] Calling AI to map all ${detectedFields.length} fields (attempt #${attemptNumber + 1})...`);
 
       try {
         const aiResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -564,7 +577,7 @@ serve(async (req) => {
             max_tokens: 4000,
             messages: [{
               role: "user",
-              content: buildMappingPrompt(form.form_name, detectedFields)
+              content: buildMappingPrompt(form.form_name, detectedFields, attemptNumber)
             }]
           })
         });
@@ -624,6 +637,7 @@ serve(async (req) => {
         field_mappings: fieldMappings,
         mapping_confidence: mappingConfidence,
         mapping_status: mappingConfidence >= 70 ? "ai_suggested" : "pending",
+        mapping_attempt_count: attemptNumber + 1,
         analyzed_at: new Date().toISOString()
       })
       .eq("id", form_id);
@@ -634,6 +648,10 @@ serve(async (req) => {
 
     console.log(`[MAP] Complete: ${mappedCount}/${detectedFields.length} mapped (${mappingConfidence}%)`);
 
+    const attemptMessage = attemptNumber > 0
+      ? ` (attempt #${attemptNumber + 1} - showing alternative suggestions)`
+      : '';
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -643,9 +661,10 @@ serve(async (req) => {
         mapped_count: mappedCount,
         unmapped_count: detectedFields.length - mappedCount,
         mapping_confidence: mappingConfidence,
+        attempt_number: attemptNumber + 1,
         detected_fields: detectedFields,
         field_mappings: fieldMappings,
-        message: `Mapped ${mappedCount}/${detectedFields.length} fields (${mappingConfidence}% confidence)`
+        message: `Mapped ${mappedCount}/${detectedFields.length} fields (${mappingConfidence}% confidence)${attemptMessage}`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
