@@ -372,7 +372,28 @@ export default function PayrollPage() {
   const daysUntilPay = Math.max(0, Math.ceil((nextPayDate - new Date()) / 86400000));
   const activeEmployees = employees.filter(e => e.active);
   const displayEmployees = isAdmin ? activeEmployees : (currentEmployee ? [currentEmployee] : []);
-  const totalPayroll = activeEmployees.reduce((sum, emp) => sum + calculatePayroll(emp.id, periodStart, periodEnd).grossPay, 0);
+  const totalPayroll = activeEmployees.reduce((sum, emp) => {
+    const payData = calculatePayroll(emp.id, periodStart, periodEnd);
+    const adjustments = payAdjustments[emp.id] || { bonus: 0, reimbursement: 0, hoursOverride: null };
+    const bonusAmount = parseFloat(adjustments.bonus) || 0;
+
+    // Recalculate base pay if hours were overridden
+    let finalBasePay = payData.basePay;
+    if (adjustments.hoursOverride !== null && adjustments.hoursOverride !== '') {
+      const displayHours = parseFloat(adjustments.hoursOverride);
+      const payTypes = Array.isArray(emp.pay_type) ? emp.pay_type : [emp.pay_type || 'hourly'];
+      const regularHours = Math.min(displayHours, 40 * (paySettings.pay_frequency === 'weekly' ? 1 : 2));
+      const overtimeHours = Math.max(0, displayHours - regularHours);
+      finalBasePay = 0;
+      if (payTypes.includes('hourly')) finalBasePay = (regularHours * (emp.hourly_rate || 0)) + (overtimeHours * (emp.hourly_rate || 0) * 1.5);
+      if (payTypes.includes('salary')) {
+        const periods = paySettings.pay_frequency === 'weekly' ? 52 : paySettings.pay_frequency === 'bi-weekly' ? 26 : paySettings.pay_frequency === 'semi-monthly' ? 24 : 12;
+        finalBasePay += (emp.salary || 0) / periods;
+      }
+    }
+
+    return sum + finalBasePay + payData.commissionAmount + bonusAmount;
+  }, 0);
   const pendingRequests = ptoRequests.filter(r => r.status === 'pending');
   const myRequests = ptoRequests.filter(r => r.employee_id === currentUserId);
   const myPaystubs = paystubs.filter(p => p.employee_id === currentUserId);
@@ -545,6 +566,30 @@ export default function PayrollPage() {
             {displayEmployees.map(emp => {
               const payData = calculatePayroll(emp.id, periodStart, periodEnd);
               const payTypes = Array.isArray(emp.pay_type) ? emp.pay_type : [emp.pay_type || 'hourly'];
+
+              // Apply adjustments if they exist
+              const adjustments = payAdjustments[emp.id] || { bonus: 0, reimbursement: 0, hoursOverride: null };
+              const bonusAmount = parseFloat(adjustments.bonus) || 0;
+
+              // Calculate displayed hours (with override if set)
+              let displayHours = payData.totalHours;
+              let displayOvertimeHours = payData.overtimeHours;
+              let displayBasePay = payData.basePay;
+
+              if (adjustments.hoursOverride !== null && adjustments.hoursOverride !== '') {
+                displayHours = parseFloat(adjustments.hoursOverride);
+                const regularHours = Math.min(displayHours, 40 * (paySettings.pay_frequency === 'weekly' ? 1 : 2));
+                displayOvertimeHours = Math.max(0, displayHours - regularHours);
+                displayBasePay = 0;
+                if (payTypes.includes('hourly')) displayBasePay = (regularHours * (emp.hourly_rate || 0)) + (displayOvertimeHours * (emp.hourly_rate || 0) * 1.5);
+                if (payTypes.includes('salary')) {
+                  const periods = paySettings.pay_frequency === 'weekly' ? 52 : paySettings.pay_frequency === 'bi-weekly' ? 26 : paySettings.pay_frequency === 'semi-monthly' ? 24 : 12;
+                  displayBasePay += (emp.salary || 0) / periods;
+                }
+              }
+
+              const displayGrossPay = displayBasePay + payData.commissionAmount + bonusAmount;
+
               return (
                 <div key={emp.id} onClick={() => isAdmin && openCommissionModal(emp)} style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', cursor: isAdmin ? 'pointer' : 'default', transition: 'background-color 0.2s' }} onMouseEnter={(e) => isAdmin && (e.currentTarget.style.backgroundColor = theme.bg)} onMouseLeave={(e) => isAdmin && (e.currentTarget.style.backgroundColor = 'transparent')}>
                   <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '16px', fontWeight: '700', flexShrink: 0 }}>{emp.name?.split(' ').map(n => n[0]).join('').slice(0,2)}</div>
@@ -553,9 +598,9 @@ export default function PayrollPage() {
                     <div style={{ color: theme.textMuted, fontSize: '13px' }}>{payTypes.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' + ')}{payTypes.includes('hourly') && ` · ${formatCurrency(emp.hourly_rate)}/hr`}{payTypes.includes('salary') && ` · ${formatCurrency(emp.salary)}/yr`}</div>
                   </div>
                   <div style={{ textAlign: 'center', minWidth: '80px' }}>
-                    <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>{payData.totalHours.toFixed(1)}</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: adjustments.hoursOverride !== null ? '#f97316' : theme.text }}>{displayHours.toFixed(1)}</div>
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>HOURS</div>
-                    {payData.overtimeHours > 0 && <div style={{ fontSize: '11px', color: '#ef4444' }}>+{payData.overtimeHours.toFixed(1)} OT</div>}
+                    {displayOvertimeHours > 0 && <div style={{ fontSize: '11px', color: '#ef4444' }}>+{displayOvertimeHours.toFixed(1)} OT</div>}
                   </div>
                   {payTypes.includes('commission') && (
                     <div style={{ textAlign: 'center', minWidth: '80px', padding: '8px 12px', backgroundColor: 'rgba(139,92,246,0.1)', borderRadius: '8px' }}>
@@ -568,8 +613,9 @@ export default function PayrollPage() {
                     <div style={{ fontSize: '10px', color: '#3b82f6' }}>PTO</div>
                   </div>
                   <div style={{ textAlign: 'right', minWidth: '100px' }}>
-                    <div style={{ fontSize: '20px', fontWeight: '700', color: '#22c55e' }}>{formatCurrency(payData.grossPay)}</div>
+                    <div style={{ fontSize: '20px', fontWeight: '700', color: bonusAmount > 0 ? '#f97316' : '#22c55e' }}>{formatCurrency(displayGrossPay)}</div>
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>GROSS</div>
+                    {bonusAmount > 0 && <div style={{ fontSize: '10px', color: '#f97316', marginTop: '2px' }}>+{formatCurrency(bonusAmount)} bonus</div>}
                   </div>
                 </div>
               );
