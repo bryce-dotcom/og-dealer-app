@@ -25,7 +25,7 @@ export default function InventoryPage() {
   }, [dealerId]);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('For Sale');
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -63,7 +63,7 @@ export default function InventoryPage() {
     status: 'In Stock', stock_number: '', description: ''
   });
 
-  const statuses = ['All', 'In Stock', 'For Sale', 'Sold', 'BHPH', 'Fleet'];
+  const statuses = ['For Sale', 'In Stock', 'Sold', 'BHPH', 'Fleet', 'All'];
   const expenseCategories = ['Repair', 'Parts', 'Detail', 'Transport', 'Inspection', 'Fuel', 'Other'];
 
   // Load commission roles on mount
