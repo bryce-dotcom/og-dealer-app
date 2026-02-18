@@ -56,17 +56,27 @@ export default function BooksPage() {
   // Create Plaid link token
   async function createLinkToken() {
     try {
+      console.log('[PLAID] Creating link token for dealer:', dealerId);
       const { data, error } = await supabase.functions.invoke('plaid-link-token', {
         body: { user_id: dealerId }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('[PLAID] Error from function:', error);
+        throw error;
+      }
+
       if (data?.link_token) {
+        console.log('[PLAID] Link token created successfully');
         setLinkToken(data.link_token);
+        return true;
+      } else {
+        throw new Error('No link token returned');
       }
     } catch (err) {
-      console.error('Failed to create link token:', err);
+      console.error('[PLAID] Failed to create link token:', err);
       showToast('Failed to initialize Plaid connection', 'error');
+      return false;
     }
   }
 
@@ -100,6 +110,19 @@ export default function BooksPage() {
     token: linkToken,
     onSuccess: onPlaidSuccess,
   });
+
+  // Handle connect button click
+  async function handleConnectClick() {
+    const success = await createLinkToken();
+    if (success) {
+      // Wait a bit for the Plaid Link hook to be ready with the new token
+      setTimeout(() => {
+        if (ready) {
+          open();
+        }
+      }, 100);
+    }
+  }
 
   // Sync transactions for an account
   async function syncAccount(accountId = null) {
@@ -321,7 +344,7 @@ export default function BooksPage() {
               <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <div><div style={{ color: '#3b82f6', fontWeight: '600' }}>🏦 Connected Accounts</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>Automatically sync bank and credit card transactions</div></div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => { createLinkToken(); setTimeout(() => ready && open(), 500); }} disabled={connecting} style={{ padding: '10px 20px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: connecting ? 'not-allowed' : 'pointer', opacity: connecting ? 0.6 : 1 }}>
+                  <button onClick={handleConnectClick} disabled={connecting} style={{ padding: '10px 20px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: connecting ? 'not-allowed' : 'pointer', opacity: connecting ? 0.6 : 1 }}>
                     {connecting ? 'Connecting...' : '+ Connect Bank/Card'}
                   </button>
                   {connectedAccounts.length > 0 && (
@@ -337,7 +360,7 @@ export default function BooksPage() {
                   <div style={{ fontSize: '64px', marginBottom: '16px' }}>🏦</div>
                   <div style={{ color: theme.text, fontSize: '20px', fontWeight: '600', marginBottom: '8px' }}>No accounts connected</div>
                   <div style={{ color: theme.textMuted, marginBottom: '24px' }}>Connect your bank accounts and credit cards to automatically track transactions</div>
-                  <button onClick={() => { createLinkToken(); setTimeout(() => ready && open(), 500); }} style={{ padding: '12px 24px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '15px' }}>
+                  <button onClick={handleConnectClick} style={{ padding: '12px 24px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '15px' }}>
                     Connect Your First Account
                   </button>
                 </div>
