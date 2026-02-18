@@ -557,9 +557,9 @@ export default function PayrollPage() {
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>HOURS</div>
                     {payData.overtimeHours > 0 && <div style={{ fontSize: '11px', color: '#ef4444' }}>+{payData.overtimeHours.toFixed(1)} OT</div>}
                   </div>
-                  {payData.commissionAmount > 0 && (
+                  {payTypes.includes('commission') && (
                     <div style={{ textAlign: 'center', minWidth: '80px', padding: '8px 12px', backgroundColor: 'rgba(139,92,246,0.1)', borderRadius: '8px' }}>
-                      <div style={{ fontSize: '16px', fontWeight: '700', color: '#8b5cf6' }}>{formatCurrency(payData.commissionAmount)}</div>
+                      <div style={{ fontSize: '16px', fontWeight: '700', color: payData.commissionAmount > 0 ? '#8b5cf6' : theme.textMuted }}>{formatCurrency(payData.commissionAmount)}</div>
                       <div style={{ fontSize: '10px', color: '#8b5cf6' }}>COMM</div>
                     </div>
                   )}
