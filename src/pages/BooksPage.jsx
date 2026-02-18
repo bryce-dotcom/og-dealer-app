@@ -58,7 +58,7 @@ export default function BooksPage() {
     try {
       console.log('[PLAID] Creating link token for dealer:', dealerId);
       const { data, error } = await supabase.functions.invoke('plaid-link-token', {
-        body: { user_id: dealerId }
+        body: { user_id: String(dealerId) }
       });
 
       if (error) {
