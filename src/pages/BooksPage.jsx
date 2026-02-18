@@ -255,15 +255,43 @@ export default function BooksPage() {
     }
   }
 
+  async function toggleAccountType(accountId, isLiability) {
+    try {
+      const { error } = await supabase
+        .from('bank_accounts')
+        .update({ is_liability: isLiability })
+        .eq('id', accountId)
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+      showToast(`Account updated to ${isLiability ? 'Money I Owe 💳' : 'Money I Own 💰'}`, 'success');
+      await fetchAll();
+    } catch (err) {
+      console.error('Failed to update account type:', err);
+      showToast('Failed to update account', 'error');
+    }
+  }
+
   function showToast(message, type = 'info') {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }
 
   // CALCULATIONS
-  // Separate bank accounts into assets (checking/savings) vs liabilities (credit cards/LOC)
-  const assetAccounts = bankAccounts.filter(a => a.account_type === 'depository' || a.account_type === 'checking' || a.account_type === 'savings');
-  const liabilityAccounts = bankAccounts.filter(a => a.account_type === 'credit_card' || a.account_type === 'credit' || a.account_type === 'loan' || a.account_type === 'line_of_credit');
+  // Use manual categorization (is_liability) if set, otherwise auto-detect from account_type
+  const assetAccounts = bankAccounts.filter(a => {
+    if (a.is_liability === false) return true; // Manually marked as asset
+    if (a.is_liability === true) return false; // Manually marked as liability
+    // Auto-detect: depository/checking/savings = assets
+    return a.account_type === 'depository' || a.account_type === 'checking' || a.account_type === 'savings';
+  });
+
+  const liabilityAccounts = bankAccounts.filter(a => {
+    if (a.is_liability === true) return true; // Manually marked as liability
+    if (a.is_liability === false) return false; // Manually marked as asset
+    // Auto-detect: credit cards/loans = liabilities
+    return a.account_type === 'credit_card' || a.account_type === 'credit' || a.account_type === 'loan' || a.account_type === 'line_of_credit';
+  });
 
   const cashInBank = assetAccounts.reduce((sum, a) => sum + (parseFloat(a.current_balance) || 0), 0);
   const creditCardDebt = liabilityAccounts.reduce((sum, a) => sum + Math.abs(parseFloat(a.current_balance) || 0), 0);
@@ -642,11 +670,63 @@ export default function BooksPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Simple Toggle: Money I OWE vs Money I OWN */}
+                      <div style={{ marginBottom: '12px', padding: '10px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                        <div style={{ color: theme.textMuted, fontSize: '11px', marginBottom: '6px' }}>This account is:</div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            onClick={() => toggleAccountType(account.id, false)}
+                            style={{
+                              flex: 1,
+                              padding: '8px',
+                              backgroundColor: account.is_liability === false ? '#22c55e' : 'transparent',
+                              color: account.is_liability === false ? '#fff' : theme.textMuted,
+                              border: `1px solid ${account.is_liability === false ? '#22c55e' : theme.border}`,
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: account.is_liability === false ? '600' : '400'
+                            }}
+                          >
+                            💰 Money I OWN
+                          </button>
+                          <button
+                            onClick={() => toggleAccountType(account.id, true)}
+                            style={{
+                              flex: 1,
+                              padding: '8px',
+                              backgroundColor: account.is_liability === true ? '#ef4444' : 'transparent',
+                              color: account.is_liability === true ? '#fff' : theme.textMuted,
+                              border: `1px solid ${account.is_liability === true ? '#ef4444' : theme.border}`,
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: account.is_liability === true ? '600' : '400'
+                            }}
+                          >
+                            💳 Money I OWE
+                          </button>
+                        </div>
+                      </div>
+
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '12px', backgroundColor: theme.bg, borderRadius: '8px' }}>
                         <div style={{ color: theme.textMuted, fontSize: '13px' }}>
-                          {(account.account_type === 'credit_card' || account.account_type === 'credit' || account.account_type === 'loan' || account.account_type === 'line_of_credit') ? 'You Owe' : 'Balance'}
+                          {(() => {
+                            // Use manual categorization if set
+                            if (account.is_liability === true) return 'You Owe';
+                            if (account.is_liability === false) return 'You Have';
+                            // Auto-detect
+                            return (account.account_type === 'credit_card' || account.account_type === 'credit' || account.account_type === 'loan' || account.account_type === 'line_of_credit') ? 'You Owe' : 'You Have';
+                          })()}
                         </div>
-                        <div style={{ color: (account.account_type === 'credit_card' || account.account_type === 'credit' || account.account_type === 'loan' || account.account_type === 'line_of_credit') ? '#ef4444' : '#22c55e', fontSize: '20px', fontWeight: '700' }}>
+                        <div style={{ color: (() => {
+                          // Use manual categorization if set
+                          if (account.is_liability === true) return '#ef4444';
+                          if (account.is_liability === false) return '#22c55e';
+                          // Auto-detect
+                          return (account.account_type === 'credit_card' || account.account_type === 'credit' || account.account_type === 'loan' || account.account_type === 'line_of_credit') ? '#ef4444' : '#22c55e';
+                        })(), fontSize: '20px', fontWeight: '700' }}>
                           {formatCurrency(Math.abs(account.current_balance))}
                         </div>
                       </div>
