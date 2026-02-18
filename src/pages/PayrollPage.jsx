@@ -256,10 +256,12 @@ export default function PayrollPage() {
       const totalGrossPay = finalBasePay + payData.commissionAmount + bonusAmount;
       if (totalGrossPay <= 0) continue;
 
-      const federalTax = totalGrossPay * 0.12;
-      const stateTax = totalGrossPay * 0.0495;
-      const socialSecurity = totalGrossPay * 0.062;
-      const medicare = totalGrossPay * 0.0145;
+      // 1099 contractors don't have taxes withheld
+      const is1099 = emp.employment_type === '1099';
+      const federalTax = is1099 ? 0 : totalGrossPay * 0.12;
+      const stateTax = is1099 ? 0 : totalGrossPay * 0.0495;
+      const socialSecurity = is1099 ? 0 : totalGrossPay * 0.062;
+      const medicare = is1099 ? 0 : totalGrossPay * 0.0145;
       const netPay = totalGrossPay + reimbursementAmount - federalTax - stateTax - socialSecurity - medicare;
       
       await supabase.from('paystubs').insert({
@@ -723,10 +725,13 @@ export default function PayrollPage() {
         }
 
         const totalGross = basePay + payData.commissionAmount + bonusAmount;
-        const federalTax = totalGross * 0.12;
-        const stateTax = totalGross * 0.0495;
-        const socialSecurity = totalGross * 0.062;
-        const medicare = totalGross * 0.0145;
+
+        // 1099 contractors don't have taxes withheld
+        const is1099 = selectedEmployeeForComm.employment_type === '1099';
+        const federalTax = is1099 ? 0 : totalGross * 0.12;
+        const stateTax = is1099 ? 0 : totalGross * 0.0495;
+        const socialSecurity = is1099 ? 0 : totalGross * 0.062;
+        const medicare = is1099 ? 0 : totalGross * 0.0145;
         const totalDeductions = federalTax + stateTax + socialSecurity + medicare;
         const netPay = totalGross + reimbursementAmount - totalDeductions;
 
@@ -737,7 +742,12 @@ export default function PayrollPage() {
               <div style={{ padding: '24px 24px 16px', borderBottom: `1px solid ${theme.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <h2 style={{ color: theme.text, fontSize: '22px', fontWeight: '700', margin: 0 }}>{selectedEmployeeForComm.name}</h2>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <h2 style={{ color: theme.text, fontSize: '22px', fontWeight: '700', margin: 0 }}>{selectedEmployeeForComm.name}</h2>
+                      {is1099 && (
+                        <span style={{ padding: '4px 10px', backgroundColor: 'rgba(249,115,22,0.15)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>1099 CONTRACTOR</span>
+                      )}
+                    </div>
                     <p style={{ color: theme.textSecondary, fontSize: '13px', marginTop: '4px' }}>{formatDate(periodStart)} - {formatDate(periodEnd)} · Pay Date: {formatDate(nextPayDate)}</p>
                   </div>
                   <button onClick={() => setShowCommissionModal(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, fontSize: '28px', cursor: 'pointer', lineHeight: '1' }}>×</button>
@@ -852,12 +862,19 @@ export default function PayrollPage() {
                     )}
                     <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '8px', marginTop: '4px' }}>
                       <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '6px' }}>DEDUCTIONS</div>
-                      <div style={{ display: 'grid', gap: '4px', fontSize: '13px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Federal Tax (12%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(federalTax)}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>State Tax (4.95%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(stateTax)}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Social Security (6.2%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(socialSecurity)}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Medicare (1.45%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(medicare)}</span></div>
-                      </div>
+                      {is1099 ? (
+                        <div style={{ padding: '12px', backgroundColor: 'rgba(249,115,22,0.1)', borderRadius: '8px', border: '1px solid rgba(249,115,22,0.2)' }}>
+                          <div style={{ fontSize: '13px', color: '#f97316', fontWeight: '600', marginBottom: '4px' }}>No Tax Withholding</div>
+                          <div style={{ fontSize: '12px', color: theme.textMuted }}>1099 contractors are responsible for their own taxes</div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: '4px', fontSize: '13px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Federal Tax (12%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(federalTax)}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>State Tax (4.95%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(stateTax)}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Social Security (6.2%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(socialSecurity)}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Medicare (1.45%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(medicare)}</span></div>
+                        </div>
+                      )}
                     </div>
                     <div style={{ borderTop: `2px solid ${theme.border}`, paddingTop: '12px', marginTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: theme.text, fontWeight: '700', fontSize: '16px' }}>Net Pay</span>
