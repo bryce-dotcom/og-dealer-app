@@ -32,6 +32,11 @@ export default function BooksPage() {
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
 
+  // Custom sync state
+  const [showCustomSync, setShowCustomSync] = useState(false);
+  const [syncStartDate, setSyncStartDate] = useState('');
+  const [syncEndDate, setSyncEndDate] = useState('');
+
   const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', expense_date: new Date().toISOString().split('T')[0], vendor: '', category_id: null });
   const [assetForm, setAssetForm] = useState({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' });
   const [liabilityForm, setLiabilityForm] = useState({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' });
@@ -148,20 +153,26 @@ export default function BooksPage() {
   }
 
   // Sync transactions for an account
-  async function syncAccount(accountId = null) {
+  async function syncAccount(accountId = null, startDate = null, endDate = null) {
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('plaid-sync', {
-        body: {
-          action: 'sync_transactions',
-          dealer_id: dealerId,
-          account_id: accountId
-        }
-      });
+      const body = {
+        action: 'sync_transactions',
+        dealer_id: dealerId,
+        account_id: accountId
+      };
+
+      if (startDate) body.start_date = startDate;
+      if (endDate) body.end_date = endDate;
+
+      const { data, error } = await supabase.functions.invoke('plaid-sync', { body });
 
       if (error) throw error;
       showToast(data.message || 'Sync complete', 'success');
       await fetchAll(); // Refresh transactions
+      setShowCustomSync(false);
+      setSyncStartDate('');
+      setSyncEndDate('');
     } catch (err) {
       console.error('Sync failed:', err);
       showToast('Failed to sync transactions', 'error');
@@ -398,9 +409,14 @@ export default function BooksPage() {
                     {connecting ? 'Connecting...' : '+ Connect Bank/Card'}
                   </button>
                   {connectedAccounts.length > 0 && (
-                    <button onClick={() => syncAccount()} disabled={syncing} style={{ padding: '10px 20px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing ? 0.6 : 1 }}>
-                      {syncing ? 'Syncing...' : '🔄 Sync All'}
-                    </button>
+                    <>
+                      <button onClick={() => syncAccount()} disabled={syncing} style={{ padding: '10px 20px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing ? 0.6 : 1 }}>
+                        {syncing ? 'Syncing...' : '🔄 Sync All'}
+                      </button>
+                      <button onClick={() => setShowCustomSync(true)} style={{ padding: '10px 20px', backgroundColor: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>
+                        📅 Custom Sync
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -492,6 +508,32 @@ export default function BooksPage() {
       {showAddExpense && <Modal title="Add Expense" onClose={() => setShowAddExpense(false)} theme={theme}><Field label="What?" value={expenseForm.description} onChange={v => setExpenseForm({...expenseForm, description: v})} theme={theme} /><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}><Field label="Amount" type="number" value={expenseForm.amount} onChange={v => setExpenseForm({...expenseForm, amount: v})} theme={theme} /><Field label="Date" type="date" value={expenseForm.expense_date} onChange={v => setExpenseForm({...expenseForm, expense_date: v})} theme={theme} /></div><Field label="Where?" value={expenseForm.vendor} onChange={v => setExpenseForm({...expenseForm, vendor: v})} theme={theme} /><CatPicker categories={categories.filter(c => c.type === 'expense')} selected={expenseForm.category_id} onSelect={id => setExpenseForm({...expenseForm, category_id: id})} theme={theme} /><div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}><button onClick={() => setShowAddExpense(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button><button onClick={addExpense} style={{ flex: 1, padding: '12px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Add</button></div></Modal>}
       {showAddAsset && <Modal title="Add Something You Own" onClose={() => setShowAddAsset(false)} theme={theme}><Field label="What?" value={assetForm.name} onChange={v => setAssetForm({...assetForm, name: v})} theme={theme} /><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}><Field label="Paid" type="number" value={assetForm.purchase_price} onChange={v => setAssetForm({...assetForm, purchase_price: v})} theme={theme} /><Field label="Worth now" type="number" value={assetForm.current_value} onChange={v => setAssetForm({...assetForm, current_value: v})} theme={theme} /></div><div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}><button onClick={() => setShowAddAsset(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button><button onClick={addAsset} style={{ flex: 1, padding: '12px', backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Add</button></div></Modal>}
       {showAddLiability && <Modal title="Add Something You Owe" onClose={() => setShowAddLiability(false)} theme={theme}><Field label="What?" value={liabilityForm.name} onChange={v => setLiabilityForm({...liabilityForm, name: v})} theme={theme} /><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}><Field label="Still owe" type="number" value={liabilityForm.current_balance} onChange={v => setLiabilityForm({...liabilityForm, current_balance: v})} theme={theme} /><Field label="Monthly" type="number" value={liabilityForm.monthly_payment} onChange={v => setLiabilityForm({...liabilityForm, monthly_payment: v})} theme={theme} /></div><Field label="Lender" value={liabilityForm.lender} onChange={v => setLiabilityForm({...liabilityForm, lender: v})} theme={theme} /><div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}><button onClick={() => setShowAddLiability(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button><button onClick={addLiability} style={{ flex: 1, padding: '12px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Add</button></div></Modal>}
+
+      {showCustomSync && (
+        <Modal title="Custom Date Range Sync" onClose={() => setShowCustomSync(false)} theme={theme}>
+          <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+            <div style={{ color: '#8b5cf6', fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>💡 Tip</div>
+            <div style={{ color: theme.textSecondary, fontSize: '12px' }}>Sync transactions from a specific date range. Useful for getting historical data when first connecting accounts.</div>
+          </div>
+          <Field label="Start Date" type="date" value={syncStartDate} onChange={v => setSyncStartDate(v)} theme={theme} />
+          <Field label="End Date" type="date" value={syncEndDate} onChange={v => setSyncEndDate(v)} theme={theme} />
+          <div style={{ marginBottom: '16px', padding: '10px', backgroundColor: theme.bg, borderRadius: '6px' }}>
+            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+              {syncStartDate && syncEndDate ? (
+                <>Syncing from <strong style={{ color: theme.text }}>{new Date(syncStartDate).toLocaleDateString()}</strong> to <strong style={{ color: theme.text }}>{new Date(syncEndDate).toLocaleDateString()}</strong></>
+              ) : (
+                'Please select both start and end dates'
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button onClick={() => setShowCustomSync(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={() => syncAccount(null, syncStartDate, syncEndDate)} disabled={!syncStartDate || !syncEndDate || syncing} style={{ flex: 1, padding: '12px', backgroundColor: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '8px', cursor: (!syncStartDate || !syncEndDate || syncing) ? 'not-allowed' : 'pointer', opacity: (!syncStartDate || !syncEndDate || syncing) ? 0.6 : 1 }}>
+              {syncing ? 'Syncing...' : 'Sync'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

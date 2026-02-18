@@ -140,7 +140,7 @@ serve(async (req) => {
         console.log(`[PLAID] Saved account: ${account.name} (${accountType})`);
       }
 
-      // Immediately sync transactions for these accounts
+      // Immediately sync transactions for these accounts (last 30 days by default)
       await syncTransactions(supabase, plaidUrl, plaidClientId, plaidSecret, access_token, dealer_id, savedAccounts);
 
       return new Response(
@@ -157,7 +157,8 @@ serve(async (req) => {
     // ACTION: SYNC TRANSACTIONS
     // ============================================
     if (action === "sync_transactions") {
-      console.log(`[PLAID] Syncing transactions for account: ${account_id || 'all'}`);
+      const { start_date, end_date } = await req.json();
+      console.log(`[PLAID] Syncing transactions for account: ${account_id || 'all'}`, { start_date, end_date });
 
       // Get accounts to sync
       let accountsQuery = supabase
@@ -185,7 +186,9 @@ serve(async (req) => {
           plaidSecret,
           account.plaid_access_token,
           dealer_id,
-          [account]
+          [account],
+          start_date,
+          end_date
         );
         totalSynced += synced;
       }
@@ -253,14 +256,19 @@ async function syncTransactions(
   secret: string,
   accessToken: string,
   dealerId: string,
-  accounts: any[]
+  accounts: any[],
+  customStartDate?: string,
+  customEndDate?: string
 ): Promise<number> {
   let totalSynced = 0;
 
-  // Get transactions for the last 30 days
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - 30);
-  const endDate = new Date();
+  // Get transactions - use custom dates if provided, otherwise last 30 days
+  const startDate = customStartDate ? new Date(customStartDate) : (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d;
+  })();
+  const endDate = customEndDate ? new Date(customEndDate) : new Date();
 
   const txResponse = await fetch(`${plaidUrl}/transactions/get`, {
     method: "POST",
