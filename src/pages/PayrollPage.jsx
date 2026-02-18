@@ -13,6 +13,7 @@ export default function PayrollPage() {
   };
 
   const [timeEntries, setTimeEntries] = useState([]);
+  const [commissions, setCommissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -36,7 +37,7 @@ export default function PayrollPage() {
   const currentEmployee = currentUserId ? employees.find(e => e.id === currentUserId) : null;
 
   useEffect(() => {
-    if (dealerId) { fetchTimeEntries(); fetchPTORequests(); fetchPayrollRuns(); }
+    if (dealerId) { fetchTimeEntries(); fetchCommissions(); fetchPTORequests(); fetchPayrollRuns(); }
   }, [dealerId]);
 
   useEffect(() => {
@@ -59,6 +60,13 @@ export default function PayrollPage() {
       .eq('dealer_id', dealerId).gte('clock_in', sixtyDaysAgo.toISOString()).order('clock_in', { ascending: false });
     if (data) setTimeEntries(data);
     setLoading(false);
+  }
+
+  async function fetchCommissions() {
+    const sixtyDaysAgo = new Date(); sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const { data } = await supabase.from('inventory_commissions').select('*')
+      .eq('dealer_id', dealerId).gte('created_at', sixtyDaysAgo.toISOString()).order('created_at', { ascending: false });
+    if (data) setCommissions(data);
   }
 
   async function fetchPTORequests() {
@@ -179,15 +187,24 @@ export default function PayrollPage() {
     const payTypes = Array.isArray(emp?.pay_type) ? emp.pay_type : [emp?.pay_type || 'hourly'];
     const hourlyRate = emp?.hourly_rate || 0;
     const salary = emp?.salary || 0;
-    let grossPay = 0;
-    
-    if (payTypes.includes('hourly')) grossPay = (regularHours * hourlyRate) + (overtimeHours * hourlyRate * 1.5);
+    let basePay = 0;
+
+    if (payTypes.includes('hourly')) basePay = (regularHours * hourlyRate) + (overtimeHours * hourlyRate * 1.5);
     if (payTypes.includes('salary')) {
       const periods = paySettings.pay_frequency === 'weekly' ? 52 : paySettings.pay_frequency === 'bi-weekly' ? 26 : paySettings.pay_frequency === 'semi-monthly' ? 24 : 12;
-      grossPay += salary / periods;
+      basePay += salary / periods;
     }
-    
-    return { totalHours, regularHours, overtimeHours, grossPay, hourlyRate, salary };
+
+    // Calculate commissions earned during this pay period
+    const periodCommissions = commissions.filter(c => {
+      const d = new Date(c.created_at);
+      return c.employee_id === empId && d >= periodStart && d <= periodEnd;
+    });
+    const commissionAmount = periodCommissions.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+
+    const grossPay = basePay + commissionAmount;
+
+    return { totalHours, regularHours, overtimeHours, basePay, commissionAmount, grossPay, hourlyRate, salary };
   }
 
   async function runPayroll() {
@@ -225,6 +242,7 @@ export default function PayrollPage() {
         pay_date: payDate.toISOString().split('T')[0],
         regular_hours: payData.regularHours, overtime_hours: payData.overtimeHours,
         hourly_rate: payData.hourlyRate, salary_amount: payData.salary,
+        commission_amount: payData.commissionAmount,
         gross_pay: payData.grossPay, federal_tax: federalTax, state_tax: stateTax,
         social_security: socialSecurity, medicare: medicare, net_pay: netPay,
         status: 'generated', dealer_id: dealerId
@@ -246,17 +264,17 @@ export default function PayrollPage() {
     const { start, end } = getPayPeriodDates();
     const payDate = getNextPayDate();
     const activeEmps = employees.filter(e => e.active);
-    
-    const headers = ['Employee Name','Email','Pay Type','Regular Hours','OT Hours','Hourly Rate','Annual Salary','Gross Pay','Period Start','Period End','Pay Date'];
+
+    const headers = ['Employee Name','Email','Pay Type','Regular Hours','OT Hours','Hourly Rate','Annual Salary','Commission','Gross Pay','Period Start','Period End','Pay Date'];
     const rows = activeEmps.map(emp => {
       const payData = calculatePayroll(emp.id, start, end);
       const payTypes = Array.isArray(emp.pay_type) ? emp.pay_type.join('+') : emp.pay_type || 'hourly';
       return [emp.name, emp.email || '', payTypes, payData.regularHours.toFixed(2), payData.overtimeHours.toFixed(2),
-        emp.hourly_rate || 0, emp.salary || 0, payData.grossPay.toFixed(2),
+        emp.hourly_rate || 0, emp.salary || 0, payData.commissionAmount.toFixed(2), payData.grossPay.toFixed(2),
         start.toISOString().split('T')[0], end.toISOString().split('T')[0], payDate.toISOString().split('T')[0]
       ].map(v => `"${v}"`).join(',');
     });
-    
+
     const csv = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -413,7 +431,11 @@ export default function PayrollPage() {
                   <div key={stub.id} style={{ padding: '12px 16px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <div style={{ color: theme.text, fontWeight: '500' }}>Pay Date: {formatDateFull(stub.pay_date)}</div>
-                      <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '2px' }}>{formatDate(stub.pay_period_start)} - {formatDate(stub.pay_period_end)} · {(stub.regular_hours || 0).toFixed(1)}hrs{stub.overtime_hours > 0 && <span style={{ color: '#ef4444' }}> +{stub.overtime_hours.toFixed(1)} OT</span>}</div>
+                      <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '2px' }}>
+                        {formatDate(stub.pay_period_start)} - {formatDate(stub.pay_period_end)} · {(stub.regular_hours || 0).toFixed(1)}hrs
+                        {stub.overtime_hours > 0 && <span style={{ color: '#ef4444' }}> +{stub.overtime_hours.toFixed(1)} OT</span>}
+                        {stub.commission_amount > 0 && <span style={{ color: '#8b5cf6' }}> · {formatCurrency(stub.commission_amount)} comm</span>}
+                      </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '18px', fontWeight: '700', color: '#22c55e' }}>{formatCurrency(stub.net_pay)}</div>
@@ -495,9 +517,14 @@ export default function PayrollPage() {
                     <div style={{ fontSize: '16px', fontWeight: '700', color: '#3b82f6' }}>{getPTOBalance(emp).toFixed(1)}</div>
                     <div style={{ fontSize: '10px', color: '#3b82f6' }}>PTO</div>
                   </div>
-                  <div style={{ textAlign: 'right', minWidth: '100px' }}>
+                  <div style={{ textAlign: 'right', minWidth: '120px' }}>
                     <div style={{ fontSize: '20px', fontWeight: '700', color: '#22c55e' }}>{formatCurrency(payData.grossPay)}</div>
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>GROSS</div>
+                    {payData.commissionAmount > 0 && (
+                      <div style={{ fontSize: '10px', color: '#8b5cf6', marginTop: '2px' }}>
+                        +{formatCurrency(payData.commissionAmount)} comm
+                      </div>
+                    )}
                   </div>
                 </div>
               );
