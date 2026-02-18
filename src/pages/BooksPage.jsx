@@ -261,13 +261,21 @@ export default function BooksPage() {
   }
 
   // CALCULATIONS
-  const cashInBank = bankAccounts.reduce((sum, a) => sum + (parseFloat(a.current_balance) || 0), 0);
+  // Separate bank accounts into assets (checking/savings) vs liabilities (credit cards/LOC)
+  const assetAccounts = bankAccounts.filter(a => a.account_type === 'depository' || a.account_type === 'checking' || a.account_type === 'savings');
+  const liabilityAccounts = bankAccounts.filter(a => a.account_type === 'credit_card' || a.account_type === 'credit' || a.account_type === 'loan' || a.account_type === 'line_of_credit');
+
+  const cashInBank = assetAccounts.reduce((sum, a) => sum + (parseFloat(a.current_balance) || 0), 0);
+  const creditCardDebt = liabilityAccounts.reduce((sum, a) => sum + Math.abs(parseFloat(a.current_balance) || 0), 0);
+
   const inventoryValue = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale').reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0);
   const bhphOwed = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
   const bhphMonthly = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
   const otherAssets = assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0);
+  const otherLiabilities = liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+
   const totalOwn = cashInBank + inventoryValue + bhphOwed + otherAssets;
-  const totalOwe = liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+  const totalOwe = creditCardDebt + otherLiabilities;
   const netWorth = totalOwn - totalOwe;
   const healthScore = totalOwn > 0 ? Math.min(100, Math.max(0, Math.round((netWorth / totalOwn) * 100))) : 50;
   const inventoryCount = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale').length;
@@ -558,9 +566,25 @@ export default function BooksPage() {
                 </div>
                 <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '24px', border: `1px solid ${theme.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}><div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>📑</div><div><div style={{ color: theme.textMuted, fontSize: '13px' }}>WHAT YOU OWE</div><div style={{ color: '#ef4444', fontSize: '28px', fontWeight: '700' }}>{formatCurrency(totalOwe)}</div></div></div>
-                  {liabilities.length === 0 ? <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}><div style={{ fontSize: '32px', marginBottom: '12px' }}>🎉</div><div>Debt free!</div></div> : liabilities.map(l => (
-                    <div key={l.id} style={{ padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}><div><div style={{ color: theme.text, fontWeight: '500' }}>{l.name}</div><div style={{ color: theme.textMuted, fontSize: '12px' }}>{l.lender}</div></div><div style={{ textAlign: 'right' }}><div style={{ color: '#ef4444', fontWeight: '600' }}>{formatCurrency(l.current_balance)}</div>{l.monthly_payment > 0 && <div style={{ color: theme.textMuted, fontSize: '12px' }}>{formatCurrency(l.monthly_payment)}/mo</div>}</div></div>
-                  ))}
+                  {totalOwe === 0 ? <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}><div style={{ fontSize: '32px', marginBottom: '12px' }}>🎉</div><div>Debt free!</div></div> : (
+                    <>
+                      {liabilityAccounts.map(a => (
+                        <div key={a.id} style={{ padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '20px' }}>{a.account_type === 'credit_card' || a.account_type === 'credit' ? '💳' : '🏦'}</span>
+                            <div>
+                              <div style={{ color: theme.text, fontWeight: '500' }}>{a.institution_name || a.account_name}</div>
+                              <div style={{ color: theme.textMuted, fontSize: '12px' }}>{a.account_name} {a.account_mask && `••${a.account_mask}`}</div>
+                            </div>
+                          </div>
+                          <div style={{ color: '#ef4444', fontWeight: '600' }}>{formatCurrency(Math.abs(a.current_balance))}</div>
+                        </div>
+                      ))}
+                      {liabilities.map(l => (
+                        <div key={l.id} style={{ padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}><div><div style={{ color: theme.text, fontWeight: '500' }}>{l.name}</div><div style={{ color: theme.textMuted, fontSize: '12px' }}>{l.lender}</div></div><div style={{ textAlign: 'right' }}><div style={{ color: '#ef4444', fontWeight: '600' }}>{formatCurrency(l.current_balance)}</div>{l.monthly_payment > 0 && <div style={{ color: theme.textMuted, fontSize: '12px' }}>{formatCurrency(l.monthly_payment)}/mo</div>}</div></div>
+                      ))}
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -619,9 +643,11 @@ export default function BooksPage() {
                         </div>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '12px', backgroundColor: theme.bg, borderRadius: '8px' }}>
-                        <div style={{ color: theme.textMuted, fontSize: '13px' }}>Balance</div>
-                        <div style={{ color: account.account_type === 'credit_card' ? (account.current_balance > 0 ? '#ef4444' : theme.text) : '#22c55e', fontSize: '20px', fontWeight: '700' }}>
-                          {formatCurrency(account.current_balance)}
+                        <div style={{ color: theme.textMuted, fontSize: '13px' }}>
+                          {(account.account_type === 'credit_card' || account.account_type === 'credit' || account.account_type === 'loan' || account.account_type === 'line_of_credit') ? 'You Owe' : 'Balance'}
+                        </div>
+                        <div style={{ color: (account.account_type === 'credit_card' || account.account_type === 'credit' || account.account_type === 'loan' || account.account_type === 'line_of_credit') ? '#ef4444' : '#22c55e', fontSize: '20px', fontWeight: '700' }}>
+                          {formatCurrency(Math.abs(account.current_balance))}
                         </div>
                       </div>
                       <div style={{ color: theme.textMuted, fontSize: '12px', marginBottom: '12px' }}>

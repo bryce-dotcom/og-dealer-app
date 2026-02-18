@@ -48,7 +48,8 @@
       "Bash(git -C /c/OGDealer commit -m \"$\\(cat <<''EOF''\nAdd comprehensive financial fields to DealsPage deal form\n\nVEHICLE PRICING:\n- vehicle_cash_price, accessories_total, rebate_amount, rebate_applied\n- total_cash_price, subtotal_price \\(calculated, gold background\\)\n\nTRADE-IN:\n- trade_in_year, trade_in_make, trade_in_model, trade_in_vin, trade_in_mileage\n- trade_in_allowance, trade_in_payoff, trade_in_payoff_to\n- net_trade_allowance \\(calculated, gold background\\)\n\nPAYMENT:\n- down_payment, total_credits \\(calculated, gold background\\)\n\nFEES:\n- service_contract_price, doc_fee, gap_insurance_price, tax_rate\n- license_fee, registration_fee, title_fee, property_tax_fee\n- inspection_fee, emissions_fee, waste_tire_fee\n- subtotal_taxable, net_taxable_amount, tax_amount \\(calculated\\)\n- total_due, balance_due \\(calculated, gold background\\)\n\nFINANCING \\(BHPH/Financing only\\):\n- apr, term_months\n- amount_financed, finance_charge, monthly_payment, total_of_payments \\(calculated\\)\n\nFEATURES:\n- Real-time calculateDeal useMemo hook updates all calculated fields\n- Calculated fields disabled with gold background \\(rgba\\(212,175,55,0.1\\)\\)\n- Financial Summary card in documents column shows key deal numbers\n- saveDeal saves all new fields with backwards compatibility for legacy fields\n- openEditDeal loads all new fields when editing existing deals\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(psql:*)",
       "Bash(scoop install:*)",
-      "Bash(npx supabase@latest:*)"
+      "Bash(npx supabase@latest:*)",
+      "Bash(npm --version:*)"
     ]
   }
 }
