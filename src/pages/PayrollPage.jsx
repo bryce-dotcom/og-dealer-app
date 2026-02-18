@@ -12,6 +12,10 @@ export default function PayrollPage() {
     accent: '#f97316'
   };
 
+  // Access control state
+  const [hasAccess, setHasAccess] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(true);
+
   const [timeEntries, setTimeEntries] = useState([]);
   const [commissions, setCommissions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +42,35 @@ export default function PayrollPage() {
 
   const isAdmin = !currentUserId;
   const currentEmployee = currentUserId ? employees.find(e => e.id === currentUserId) : null;
+
+  // Check user access on mount
+  useEffect(() => {
+    async function checkAccess() {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      // If user is authenticated as dealer owner, grant access
+      if (session?.user) {
+        // Check if this user owns the current dealership
+        const { data: dealerData } = await supabase
+          .from('dealer_settings')
+          .select('owner_user_id')
+          .eq('id', dealerId)
+          .single();
+
+        // Dealer owner has full access
+        if (dealerData?.owner_user_id === session.user.id) {
+          setHasAccess(true);
+        } else {
+          // Future: Check if employee has admin access_level
+          // For now, deny access if not dealer owner
+          setHasAccess(false);
+        }
+      }
+      setCheckingAccess(false);
+    }
+
+    if (dealerId) checkAccess();
+  }, [dealerId]);
 
   useEffect(() => {
     if (dealerId) { fetchTimeEntries(); fetchCommissions(); fetchPTORequests(); fetchPayrollRuns(); }
@@ -403,6 +436,27 @@ export default function PayrollPage() {
   const inputStyle = { width: '100%', padding: '10px 12px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px' };
   const labelStyle = { display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '4px', fontWeight: '500' };
   const buttonStyle = { padding: '10px 20px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' };
+
+  // Show loading or access denied screen
+  if (checkingAccess) {
+    return (
+      <div style={{ padding: '60px 32px', textAlign: 'center', backgroundColor: theme.bg, minHeight: '100vh' }}>
+        <div style={{ fontSize: '14px', color: theme.textMuted }}>Checking access...</div>
+      </div>
+    );
+  }
+
+  if (!hasAccess) {
+    return (
+      <div style={{ padding: '60px 32px', textAlign: 'center', backgroundColor: theme.bg, minHeight: '100vh' }}>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔒</div>
+        <h2 style={{ fontSize: '24px', fontWeight: '700', margin: '0 0 8px', color: theme.text }}>Access Denied</h2>
+        <p style={{ color: theme.textMuted, fontSize: '14px', maxWidth: '400px', margin: '0 auto' }}>
+          You don't have permission to view the Payroll page. This page is restricted to dealership administrators only.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: '24px', backgroundColor: theme.bg, minHeight: '100vh' }}>
