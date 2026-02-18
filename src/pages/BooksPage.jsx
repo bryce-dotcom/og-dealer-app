@@ -41,6 +41,10 @@ export default function BooksPage() {
   const [assetForm, setAssetForm] = useState({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' });
   const [liabilityForm, setLiabilityForm] = useState({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' });
 
+  // AI categorization state
+  const [aiSuggestions, setAiSuggestions] = useState({});
+  const [loadingAI, setLoadingAI] = useState(false);
+
   useEffect(() => { if (dealerId) fetchAll(); }, [dealerId]);
 
   async function fetchAll() {
@@ -48,18 +52,66 @@ export default function BooksPage() {
     const [cats, banks, txns, expenses, assetData, liabData] = await Promise.all([
       supabase.from('expense_categories').select('*').or(`dealer_id.eq.${dealerId},dealer_id.is.null`).order('sort_order'),
       supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId).eq('is_plaid_connected', true),
-      supabase.from('bank_transactions').select('*').eq('dealer_id', dealerId).order('transaction_date', { ascending: false }),
+      supabase.from('bank_transactions').select('*, bank_accounts(account_name, account_mask, institution_name, account_type)').eq('dealer_id', dealerId).order('transaction_date', { ascending: false }),
       supabase.from('manual_expenses').select('*').eq('dealer_id', dealerId).order('expense_date', { ascending: false }),
       supabase.from('assets').select('*').eq('dealer_id', dealerId).eq('status', 'active'),
       supabase.from('liabilities').select('*').eq('dealer_id', dealerId).eq('status', 'active')
     ]);
     if (cats.data) setCategories(cats.data);
     if (banks.data) setBankAccounts(banks.data);
-    if (txns.data) setTransactions(txns.data);
+    if (txns.data) {
+      setTransactions(txns.data);
+      // Get AI suggestions for inbox transactions
+      if (cats.data && expenses.data) {
+        const inboxTxns = txns.data.filter(t => t.status === 'inbox');
+        if (inboxTxns.length > 0) {
+          getAISuggestions(inboxTxns.slice(0, 10), cats.data, expenses.data); // Limit to first 10 for performance
+        }
+      }
+    }
     if (expenses.data) setManualExpenses(expenses.data);
     if (assetData.data) setAssets(assetData.data);
     if (liabData.data) setLiabilities(liabData.data);
     setLoading(false);
+  }
+
+  // Get AI categorization and matching suggestions
+  async function getAISuggestions(inboxTransactions, categories, manualExpenses) {
+    setLoadingAI(true);
+    const suggestions = {};
+
+    // Process transactions in parallel (limit to avoid rate limits)
+    const promises = inboxTransactions.map(async (txn) => {
+      try {
+        const { data, error } = await supabase.functions.invoke('categorize-transaction', {
+          body: {
+            transaction: txn,
+            categories: categories.filter(c => c.type === (txn.is_income ? 'income' : 'expense')),
+            manual_expenses: manualExpenses.filter(e => {
+              // Only check expenses within 7 days of transaction
+              const txnDate = new Date(txn.transaction_date);
+              const expDate = new Date(e.expense_date);
+              const daysDiff = Math.abs((txnDate - expDate) / (1000 * 60 * 60 * 24));
+              return daysDiff <= 7;
+            })
+          }
+        });
+
+        if (data && data.success) {
+          suggestions[txn.id] = {
+            category: data.suggested_category,
+            confidence: data.confidence,
+            matches: data.matches || []
+          };
+        }
+      } catch (err) {
+        console.error(`AI suggestion failed for txn ${txn.id}:`, err);
+      }
+    });
+
+    await Promise.all(promises);
+    setAiSuggestions(suggestions);
+    setLoadingAI(false);
   }
 
   // Create Plaid link token
@@ -253,11 +305,129 @@ export default function BooksPage() {
   const formatDateTime = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '-';
   const getHealthColor = (s) => s >= 70 ? '#22c55e' : s >= 40 ? '#eab308' : '#ef4444';
 
-  async function bookTransaction(txn, categoryId) { await supabase.from('bank_transactions').update({ status: 'booked', category_id: categoryId }).eq('id', txn.id); fetchAll(); }
+  async function bookTransaction(txn, categoryId, inventoryId = null) {
+    await supabase.from('bank_transactions').update({
+      status: 'booked',
+      category_id: categoryId,
+      inventory_id: inventoryId
+    }).eq('id', txn.id);
+    fetchAll();
+  }
   async function ignoreTransaction(txn) { await supabase.from('bank_transactions').update({ status: 'ignored' }).eq('id', txn.id); fetchAll(); }
+  async function reconcileTransaction(txn, categoryId, manualExpenseId, inventoryId = null) {
+    // Book the bank transaction
+    await supabase.from('bank_transactions').update({
+      status: 'booked',
+      category_id: categoryId,
+      inventory_id: inventoryId
+    }).eq('id', txn.id);
+    // Mark the manual expense as reconciled (or delete it)
+    if (manualExpenseId) {
+      await supabase.from('manual_expenses').update({ status: 'reconciled' }).eq('id', manualExpenseId);
+    }
+    fetchAll();
+  }
   async function addExpense() { if (!expenseForm.description || !expenseForm.amount) return; await supabase.from('manual_expenses').insert({ ...expenseForm, amount: parseFloat(expenseForm.amount), dealer_id: dealerId, status: 'pending' }); setShowAddExpense(false); setExpenseForm({ description: '', amount: '', expense_date: new Date().toISOString().split('T')[0], vendor: '', category_id: null }); fetchAll(); }
   async function addAsset() { if (!assetForm.name || !assetForm.current_value) return; await supabase.from('assets').insert({ ...assetForm, purchase_price: parseFloat(assetForm.purchase_price) || 0, current_value: parseFloat(assetForm.current_value), dealer_id: dealerId, status: 'active' }); setShowAddAsset(false); setAssetForm({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' }); fetchAll(); }
   async function addLiability() { if (!liabilityForm.name || !liabilityForm.current_balance) return; await supabase.from('liabilities').insert({ ...liabilityForm, current_balance: parseFloat(liabilityForm.current_balance), monthly_payment: parseFloat(liabilityForm.monthly_payment) || 0, dealer_id: dealerId, status: 'active' }); setShowAddLiability(false); setLiabilityForm({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' }); fetchAll(); }
+
+  // Export Functions
+  function exportToCSV() {
+    const exportData = bookedTxns.map(txn => {
+      const cat = categories.find(c => c.id === txn.category_id);
+      const account = txn.bank_accounts;
+      const vehicle = txn.inventory_id && inventory ? inventory.find(v => v.id === txn.inventory_id) : null;
+
+      return {
+        Date: formatDate(txn.transaction_date),
+        Description: txn.merchant_name || txn.description,
+        Category: cat?.name || 'Uncategorized',
+        Account: account ? `${account.institution_name} - ${account.account_name}` : 'Manual Entry',
+        Vehicle: vehicle ? `${vehicle.year} ${vehicle.make} ${vehicle.model}` : '',
+        Amount: txn.is_income ? Math.abs(txn.amount) : -Math.abs(txn.amount),
+        Type: txn.is_income ? 'Income' : 'Expense'
+      };
+    });
+
+    const headers = Object.keys(exportData[0] || {});
+    const csv = [
+      headers.join(','),
+      ...exportData.map(row => headers.map(h => `"${row[h] || ''}"`).join(','))
+    ].join('\n');
+
+    downloadFile(csv, `books-export-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
+    showToast('Exported to CSV', 'success');
+  }
+
+  function exportToQuickBooks() {
+    // QuickBooks IIF format
+    let iif = '!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tMEMO\n';
+    iif += '!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tMEMO\n';
+    iif += '!ENDTRNS\n';
+
+    bookedTxns.forEach((txn, idx) => {
+      const cat = categories.find(c => c.id === txn.category_id);
+      const account = txn.bank_accounts;
+      const vehicle = txn.inventory_id && inventory ? inventory.find(v => v.id === txn.inventory_id) : null;
+
+      const trnsType = txn.is_income ? 'DEPOSIT' : 'CHECK';
+      const date = new Date(txn.transaction_date).toLocaleDateString('en-US');
+      const acctName = account ? `${account.institution_name} ${account.account_name}` : 'Cash';
+      const amount = txn.is_income ? Math.abs(txn.amount) : -Math.abs(txn.amount);
+      const memo = vehicle ? `${txn.merchant_name || txn.description} - ${vehicle.year} ${vehicle.make} ${vehicle.model}` : (txn.merchant_name || txn.description);
+
+      // Transaction header
+      iif += `TRNS\t${idx + 1}\t${trnsType}\t${date}\t${acctName}\t${txn.merchant_name || ''}\t\t${amount}\t${memo}\n`;
+      // Split line (category)
+      iif += `SPL\t${idx + 1}\t${trnsType}\t${date}\t${cat?.name || 'Uncategorized'}\t\t\t${-amount}\t${memo}\n`;
+      iif += 'ENDTRNS\n';
+    });
+
+    downloadFile(iif, `quickbooks-export-${new Date().toISOString().split('T')[0]}.iif`, 'text/plain');
+    showToast('Exported for QuickBooks Desktop', 'success');
+  }
+
+  function exportToExcel() {
+    // Generate Excel-compatible CSV with better formatting
+    const exportData = bookedTxns.map(txn => {
+      const cat = categories.find(c => c.id === txn.category_id);
+      const account = txn.bank_accounts;
+      const vehicle = txn.inventory_id && inventory ? inventory.find(v => v.id === txn.inventory_id) : null;
+
+      return {
+        Date: formatDate(txn.transaction_date),
+        Description: txn.merchant_name || txn.description,
+        Category: cat?.name || 'Uncategorized',
+        Account: account ? `${account.institution_name} - ${account.account_name}` : 'Manual Entry',
+        Vehicle: vehicle ? `${vehicle.year} ${vehicle.make} ${vehicle.model}` : '',
+        'Debit': txn.is_income ? '' : Math.abs(txn.amount).toFixed(2),
+        'Credit': txn.is_income ? Math.abs(txn.amount).toFixed(2) : '',
+        'Balance': '',
+        Notes: vehicle ? `Vehicle ID: ${vehicle.stock_number || vehicle.id.slice(0, 8)}` : ''
+      };
+    });
+
+    const headers = Object.keys(exportData[0] || {});
+    const csv = [
+      headers.join(','),
+      ...exportData.map(row => headers.map(h => `"${row[h] || ''}"`).join(','))
+    ].join('\n');
+
+    downloadFile(csv, `books-export-excel-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
+    showToast('Exported for Excel', 'success');
+  }
+
+  function downloadFile(content, fileName, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   // Filter transactions by date
   const filterByDate = (txn) => {
@@ -475,7 +645,7 @@ export default function BooksPage() {
           {activeTab === 'inbox' && (
             <div>
               <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(249, 115, 22, 0.1)', borderRadius: '12px', border: '1px solid rgba(249, 115, 22, 0.3)' }}><div style={{ color: theme.accent, fontWeight: '600' }}>📥 Transactions to Review</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>{filterStartDate || filterEndDate ? `Showing ${inboxTxns.length} filtered transactions` : 'Pick a category, then "Book It"'}</div></div>
-              {inboxTxns.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}><div style={{ fontSize: '48px', marginBottom: '16px' }}>✨</div><div>All caught up!</div></div> : inboxTxns.map(txn => <TxnCard key={txn.id} txn={txn} categories={categories} theme={theme} f={formatCurrency} fd={formatDate} onBook={bookTransaction} onIgnore={ignoreTransaction} />)}
+              {inboxTxns.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}><div style={{ fontSize: '48px', marginBottom: '16px' }}>✨</div><div>All caught up!</div></div> : inboxTxns.map(txn => <TxnCard key={txn.id} txn={txn} categories={categories} theme={theme} f={formatCurrency} fd={formatDate} onBook={bookTransaction} onIgnore={ignoreTransaction} onReconcile={reconcileTransaction} aiSuggestion={aiSuggestions[txn.id]} manualExpenses={manualExpenses} loadingAI={loadingAI} inventory={inventory} />)}
             </div>
           )}
 
@@ -491,12 +661,30 @@ export default function BooksPage() {
 
           {activeTab === 'booked' && (
             <div>
-              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)' }}><div style={{ color: '#10b981', fontWeight: '600' }}>📚 Booked Transactions</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>{filterStartDate || filterEndDate ? `Showing ${bookedTxns.length} filtered transactions` : `Total: ${bookedTxns.length}`}</div></div>
+              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <div style={{ color: '#10b981', fontWeight: '600' }}>📚 Booked Transactions</div>
+                  <div style={{ color: theme.textSecondary, fontSize: '14px' }}>{filterStartDate || filterEndDate ? `Showing ${bookedTxns.length} filtered transactions` : `Total: ${bookedTxns.length}`}</div>
+                </div>
+                {bookedTxns.length > 0 && (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={exportToCSV} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}>
+                      📊 CSV
+                    </button>
+                    <button onClick={exportToQuickBooks} style={{ padding: '8px 16px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}>
+                      💼 QuickBooks
+                    </button>
+                    <button onClick={exportToExcel} style={{ padding: '8px 16px', backgroundColor: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}>
+                      📈 Excel
+                    </button>
+                  </div>
+                )}
+              </div>
               {bookedTxns.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>Nothing booked yet</div> : (
                 <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr style={{ backgroundColor: theme.bg }}><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>DATE</th><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>WHAT</th><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>CATEGORY</th><th style={{ padding: '12px 16px', textAlign: 'right', color: theme.textMuted, fontSize: '12px' }}>AMOUNT</th></tr></thead>
-                    <tbody>{bookedTxns.map(txn => { const cat = categories.find(c => c.id === txn.category_id); return (<tr key={txn.id} style={{ borderTop: `1px solid ${theme.border}` }}><td style={{ padding: '12px 16px', color: theme.textSecondary }}>{formatDate(txn.transaction_date)}</td><td style={{ padding: '12px 16px', color: theme.text }}>{txn.merchant_name}</td><td style={{ padding: '12px 16px' }}>{cat && <span style={{ padding: '4px 10px', backgroundColor: `${cat.color}20`, borderRadius: '6px', fontSize: '13px', color: cat.color }}>{cat.icon} {cat.name}</span>}</td><td style={{ padding: '12px 16px', textAlign: 'right', color: txn.is_income ? '#22c55e' : '#ef4444', fontWeight: '600' }}>{formatCurrency(Math.abs(txn.amount))}</td></tr>); })}</tbody>
+                    <thead><tr style={{ backgroundColor: theme.bg }}><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>DATE</th><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>WHAT</th><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>ACCOUNT</th><th style={{ padding: '12px 16px', textAlign: 'left', color: theme.textMuted, fontSize: '12px' }}>CATEGORY</th><th style={{ padding: '12px 16px', textAlign: 'right', color: theme.textMuted, fontSize: '12px' }}>AMOUNT</th></tr></thead>
+                    <tbody>{bookedTxns.map(txn => { const cat = categories.find(c => c.id === txn.category_id); const account = txn.bank_accounts; return (<tr key={txn.id} style={{ borderTop: `1px solid ${theme.border}` }}><td style={{ padding: '12px 16px', color: theme.textSecondary }}>{formatDate(txn.transaction_date)}</td><td style={{ padding: '12px 16px', color: theme.text }}>{txn.merchant_name}</td><td style={{ padding: '12px 16px', color: theme.textMuted, fontSize: '13px' }}>{account ? <><span style={{ marginRight: '4px' }}>{account.account_type === 'credit_card' ? '💳' : '🏦'}</span>{account.institution_name} {account.account_mask && `••${account.account_mask}`}</> : '-'}</td><td style={{ padding: '12px 16px' }}>{cat && <span style={{ padding: '4px 10px', backgroundColor: `${cat.color}20`, borderRadius: '6px', fontSize: '13px', color: cat.color }}>{cat.icon} {cat.name}</span>}</td><td style={{ padding: '12px 16px', textAlign: 'right', color: txn.is_income ? '#22c55e' : '#ef4444', fontWeight: '600' }}>{formatCurrency(Math.abs(txn.amount))}</td></tr>); })}</tbody>
                   </table>
                 </div>
               )}
@@ -544,16 +732,270 @@ function ValRow({ label, value, f, note, neg }) {
 function Modal({ title, onClose, children, theme }) { return <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}><div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, maxWidth: '450px', width: '100%', maxHeight: '90vh', overflow: 'auto' }}><div style={{ padding: '20px', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h2 style={{ color: theme.text, fontSize: '20px', fontWeight: '700', margin: 0 }}>{title}</h2><button onClick={onClose} style={{ background: 'none', border: 'none', color: theme.textMuted, fontSize: '24px', cursor: 'pointer' }}>×</button></div><div style={{ padding: '20px' }}>{children}</div></div></div>; }
 function Field({ label, value, onChange, type = 'text', theme }) { return <div style={{ marginBottom: '16px' }}><label style={{ display: 'block', color: theme.textSecondary, fontSize: '13px', marginBottom: '6px' }}>{label}</label><input type={type} value={value} onChange={e => onChange(e.target.value)} style={{ width: '100%', padding: '12px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '15px' }} /></div>; }
 function CatPicker({ categories, selected, onSelect, theme }) { return <div style={{ marginBottom: '16px' }}><label style={{ display: 'block', color: theme.textSecondary, fontSize: '13px', marginBottom: '6px' }}>Category</label><div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', maxHeight: '180px', overflow: 'auto' }}>{categories.map(cat => <button key={cat.id} onClick={() => onSelect(cat.id)} style={{ padding: '8px', backgroundColor: selected === cat.id ? `${cat.color}30` : theme.bg, border: `1px solid ${selected === cat.id ? cat.color : theme.border}`, borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}><div style={{ fontSize: '18px' }}>{cat.icon}</div><div style={{ color: theme.textSecondary, fontSize: '10px' }}>{cat.name}</div></button>)}</div></div>; }
-function TxnCard({ txn, categories, theme, f, fd, onBook, onIgnore }) {
+function TxnCard({ txn, categories, theme, f, fd, onBook, onIgnore, onReconcile, aiSuggestion, manualExpenses, loadingAI, inventory }) {
   const [sel, setSel] = useState(null);
   const [show, setShow] = useState(false);
+  const [selectedMatch, setSelectedMatch] = useState(null);
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [showVehicles, setShowVehicles] = useState(false);
   const cat = categories.find(c => c.id === sel);
+  const account = txn.bank_accounts;
+  const vehicle = selectedVehicle ? inventory.find(v => v.id === selectedVehicle) : null;
+
+  // Auto-select AI suggested category for this transaction
+  useEffect(() => {
+    if (aiSuggestion && aiSuggestion.category && categories.length > 0) {
+      // Strip emojis and extra text from AI suggestion (e.g., "Fuel (⛽)" -> "Fuel")
+      const cleanCategory = aiSuggestion.category.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      const suggestedCat = categories.find(c => c.name === cleanCategory);
+      if (suggestedCat) {
+        setSel(suggestedCat.id);
+      }
+    } else {
+      // Reset if no AI suggestion yet
+      setSel(null);
+    }
+    setSelectedMatch(null);
+  }, [txn.id, aiSuggestion, categories]);
+
+  // Find matching manual expenses based on AI suggestions
+  const matches = aiSuggestion?.matches?.map(m => {
+    const expense = manualExpenses.find(e => e.id === m.expense_id);
+    return expense ? { ...expense, confidence: m.confidence, reason: m.reason } : null;
+  }).filter(Boolean) || [];
+
   return (
     <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, padding: '20px', marginBottom: '12px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}><div><div style={{ color: theme.text, fontWeight: '600' }}>{txn.merchant_name || 'Unknown'}</div><div style={{ color: theme.textMuted, fontSize: '13px' }}>{fd(txn.transaction_date)}</div></div><div style={{ color: txn.amount < 0 ? '#ef4444' : '#22c55e', fontWeight: '700', fontSize: '20px' }}>{f(Math.abs(txn.amount))}</div></div>
-      <button onClick={() => setShow(!show)} style={{ width: '100%', padding: '12px', marginBottom: '12px', backgroundColor: cat ? `${cat.color}20` : theme.bg, border: `1px solid ${cat ? cat.color : theme.border}`, borderRadius: '8px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}><span style={{ color: cat ? cat.color : theme.textMuted }}>{cat ? `${cat.icon} ${cat.name}` : 'Pick category...'}</span><span style={{ color: theme.textMuted }}>{show ? '▲' : '▼'}</span></button>
-      {show && <div style={{ marginBottom: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', padding: '8px', backgroundColor: theme.bg, borderRadius: '8px' }}>{categories.filter(c => c.type === (txn.amount < 0 ? 'expense' : 'income')).map(c => <button key={c.id} onClick={() => { setSel(c.id); setShow(false); }} style={{ padding: '8px', backgroundColor: sel === c.id ? `${c.color}30` : 'transparent', border: `1px solid ${sel === c.id ? c.color : theme.border}`, borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}><div style={{ fontSize: '18px' }}>{c.icon}</div><div style={{ color: theme.textSecondary, fontSize: '9px' }}>{c.name}</div></button>)}</div>}
-      <div style={{ display: 'flex', gap: '12px' }}><button onClick={() => sel && onBook(txn, sel)} disabled={!sel} style={{ flex: 1, padding: '12px', backgroundColor: sel ? '#22c55e' : theme.border, color: sel ? '#fff' : theme.textMuted, border: 'none', borderRadius: '8px', fontWeight: '600', cursor: sel ? 'pointer' : 'not-allowed' }}>✓ Book It</button><button onClick={() => onIgnore(txn)} style={{ padding: '12px 20px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Skip</button></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+        <div>
+          <div style={{ color: theme.text, fontWeight: '600' }}>{txn.merchant_name || 'Unknown'}</div>
+          <div style={{ color: theme.textMuted, fontSize: '13px' }}>{fd(txn.transaction_date)}</div>
+          {account && (
+            <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>{account.account_type === 'credit_card' ? '💳' : '🏦'}</span>
+              <span>{account.institution_name || 'Bank'} - {account.account_name} {account.account_mask && `••${account.account_mask}`}</span>
+            </div>
+          )}
+        </div>
+        <div style={{ color: txn.amount < 0 ? '#ef4444' : '#22c55e', fontWeight: '700', fontSize: '20px' }}>{f(Math.abs(txn.amount))}</div>
+      </div>
+
+      {/* AI Suggestion Badge */}
+      {loadingAI && !aiSuggestion && (
+        <div style={{ marginBottom: '12px', padding: '8px', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '8px', border: '1px dashed rgba(139, 92, 246, 0.3)', fontSize: '12px', color: '#8b5cf6', textAlign: 'center' }}>
+          🤖 AI analyzing...
+        </div>
+      )}
+      {aiSuggestion && aiSuggestion.category && (
+        <div style={{ marginBottom: '12px', padding: '8px', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.3)', fontSize: '12px', color: '#8b5cf6' }}>
+          🤖 AI suggests: <strong>{aiSuggestion.category}</strong> ({aiSuggestion.confidence}% confident)
+        </div>
+      )}
+
+      {/* Matching Expenses */}
+      {matches.length > 0 && (
+        <div style={{ marginBottom: '12px', padding: '12px', backgroundColor: 'rgba(249, 115, 22, 0.1)', borderRadius: '8px', border: '1px solid rgba(249, 115, 22, 0.3)' }}>
+          <div style={{ color: '#f97316', fontSize: '13px', fontWeight: '600', marginBottom: '8px' }}>🔗 Possible duplicates found:</div>
+          {matches.map(match => (
+            <button
+              key={match.id}
+              onClick={() => setSelectedMatch(selectedMatch?.id === match.id ? null : match)}
+              style={{
+                width: '100%',
+                padding: '10px',
+                marginBottom: '8px',
+                backgroundColor: selectedMatch?.id === match.id ? 'rgba(249, 115, 22, 0.2)' : theme.bg,
+                border: `1px solid ${selectedMatch?.id === match.id ? '#f97316' : theme.border}`,
+                borderRadius: '6px',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ color: theme.text, fontSize: '13px', fontWeight: '500' }}>{match.description}</div>
+                  <div style={{ color: theme.textMuted, fontSize: '11px' }}>{match.vendor} • {fd(match.expense_date)}</div>
+                  <div style={{ color: '#f97316', fontSize: '11px', marginTop: '4px' }}>💡 {match.reason}</div>
+                </div>
+                <div style={{ color: theme.text, fontWeight: '600' }}>{f(match.amount)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Category Picker */}
+      <button onClick={() => setShow(!show)} style={{ width: '100%', padding: '12px', marginBottom: '12px', backgroundColor: cat ? `${cat.color}20` : theme.bg, border: `1px solid ${cat ? cat.color : theme.border}`, borderRadius: '8px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color: cat ? cat.color : theme.textMuted }}>{cat ? `${cat.icon} ${cat.name}` : 'Pick category...'}</span>
+        <span style={{ color: theme.textMuted }}>{show ? '▲' : '▼'}</span>
+      </button>
+      {show && (
+        <div style={{ marginBottom: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', padding: '8px', backgroundColor: theme.bg, borderRadius: '8px' }}>
+          {categories.filter(c => c.type === (txn.amount < 0 ? 'expense' : 'income')).map(c => (
+            <button
+              key={c.id}
+              onClick={() => { setSel(c.id); setShow(false); }}
+              style={{ padding: '8px', backgroundColor: sel === c.id ? `${c.color}30` : 'transparent', border: `1px solid ${sel === c.id ? c.color : theme.border}`, borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}
+            >
+              <div style={{ fontSize: '18px' }}>{c.icon}</div>
+              <div style={{ color: theme.textSecondary, fontSize: '9px' }}>{c.name}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Vehicle Selector */}
+      {(() => {
+        // For expenses: show In Stock, For Sale, BHPH
+        // For income: show only Sold and BHPH
+        const isExpense = txn.amount < 0;
+        const isIncome = txn.amount > 0;
+
+        let availableVehicles = [];
+        if (isExpense && inventory) {
+          availableVehicles = inventory.filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH');
+        } else if (isIncome && inventory) {
+          availableVehicles = inventory.filter(v => v.status === 'Sold' || v.status === 'BHPH');
+
+          // AI Smart Sort: Match by amount
+          const txnAmount = Math.abs(txn.amount);
+          availableVehicles = availableVehicles.sort((a, b) => {
+            // For Sold vehicles, match against sale_price
+            // For BHPH vehicles, match against monthly_payment or remaining balance
+            const getMatchScore = (v) => {
+              if (v.status === 'Sold' && v.sale_price) {
+                const diff = Math.abs(parseFloat(v.sale_price) - txnAmount);
+                return diff;
+              }
+              if (v.status === 'BHPH') {
+                // Check if it matches monthly payment or down payment
+                const monthlyDiff = v.monthly_payment ? Math.abs(parseFloat(v.monthly_payment) - txnAmount) : Infinity;
+                const downDiff = v.down_payment ? Math.abs(parseFloat(v.down_payment) - txnAmount) : Infinity;
+                return Math.min(monthlyDiff, downDiff);
+              }
+              return Infinity;
+            };
+            return getMatchScore(a) - getMatchScore(b);
+          });
+        }
+
+        return (isExpense || isIncome) && availableVehicles.length > 0;
+      })() && (() => {
+        const isExpense = txn.amount < 0;
+        const isIncome = txn.amount > 0;
+        const txnAmount = Math.abs(txn.amount);
+
+        let availableVehicles = [];
+        if (isExpense) {
+          availableVehicles = inventory.filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH');
+        } else {
+          availableVehicles = inventory.filter(v => v.status === 'Sold' || v.status === 'BHPH');
+          availableVehicles = availableVehicles.sort((a, b) => {
+            const getMatchScore = (v) => {
+              if (v.status === 'Sold' && v.sale_price) {
+                return Math.abs(parseFloat(v.sale_price) - txnAmount);
+              }
+              if (v.status === 'BHPH') {
+                const monthlyDiff = v.monthly_payment ? Math.abs(parseFloat(v.monthly_payment) - txnAmount) : Infinity;
+                const downDiff = v.down_payment ? Math.abs(parseFloat(v.down_payment) - txnAmount) : Infinity;
+                return Math.min(monthlyDiff, downDiff);
+              }
+              return Infinity;
+            };
+            return getMatchScore(a) - getMatchScore(b);
+          });
+        }
+
+        // Get AI suggestion for top match
+        const topMatch = availableVehicles[0];
+        const topMatchScore = topMatch && (() => {
+          if (topMatch.status === 'Sold' && topMatch.sale_price) {
+            const diff = Math.abs(parseFloat(topMatch.sale_price) - txnAmount);
+            return diff < 50 ? `Matches sale price: ${formatCurrency(topMatch.sale_price)}` : null;
+          }
+          if (topMatch.status === 'BHPH') {
+            if (topMatch.monthly_payment && Math.abs(parseFloat(topMatch.monthly_payment) - txnAmount) < 5) {
+              return `Matches monthly payment: ${formatCurrency(topMatch.monthly_payment)}`;
+            }
+            if (topMatch.down_payment && Math.abs(parseFloat(topMatch.down_payment) - txnAmount) < 50) {
+              return `Matches down payment: ${formatCurrency(topMatch.down_payment)}`;
+            }
+          }
+          return null;
+        })();
+
+        return (
+          <>
+            <button onClick={() => setShowVehicles(!showVehicles)} style={{ width: '100%', padding: '12px', marginBottom: '12px', backgroundColor: vehicle ? 'rgba(34, 197, 94, 0.1)' : theme.bg, border: `1px solid ${vehicle ? '#22c55e' : theme.border}`, borderRadius: '8px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: vehicle ? '#22c55e' : theme.textMuted }}>
+                {vehicle ? `🚗 ${vehicle.year} ${vehicle.make} ${vehicle.model}` : `🚗 Link to vehicle (${isIncome ? 'income' : 'expense'})`}
+              </span>
+              <span style={{ color: theme.textMuted }}>{showVehicles ? '▲' : '▼'}</span>
+            </button>
+            {showVehicles && (
+              <div style={{ marginBottom: '12px', maxHeight: '250px', overflow: 'auto', padding: '8px', backgroundColor: theme.bg, borderRadius: '8px' }}>
+                <button
+                  onClick={() => { setSelectedVehicle(null); setShowVehicles(false); }}
+                  style={{ width: '100%', padding: '8px', marginBottom: '4px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', cursor: 'pointer', textAlign: 'left', color: theme.textMuted, fontSize: '13px' }}
+                >
+                  None - General {isIncome ? 'income' : 'expense'}
+                </button>
+                {availableVehicles.map((v, idx) => {
+                  const isTopMatch = idx === 0 && topMatchScore;
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => { setSelectedVehicle(v.id); setShowVehicles(false); }}
+                      style={{ width: '100%', padding: '10px', marginBottom: '6px', backgroundColor: selectedVehicle === v.id ? 'rgba(34, 197, 94, 0.2)' : isTopMatch ? 'rgba(139, 92, 246, 0.1)' : 'transparent', border: `1px solid ${selectedVehicle === v.id ? '#22c55e' : isTopMatch ? '#8b5cf6' : theme.border}`, borderRadius: '6px', cursor: 'pointer', textAlign: 'left' }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ color: theme.text, fontSize: '13px', fontWeight: '500' }}>
+                            {v.year} {v.make} {v.model}
+                            {isTopMatch && <span style={{ marginLeft: '8px', padding: '2px 6px', backgroundColor: '#8b5cf6', color: '#fff', borderRadius: '4px', fontSize: '10px', fontWeight: '600' }}>🤖 AI MATCH</span>}
+                          </div>
+                          <div style={{ color: theme.textMuted, fontSize: '11px' }}>
+                            {v.status} • Stock #{v.stock_number || v.id.slice(0, 8)}
+                          </div>
+                          {isTopMatch && (
+                            <div style={{ color: '#8b5cf6', fontSize: '11px', marginTop: '4px' }}>
+                              💡 {topMatchScore}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        );
+      })()}
+
+      {/* Action Buttons */}
+      <div style={{ display: 'flex', gap: '12px' }}>
+        {selectedMatch ? (
+          <button
+            onClick={() => sel && onReconcile(txn, sel, selectedMatch.id, selectedVehicle)}
+            disabled={!sel}
+            style={{ flex: 1, padding: '12px', backgroundColor: sel ? '#f97316' : theme.border, color: sel ? '#fff' : theme.textMuted, border: 'none', borderRadius: '8px', fontWeight: '600', cursor: sel ? 'pointer' : 'not-allowed' }}
+          >
+            🔗 Reconcile & Book
+          </button>
+        ) : (
+          <button
+            onClick={() => sel && onBook(txn, sel, selectedVehicle)}
+            disabled={!sel}
+            style={{ flex: 1, padding: '12px', backgroundColor: sel ? '#22c55e' : theme.border, color: sel ? '#fff' : theme.textMuted, border: 'none', borderRadius: '8px', fontWeight: '600', cursor: sel ? 'pointer' : 'not-allowed' }}
+          >
+            ✓ Book It
+          </button>
+        )}
+        <button onClick={() => onIgnore(txn)} style={{ padding: '12px 20px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>
+          Skip
+        </button>
+      </div>
     </div>
   );
 }

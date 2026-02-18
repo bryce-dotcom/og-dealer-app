@@ -86,13 +86,42 @@ export default function InventoryPage() {
   };
 
   const loadExpenses = async (inventoryId) => {
-    const { data } = await supabase
+    // Load manual inventory expenses
+    const { data: manualExpenses } = await supabase
       .from('inventory_expenses')
       .select('*')
       .eq('inventory_id', inventoryId)
       .eq('dealer_id', dealerId)
       .order('created_at', { ascending: false });
-    setExpenses(data || []);
+
+    // Load linked bank transactions
+    const { data: bankExpenses } = await supabase
+      .from('bank_transactions')
+      .select('*')
+      .eq('inventory_id', inventoryId)
+      .eq('dealer_id', dealerId)
+      .eq('status', 'booked')
+      .order('transaction_date', { ascending: false });
+
+    // Combine and normalize both expense sources
+    const combined = [
+      ...(manualExpenses || []).map(e => ({
+        ...e,
+        source: 'manual',
+        date: e.created_at,
+        amount: e.amount
+      })),
+      ...(bankExpenses || []).map(e => ({
+        ...e,
+        source: 'bank',
+        date: e.transaction_date,
+        description: e.merchant_name,
+        amount: Math.abs(e.amount),
+        category: 'Bank Transaction'
+      }))
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    setExpenses(combined);
   };
 
   const loadCommissions = async (inventoryId) => {
@@ -146,7 +175,7 @@ export default function InventoryPage() {
   const addExpense = async () => {
     if (!expenseDesc || !expenseAmount || !selectedVehicle) return;
     setLoadingExpComm(true);
-    
+
     let receiptUrl = null;
     if (expenseReceipt) {
       try {
@@ -163,7 +192,8 @@ export default function InventoryPage() {
         console.error('Receipt upload failed:', e);
       }
     }
-    
+
+    // Save to inventory_expenses
     await supabase.from('inventory_expenses').insert({
       inventory_id: selectedVehicle.id,
       dealer_id: dealerId,
@@ -172,7 +202,46 @@ export default function InventoryPage() {
       category: expenseCategory,
       receipt_url: receiptUrl
     });
-    
+
+    // Also save to manual_expenses for Books page
+    // Map inventory category to expense category
+    const categoryMapping = {
+      'Repair': 'Reconditioning',
+      'Parts': 'Reconditioning',
+      'Detail': 'Reconditioning',
+      'Transport': 'Reconditioning',
+      'Inspection': 'Reconditioning',
+      'Fuel': 'Fuel',
+      'Other': 'Other'
+    };
+
+    const mappedCategoryName = categoryMapping[expenseCategory] || 'Other';
+
+    // Get the category_id from expense_categories
+    const { data: categoryData } = await supabase
+      .from('expense_categories')
+      .select('id')
+      .eq('name', mappedCategoryName)
+      .eq('type', 'expense')
+      .or('dealer_id.is.null,dealer_id.eq.' + dealerId)
+      .limit(1)
+      .single();
+
+    if (categoryData) {
+      // Build vendor string from vehicle info
+      const vehicleInfo = `${selectedVehicle.year || ''} ${selectedVehicle.make || ''} ${selectedVehicle.model || ''}`.trim() || 'Vehicle';
+
+      await supabase.from('manual_expenses').insert({
+        dealer_id: dealerId,
+        description: `${expenseDesc} (${vehicleInfo})`,
+        amount: parseFloat(expenseAmount),
+        expense_date: new Date().toISOString().split('T')[0],
+        vendor: vehicleInfo,
+        category_id: categoryData.id,
+        status: 'booked'
+      });
+    }
+
     setExpenseDesc('');
     setExpenseAmount('');
     setExpenseCategory('Repair');
@@ -782,6 +851,11 @@ export default function InventoryPage() {
                   ) : expenses.map(exp => (
                     <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${theme.border}` }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {exp.source === 'bank' && (
+                          <div style={{ padding: '2px 6px', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '4px', fontSize: '10px', color: '#3b82f6', fontWeight: '600' }}>
+                            💳 BANK
+                          </div>
+                        )}
                         {exp.receipt_url && (
                           <a href={exp.receipt_url} target="_blank" rel="noopener noreferrer">
                             <img src={exp.receipt_url} alt="receipt" style={{ width: '30px', height: '30px', objectFit: 'cover', borderRadius: '4px' }} />
@@ -794,7 +868,9 @@ export default function InventoryPage() {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <span style={{ color: '#f87171', fontWeight: '600' }}>{formatCurrency(exp.amount)}</span>
-                        <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px' }}>×</button>
+                        {exp.source !== 'bank' && (
+                          <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px' }}>×</button>
+                        )}
                       </div>
                     </div>
                   ))}

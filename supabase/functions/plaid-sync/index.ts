@@ -19,7 +19,7 @@ serve(async (req) => {
     const plaidEnv = Deno.env.get("PLAID_ENV") || "sandbox"; // sandbox, development, production
 
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const { action, public_token, dealer_id, account_id, metadata } = await req.json();
+    const { action, public_token, dealer_id, account_id, metadata, start_date, end_date } = await req.json();
 
     console.log(`[PLAID] Action: ${action}`);
 
@@ -157,7 +157,6 @@ serve(async (req) => {
     // ACTION: SYNC TRANSACTIONS
     // ============================================
     if (action === "sync_transactions") {
-      const { start_date, end_date } = await req.json();
       console.log(`[PLAID] Syncing transactions for account: ${account_id || 'all'}`, { start_date, end_date });
 
       // Get accounts to sync
