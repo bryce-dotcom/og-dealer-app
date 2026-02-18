@@ -27,6 +27,8 @@ export default function PayrollPage() {
   const [showRunPayrollModal, setShowRunPayrollModal] = useState(false);
   const [payrollRuns, setPayrollRuns] = useState([]);
   const [paystubs, setPaystubs] = useState([]);
+  const [showCommissionModal, setShowCommissionModal] = useState(false);
+  const [selectedEmployeeForComm, setSelectedEmployeeForComm] = useState(null);
   const [paySettings, setPaySettings] = useState({
     pay_frequency: dealer?.pay_frequency || 'bi-weekly',
     pay_day_1: dealer?.pay_day_1 || '20',
@@ -318,6 +320,21 @@ export default function PayrollPage() {
     setProcessingRequestId(null);
   }
 
+  async function deleteCommission(commissionId) {
+    if (!confirm('Delete this commission?')) return;
+    await supabase.from('inventory_commissions').delete().eq('id', commissionId);
+    await fetchCommissions();
+    if (selectedEmployeeForComm) {
+      // Refresh the modal view
+      setSelectedEmployeeForComm(employees.find(e => e.id === selectedEmployeeForComm.id));
+    }
+  }
+
+  function openCommissionModal(emp) {
+    setSelectedEmployeeForComm(emp);
+    setShowCommissionModal(true);
+  }
+
   const getPTOBalance = (emp) => Math.max(0, (emp?.pto_accrued || 0) - (emp?.pto_used || 0));
   const formatCurrency = (amt) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amt || 0);
   const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
@@ -502,7 +519,7 @@ export default function PayrollPage() {
               const payData = calculatePayroll(emp.id, periodStart, periodEnd);
               const payTypes = Array.isArray(emp.pay_type) ? emp.pay_type : [emp.pay_type || 'hourly'];
               return (
-                <div key={emp.id} style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <div key={emp.id} onClick={() => isAdmin && openCommissionModal(emp)} style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', cursor: isAdmin ? 'pointer' : 'default', transition: 'background-color 0.2s' }} onMouseEnter={(e) => isAdmin && (e.currentTarget.style.backgroundColor = theme.bg)} onMouseLeave={(e) => isAdmin && (e.currentTarget.style.backgroundColor = 'transparent')}>
                   <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '16px', fontWeight: '700', flexShrink: 0 }}>{emp.name?.split(' ').map(n => n[0]).join('').slice(0,2)}</div>
                   <div style={{ flex: 1, minWidth: '150px' }}>
                     <div style={{ color: theme.text, fontSize: '16px', fontWeight: '600' }}>{emp.name}</div>
@@ -601,6 +618,76 @@ export default function PayrollPage() {
             <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
               <button onClick={() => setShowPTOModal(false)} style={{ ...buttonStyle, flex: 1, backgroundColor: theme.border, color: theme.text }}>Cancel</button>
               <button onClick={submitPTORequest} disabled={submittingPTO || !ptoForm.start_date || !ptoForm.end_date} style={{ ...buttonStyle, flex: 1, background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', opacity: submittingPTO || !ptoForm.start_date || !ptoForm.end_date ? 0.6 : 1 }}>{submittingPTO ? 'Submitting...' : 'Submit'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Commission Details Modal */}
+      {showCommissionModal && selectedEmployeeForComm && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+          <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto', padding: '24px', margin: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div>
+                <h2 style={{ color: theme.text, fontSize: '20px', fontWeight: '700', margin: 0 }}>💰 Commission Details</h2>
+                <p style={{ color: theme.textSecondary, fontSize: '14px', marginTop: '4px' }}>{selectedEmployeeForComm.name}</p>
+              </div>
+              <button onClick={() => setShowCommissionModal(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+
+            {(() => {
+              const empCommissions = commissions.filter(c => {
+                const d = new Date(c.created_at);
+                return c.employee_id === selectedEmployeeForComm.id && d >= periodStart && d <= periodEnd;
+              });
+              const totalCommission = empCommissions.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+
+              return (
+                <>
+                  <div style={{ padding: '16px', backgroundColor: 'rgba(139,92,246,0.1)', borderRadius: '12px', border: '1px solid rgba(139,92,246,0.3)', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '12px', color: theme.textMuted }}>TOTAL COMMISSIONS</div>
+                        <div style={{ fontSize: '28px', fontWeight: '700', color: '#8b5cf6', marginTop: '4px' }}>{formatCurrency(totalCommission)}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: theme.textMuted }}>PAY PERIOD</div>
+                        <div style={{ fontSize: '14px', color: theme.text, marginTop: '4px' }}>{formatDate(periodStart)} - {formatDate(periodEnd)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {empCommissions.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+                      <div style={{ fontSize: '48px', marginBottom: '12px' }}>📊</div>
+                      <div>No commissions earned this period</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '12px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, textTransform: 'uppercase' }}>Commission Breakdown ({empCommissions.length})</div>
+                      {empCommissions.map(comm => (
+                        <div key={comm.id} style={{ padding: '14px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ color: theme.text, fontWeight: '500', fontSize: '14px' }}>Vehicle Sale Commission</div>
+                            <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '2px' }}>
+                              {formatDateFull(comm.created_at)}
+                              {comm.role_name && <span> · {comm.role_name}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ fontSize: '18px', fontWeight: '700', color: '#8b5cf6' }}>{formatCurrency(comm.amount)}</div>
+                            <button onClick={() => deleteCommission(comm.id)} style={{ padding: '6px 10px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>Delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowCommissionModal(false)} style={{ ...buttonStyle, backgroundColor: theme.accent }}>Close</button>
             </div>
           </div>
         </div>
