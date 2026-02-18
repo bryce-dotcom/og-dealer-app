@@ -93,7 +93,8 @@ export default function EmailMarketingPage() {
       setShowCreateCampaign(true);
     } catch (err) {
       console.error('AI generation error:', err);
-      alert('Failed to generate content. Please try again.');
+      console.error('Full error details:', JSON.stringify(err, null, 2));
+      alert(`Failed to generate content: ${err.message || JSON.stringify(err)}\n\nCheck browser console for details.`);
     } finally {
       setAiGenerating(false);
     }
