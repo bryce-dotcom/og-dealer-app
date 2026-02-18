@@ -66,6 +66,11 @@ export default function BooksPage() {
         throw error;
       }
 
+      if (data?.error) {
+        console.error('[PLAID] Error from edge function:', data.error);
+        throw new Error(data.error);
+      }
+
       if (data?.link_token) {
         console.log('[PLAID] Link token created successfully');
         setLinkToken(data.link_token);
@@ -75,7 +80,8 @@ export default function BooksPage() {
       }
     } catch (err) {
       console.error('[PLAID] Failed to create link token:', err);
-      showToast('Failed to initialize Plaid connection', 'error');
+      const errorMessage = err?.message || 'Failed to initialize Plaid connection';
+      showToast(errorMessage, 'error');
       return false;
     }
   }

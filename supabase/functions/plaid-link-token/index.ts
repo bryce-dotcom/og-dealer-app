@@ -11,9 +11,19 @@ serve(async (req) => {
   }
 
   try {
-    const plaidClientId = Deno.env.get("PLAID_CLIENT_ID")!;
-    const plaidSecret = Deno.env.get("PLAID_SECRET")!;
+    const plaidClientId = Deno.env.get("PLAID_CLIENT_ID");
+    const plaidSecret = Deno.env.get("PLAID_SECRET");
     const plaidEnv = Deno.env.get("PLAID_ENV") || "sandbox";
+
+    console.log(`[PLAID] Environment check:`, {
+      hasClientId: !!plaidClientId,
+      hasSecret: !!plaidSecret,
+      env: plaidEnv
+    });
+
+    if (!plaidClientId || !plaidSecret) {
+      throw new Error("Missing Plaid credentials - check PLAID_CLIENT_ID and PLAID_SECRET environment variables");
+    }
 
     const { user_id } = await req.json();
 
@@ -52,7 +62,8 @@ serve(async (req) => {
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(`Plaid API error: ${error.error_message || response.statusText}`);
+      console.error(`[PLAID] Plaid API error response:`, error);
+      throw new Error(`Plaid API error: ${error.error_message || error.display_message || response.statusText}`);
     }
 
     const data = await response.json();
