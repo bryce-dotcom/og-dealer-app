@@ -342,13 +342,13 @@ export default function InventoryPage() {
   const filteredInventory = inventory.filter(v => {
     const matchesSearch = searchTerm === '' ||
       `${v.year} ${v.make} ${v.model} ${v.vin || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'All' || v.status === statusFilter;
 
     // Hide Fleet vehicles unless unlocked
-    if (v.status === 'Fleet' && !fleetUnlocked && statusFilter !== 'Fleet') {
+    if (v.status === 'Fleet' && !fleetUnlocked) {
       return false;
     }
 
+    const matchesStatus = statusFilter === 'All' || v.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
