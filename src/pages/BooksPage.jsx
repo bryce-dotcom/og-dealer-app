@@ -14,6 +14,7 @@ export default function BooksPage() {
   const [bankAccounts, setBankAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [manualExpenses, setManualExpenses] = useState([]);
+  const [inventoryExpenses, setInventoryExpenses] = useState([]);
   const [assets, setAssets] = useState([]);
   const [liabilities, setLiabilities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -49,11 +50,12 @@ export default function BooksPage() {
 
   async function fetchAll() {
     setLoading(true);
-    const [cats, banks, txns, expenses, assetData, liabData] = await Promise.all([
+    const [cats, banks, txns, expenses, invExpenses, assetData, liabData] = await Promise.all([
       supabase.from('expense_categories').select('*').or(`dealer_id.eq.${dealerId},dealer_id.is.null`).order('sort_order'),
       supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId).eq('is_plaid_connected', true),
       supabase.from('bank_transactions').select('*, bank_accounts(account_name, account_mask, institution_name, account_type)').eq('dealer_id', dealerId).order('transaction_date', { ascending: false }),
       supabase.from('manual_expenses').select('*').eq('dealer_id', dealerId).order('expense_date', { ascending: false }),
+      supabase.from('inventory_expenses').select('*').eq('dealer_id', dealerId),
       supabase.from('assets').select('*').eq('dealer_id', dealerId).eq('status', 'active'),
       supabase.from('liabilities').select('*').eq('dealer_id', dealerId).eq('status', 'active')
     ]);
@@ -70,6 +72,7 @@ export default function BooksPage() {
       }
     }
     if (expenses.data) setManualExpenses(expenses.data);
+    if (invExpenses.data) setInventoryExpenses(invExpenses.data);
     if (assetData.data) setAssets(assetData.data);
     if (liabData.data) setLiabilities(liabData.data);
     setLoading(false);
@@ -296,7 +299,28 @@ export default function BooksPage() {
   const cashInBank = assetAccounts.reduce((sum, a) => sum + (parseFloat(a.current_balance) || 0), 0);
   const creditCardDebt = liabilityAccounts.reduce((sum, a) => sum + Math.abs(parseFloat(a.current_balance) || 0), 0);
 
-  const inventoryValue = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale').reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0);
+  // Calculate inventory value including ALL expenses per vehicle
+  const inventoryValue = (inventory || [])
+    .filter(v => v.status === 'In Stock' || v.status === 'For Sale')
+    .reduce((sum, v) => {
+      // Start with purchase price
+      const purchasePrice = parseFloat(v.purchase_price) || 0;
+
+      // Add inventory_expenses for this vehicle
+      const invExpenseTotal = (inventoryExpenses || [])
+        .filter(e => e.inventory_id === v.id)
+        .reduce((expSum, e) => expSum + (parseFloat(e.amount) || 0), 0);
+
+      // Add bank transaction expenses for this vehicle (booked expenses only)
+      const bankExpenseTotal = (transactions || [])
+        .filter(t => t.inventory_id === v.id && t.status === 'booked' && !t.is_income)
+        .reduce((txnSum, t) => txnSum + Math.abs(parseFloat(t.amount) || 0), 0);
+
+      // Total cost for this vehicle = purchase + all expenses
+      const vehicleTotalCost = purchasePrice + invExpenseTotal + bankExpenseTotal;
+
+      return sum + vehicleTotalCost;
+    }, 0);
   const bhphOwed = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
   const bhphMonthly = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
   const otherAssets = assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0);
