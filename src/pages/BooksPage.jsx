@@ -299,9 +299,9 @@ export default function BooksPage() {
   const cashInBank = assetAccounts.reduce((sum, a) => sum + (parseFloat(a.current_balance) || 0), 0);
   const creditCardDebt = liabilityAccounts.reduce((sum, a) => sum + Math.abs(parseFloat(a.current_balance) || 0), 0);
 
-  // Calculate inventory value including ALL expenses per vehicle
+  // Calculate inventory value including ALL expenses per vehicle (In Stock, For Sale, AND BHPH)
   const inventoryValue = (inventory || [])
-    .filter(v => v.status === 'In Stock' || v.status === 'For Sale')
+    .filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH')
     .reduce((sum, v) => {
       // Start with purchase price
       const purchasePrice = parseFloat(v.purchase_price) || 0;
@@ -330,7 +330,7 @@ export default function BooksPage() {
   const totalOwe = creditCardDebt + otherLiabilities;
   const netWorth = totalOwn - totalOwe;
   const healthScore = totalOwn > 0 ? Math.min(100, Math.max(0, Math.round((netWorth / totalOwn) * 100))) : 50;
-  const inventoryCount = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale').length;
+  const inventoryCount = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH').length;
   const bhphCount = (bhphLoans || []).filter(l => l.status === 'Active').length;
 
   // AI BUSINESS VALUATION
