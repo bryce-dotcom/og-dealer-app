@@ -29,6 +29,7 @@ export default function PayrollPage() {
   const [paystubs, setPaystubs] = useState([]);
   const [showCommissionModal, setShowCommissionModal] = useState(false);
   const [selectedEmployeeForComm, setSelectedEmployeeForComm] = useState(null);
+  const [payAdjustments, setPayAdjustments] = useState({});
   const [paySettings, setPaySettings] = useState({
     pay_frequency: dealer?.pay_frequency || 'bi-weekly',
     pay_day_1: dealer?.pay_day_1 || '20',
@@ -229,28 +230,54 @@ export default function PayrollPage() {
     
     for (const emp of activeEmps) {
       const payData = calculatePayroll(emp.id, start, end);
-      if (payData.grossPay <= 0) continue;
-      
-      const federalTax = payData.grossPay * 0.12;
-      const stateTax = payData.grossPay * 0.0495;
-      const socialSecurity = payData.grossPay * 0.062;
-      const medicare = payData.grossPay * 0.0145;
-      const netPay = payData.grossPay - federalTax - stateTax - socialSecurity - medicare;
+      const adjustments = payAdjustments[emp.id] || { bonus: 0, reimbursement: 0, hoursOverride: null };
+      const bonusAmount = parseFloat(adjustments.bonus) || 0;
+      const reimbursementAmount = parseFloat(adjustments.reimbursement) || 0;
+
+      // Recalculate hours if overridden
+      let finalHours = payData.totalHours;
+      let finalRegularHours = payData.regularHours;
+      let finalOvertimeHours = payData.overtimeHours;
+      let finalBasePay = payData.basePay;
+
+      if (adjustments.hoursOverride !== null && adjustments.hoursOverride !== '') {
+        finalHours = parseFloat(adjustments.hoursOverride);
+        finalRegularHours = Math.min(finalHours, 40 * (paySettings.pay_frequency === 'weekly' ? 1 : 2));
+        finalOvertimeHours = Math.max(0, finalHours - finalRegularHours);
+        const payTypes = Array.isArray(emp.pay_type) ? emp.pay_type : [emp.pay_type || 'hourly'];
+        finalBasePay = 0;
+        if (payTypes.includes('hourly')) finalBasePay = (finalRegularHours * (emp.hourly_rate || 0)) + (finalOvertimeHours * (emp.hourly_rate || 0) * 1.5);
+        if (payTypes.includes('salary')) {
+          const periods = paySettings.pay_frequency === 'weekly' ? 52 : paySettings.pay_frequency === 'bi-weekly' ? 26 : paySettings.pay_frequency === 'semi-monthly' ? 24 : 12;
+          finalBasePay += (emp.salary || 0) / periods;
+        }
+      }
+
+      const totalGrossPay = finalBasePay + payData.commissionAmount + bonusAmount;
+      if (totalGrossPay <= 0) continue;
+
+      const federalTax = totalGrossPay * 0.12;
+      const stateTax = totalGrossPay * 0.0495;
+      const socialSecurity = totalGrossPay * 0.062;
+      const medicare = totalGrossPay * 0.0145;
+      const netPay = totalGrossPay + reimbursementAmount - federalTax - stateTax - socialSecurity - medicare;
       
       await supabase.from('paystubs').insert({
         employee_id: emp.id,
         pay_period_start: start.toISOString().split('T')[0],
         pay_period_end: end.toISOString().split('T')[0],
         pay_date: payDate.toISOString().split('T')[0],
-        regular_hours: payData.regularHours, overtime_hours: payData.overtimeHours,
-        hourly_rate: payData.hourlyRate, salary_amount: payData.salary,
+        regular_hours: finalRegularHours, overtime_hours: finalOvertimeHours,
+        hourly_rate: emp.hourly_rate || 0, salary_amount: emp.salary || 0,
         commission_amount: payData.commissionAmount,
-        gross_pay: payData.grossPay, federal_tax: federalTax, state_tax: stateTax,
+        bonus_amount: bonusAmount,
+        reimbursement_amount: reimbursementAmount,
+        gross_pay: totalGrossPay, federal_tax: federalTax, state_tax: stateTax,
         social_security: socialSecurity, medicare: medicare, net_pay: netPay,
         status: 'generated', dealer_id: dealerId
       });
-      
-      totalGross += payData.grossPay;
+
+      totalGross += totalGrossPay;
       totalNet += netPay;
     }
     
@@ -530,18 +557,19 @@ export default function PayrollPage() {
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>HOURS</div>
                     {payData.overtimeHours > 0 && <div style={{ fontSize: '11px', color: '#ef4444' }}>+{payData.overtimeHours.toFixed(1)} OT</div>}
                   </div>
+                  {payData.commissionAmount > 0 && (
+                    <div style={{ textAlign: 'center', minWidth: '80px', padding: '8px 12px', backgroundColor: 'rgba(139,92,246,0.1)', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '16px', fontWeight: '700', color: '#8b5cf6' }}>{formatCurrency(payData.commissionAmount)}</div>
+                      <div style={{ fontSize: '10px', color: '#8b5cf6' }}>COMM</div>
+                    </div>
+                  )}
                   <div style={{ textAlign: 'center', minWidth: '70px', padding: '8px 12px', backgroundColor: 'rgba(59,130,246,0.1)', borderRadius: '8px' }}>
                     <div style={{ fontSize: '16px', fontWeight: '700', color: '#3b82f6' }}>{getPTOBalance(emp).toFixed(1)}</div>
                     <div style={{ fontSize: '10px', color: '#3b82f6' }}>PTO</div>
                   </div>
-                  <div style={{ textAlign: 'right', minWidth: '120px' }}>
+                  <div style={{ textAlign: 'right', minWidth: '100px' }}>
                     <div style={{ fontSize: '20px', fontWeight: '700', color: '#22c55e' }}>{formatCurrency(payData.grossPay)}</div>
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>GROSS</div>
-                    {payData.commissionAmount > 0 && (
-                      <div style={{ fontSize: '10px', color: '#8b5cf6', marginTop: '2px' }}>
-                        +{formatCurrency(payData.commissionAmount)} comm
-                      </div>
-                    )}
                   </div>
                 </div>
               );
@@ -623,75 +651,191 @@ export default function PayrollPage() {
         </div>
       )}
 
-      {/* Commission Details Modal */}
-      {showCommissionModal && selectedEmployeeForComm && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-          <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto', padding: '24px', margin: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <div>
-                <h2 style={{ color: theme.text, fontSize: '20px', fontWeight: '700', margin: 0 }}>💰 Commission Details</h2>
-                <p style={{ color: theme.textSecondary, fontSize: '14px', marginTop: '4px' }}>{selectedEmployeeForComm.name}</p>
+      {/* Pay Details Editor Modal (Gusto-style) */}
+      {showCommissionModal && selectedEmployeeForComm && (() => {
+        const empId = selectedEmployeeForComm.id;
+        const payData = calculatePayroll(empId, periodStart, periodEnd);
+        const empCommissions = commissions.filter(c => {
+          const d = new Date(c.created_at);
+          return c.employee_id === empId && d >= periodStart && d <= periodEnd;
+        });
+
+        const adjustments = payAdjustments[empId] || { bonus: 0, reimbursement: 0, hoursOverride: null };
+        const effectiveHours = adjustments.hoursOverride !== null ? parseFloat(adjustments.hoursOverride) : payData.totalHours;
+        const bonusAmount = parseFloat(adjustments.bonus) || 0;
+        const reimbursementAmount = parseFloat(adjustments.reimbursement) || 0;
+
+        // Recalculate with overrides
+        const payTypes = Array.isArray(selectedEmployeeForComm.pay_type) ? selectedEmployeeForComm.pay_type : [selectedEmployeeForComm.pay_type || 'hourly'];
+        const regularHours = Math.min(effectiveHours, 40 * (paySettings.pay_frequency === 'weekly' ? 1 : 2));
+        const overtimeHours = Math.max(0, effectiveHours - regularHours);
+        let basePay = 0;
+        if (payTypes.includes('hourly')) basePay = (regularHours * (selectedEmployeeForComm.hourly_rate || 0)) + (overtimeHours * (selectedEmployeeForComm.hourly_rate || 0) * 1.5);
+        if (payTypes.includes('salary')) {
+          const periods = paySettings.pay_frequency === 'weekly' ? 52 : paySettings.pay_frequency === 'bi-weekly' ? 26 : paySettings.pay_frequency === 'semi-monthly' ? 24 : 12;
+          basePay += (selectedEmployeeForComm.salary || 0) / periods;
+        }
+
+        const totalGross = basePay + payData.commissionAmount + bonusAmount;
+        const federalTax = totalGross * 0.12;
+        const stateTax = totalGross * 0.0495;
+        const socialSecurity = totalGross * 0.062;
+        const medicare = totalGross * 0.0145;
+        const totalDeductions = federalTax + stateTax + socialSecurity + medicare;
+        const netPay = totalGross + reimbursementAmount - totalDeductions;
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, maxWidth: '700px', width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
+              {/* Header */}
+              <div style={{ padding: '24px 24px 16px', borderBottom: `1px solid ${theme.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <h2 style={{ color: theme.text, fontSize: '22px', fontWeight: '700', margin: 0 }}>{selectedEmployeeForComm.name}</h2>
+                    <p style={{ color: theme.textSecondary, fontSize: '13px', marginTop: '4px' }}>{formatDate(periodStart)} - {formatDate(periodEnd)} · Pay Date: {formatDate(nextPayDate)}</p>
+                  </div>
+                  <button onClick={() => setShowCommissionModal(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, fontSize: '28px', cursor: 'pointer', lineHeight: '1' }}>×</button>
+                </div>
               </div>
-              <button onClick={() => setShowCommissionModal(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, fontSize: '24px', cursor: 'pointer' }}>×</button>
-            </div>
 
-            {(() => {
-              const empCommissions = commissions.filter(c => {
-                const d = new Date(c.created_at);
-                return c.employee_id === selectedEmployeeForComm.id && d >= periodStart && d <= periodEnd;
-              });
-              const totalCommission = empCommissions.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+              {/* Pay Summary */}
+              <div style={{ padding: '20px 24px', backgroundColor: theme.bg }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '4px' }}>GROSS PAY</div>
+                    <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{formatCurrency(totalGross)}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '4px' }}>NET PAY</div>
+                    <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>{formatCurrency(netPay)}</div>
+                  </div>
+                </div>
+              </div>
 
-              return (
-                <>
-                  <div style={{ padding: '16px', backgroundColor: 'rgba(139,92,246,0.1)', borderRadius: '12px', border: '1px solid rgba(139,92,246,0.3)', marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: '12px', color: theme.textMuted }}>TOTAL COMMISSIONS</div>
-                        <div style={{ fontSize: '28px', fontWeight: '700', color: '#8b5cf6', marginTop: '4px' }}>{formatCurrency(totalCommission)}</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '12px', color: theme.textMuted }}>PAY PERIOD</div>
-                        <div style={{ fontSize: '14px', color: theme.text, marginTop: '4px' }}>{formatDate(periodStart)} - {formatDate(periodEnd)}</div>
+              {/* Pay Details */}
+              <div style={{ padding: '24px' }}>
+                {/* Hours */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, marginBottom: '12px', textTransform: 'uppercase' }}>⏰ Hours</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: theme.textSecondary, marginBottom: '6px' }}>Total Hours (calculated: {payData.totalHours.toFixed(1)})</label>
+                      <input type="number" step="0.1" value={adjustments.hoursOverride !== null ? adjustments.hoursOverride : payData.totalHours} onChange={(e) => setPayAdjustments({...payAdjustments, [empId]: {...adjustments, hoursOverride: e.target.value}})} style={{ ...inputStyle, fontWeight: '600' }} />
+                    </div>
+                    <div style={{ padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                      <div style={{ fontSize: '11px', color: theme.textMuted }}>BREAKDOWN</div>
+                      <div style={{ fontSize: '14px', color: theme.text, marginTop: '4px' }}>
+                        Regular: {regularHours.toFixed(1)}hrs
+                        {overtimeHours > 0 && <span style={{ color: '#ef4444' }}> · OT: {overtimeHours.toFixed(1)}hrs</span>}
                       </div>
                     </div>
                   </div>
+                </div>
 
+                {/* Commissions */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, marginBottom: '12px', textTransform: 'uppercase' }}>💰 Commissions ({empCommissions.length})</div>
                   {empCommissions.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}>
-                      <div style={{ fontSize: '48px', marginBottom: '12px' }}>📊</div>
-                      <div>No commissions earned this period</div>
-                    </div>
+                    <div style={{ padding: '16px', backgroundColor: theme.bg, borderRadius: '8px', textAlign: 'center', color: theme.textMuted, fontSize: '13px' }}>No commissions this period</div>
                   ) : (
-                    <div style={{ display: 'grid', gap: '12px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, textTransform: 'uppercase' }}>Commission Breakdown ({empCommissions.length})</div>
+                    <div style={{ display: 'grid', gap: '8px' }}>
                       {empCommissions.map(comm => (
-                        <div key={comm.id} style={{ padding: '14px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ color: theme.text, fontWeight: '500', fontSize: '14px' }}>Vehicle Sale Commission</div>
-                            <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '2px' }}>
-                              {formatDateFull(comm.created_at)}
-                              {comm.role_name && <span> · {comm.role_name}</span>}
-                            </div>
+                        <div key={comm.id} style={{ padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ color: theme.text, fontSize: '13px', fontWeight: '500' }}>Vehicle Sale</div>
+                            <div style={{ color: theme.textMuted, fontSize: '11px' }}>{formatDateFull(comm.created_at)}</div>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <div style={{ fontSize: '18px', fontWeight: '700', color: '#8b5cf6' }}>{formatCurrency(comm.amount)}</div>
-                            <button onClick={() => deleteCommission(comm.id)} style={{ padding: '6px 10px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>Delete</button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ fontSize: '16px', fontWeight: '700', color: '#8b5cf6' }}>{formatCurrency(comm.amount)}</div>
+                            <button onClick={() => deleteCommission(comm.id)} style={{ padding: '4px 8px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>✕</button>
                           </div>
                         </div>
                       ))}
+                      <div style={{ padding: '12px', backgroundColor: 'rgba(139,92,246,0.1)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '600', color: '#8b5cf6' }}>Total Commissions</span>
+                        <span style={{ fontSize: '18px', fontWeight: '700', color: '#8b5cf6' }}>{formatCurrency(payData.commissionAmount)}</span>
+                      </div>
                     </div>
                   )}
-                </>
-              );
-            })()}
+                </div>
 
-            <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowCommissionModal(false)} style={{ ...buttonStyle, backgroundColor: theme.accent }}>Close</button>
+                {/* Bonus & Reimbursement */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, marginBottom: '12px', textTransform: 'uppercase' }}>💵 Additional Pay</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: theme.textSecondary, marginBottom: '6px' }}>Bonus (taxable)</label>
+                      <input type="number" step="0.01" value={adjustments.bonus || ''} onChange={(e) => setPayAdjustments({...payAdjustments, [empId]: {...adjustments, bonus: e.target.value}})} placeholder="0.00" style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: theme.textSecondary, marginBottom: '6px' }}>Reimbursement (non-taxable)</label>
+                      <input type="number" step="0.01" value={adjustments.reimbursement || ''} onChange={(e) => setPayAdjustments({...payAdjustments, [empId]: {...adjustments, reimbursement: e.target.value}})} placeholder="0.00" style={inputStyle} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pay Breakdown */}
+                <div style={{ padding: '16px', backgroundColor: theme.bg, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, marginBottom: '12px' }}>PAY BREAKDOWN</div>
+                  <div style={{ display: 'grid', gap: '8px', fontSize: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.textSecondary }}>Base Pay ({effectiveHours.toFixed(1)}hrs)</span>
+                      <span style={{ color: theme.text, fontWeight: '600' }}>{formatCurrency(basePay)}</span>
+                    </div>
+                    {payData.commissionAmount > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: theme.textSecondary }}>Commissions</span>
+                        <span style={{ color: '#8b5cf6', fontWeight: '600' }}>{formatCurrency(payData.commissionAmount)}</span>
+                      </div>
+                    )}
+                    {bonusAmount > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: theme.textSecondary }}>Bonus</span>
+                        <span style={{ color: '#22c55e', fontWeight: '600' }}>{formatCurrency(bonusAmount)}</span>
+                      </div>
+                    )}
+                    <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '8px', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.text, fontWeight: '600' }}>Gross Pay</span>
+                      <span style={{ color: '#22c55e', fontWeight: '700', fontSize: '16px' }}>{formatCurrency(totalGross)}</span>
+                    </div>
+                    {reimbursementAmount > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '4px' }}>
+                        <span style={{ color: theme.textSecondary }}>Reimbursement</span>
+                        <span style={{ color: '#3b82f6', fontWeight: '600' }}>{formatCurrency(reimbursementAmount)}</span>
+                      </div>
+                    )}
+                    <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '8px', marginTop: '4px' }}>
+                      <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '6px' }}>DEDUCTIONS</div>
+                      <div style={{ display: 'grid', gap: '4px', fontSize: '13px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Federal Tax (12%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(federalTax)}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>State Tax (4.95%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(stateTax)}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Social Security (6.2%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(socialSecurity)}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: theme.textSecondary }}>Medicare (1.45%)</span><span style={{ color: '#ef4444' }}>-{formatCurrency(medicare)}</span></div>
+                      </div>
+                    </div>
+                    <div style={{ borderTop: `2px solid ${theme.border}`, paddingTop: '12px', marginTop: '8px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.text, fontWeight: '700', fontSize: '16px' }}>Net Pay</span>
+                      <span style={{ color: '#22c55e', fontWeight: '700', fontSize: '20px' }}>{formatCurrency(netPay)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding: '16px 24px', borderTop: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                <button onClick={() => {
+                  setPayAdjustments({...payAdjustments, [empId]: { bonus: 0, reimbursement: 0, hoursOverride: null }});
+                }} style={{ padding: '10px 16px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}>
+                  Reset
+                </button>
+                <button onClick={() => setShowCommissionModal(false)} style={{ ...buttonStyle, padding: '10px 24px' }}>
+                  Done
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
