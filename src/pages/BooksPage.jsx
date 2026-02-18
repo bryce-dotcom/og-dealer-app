@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { useTheme } from '../components/Layout';
+import { usePlaidLink } from 'react-plaid-link';
 
 export default function BooksPage() {
   const { dealerId, inventory, bhphLoans, deals, customers } = useStore();
@@ -20,6 +21,12 @@ export default function BooksPage() {
   const [showAddAsset, setShowAddAsset] = useState(false);
   const [showAddLiability, setShowAddLiability] = useState(false);
   const [showValuationDetails, setShowValuationDetails] = useState(false);
+
+  // Plaid state
+  const [linkToken, setLinkToken] = useState(null);
+  const [connecting, setConnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [toast, setToast] = useState(null);
 
   const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', expense_date: new Date().toISOString().split('T')[0], vendor: '', category_id: null });
   const [assetForm, setAssetForm] = useState({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' });
@@ -44,6 +51,104 @@ export default function BooksPage() {
     if (assetData.data) setAssets(assetData.data);
     if (liabData.data) setLiabilities(liabData.data);
     setLoading(false);
+  }
+
+  // Create Plaid link token
+  async function createLinkToken() {
+    try {
+      const { data, error } = await supabase.functions.invoke('plaid-link-token', {
+        body: { user_id: dealerId }
+      });
+
+      if (error) throw error;
+      if (data?.link_token) {
+        setLinkToken(data.link_token);
+      }
+    } catch (err) {
+      console.error('Failed to create link token:', err);
+      showToast('Failed to initialize Plaid connection', 'error');
+    }
+  }
+
+  // Handle successful Plaid connection
+  const onPlaidSuccess = useCallback(async (public_token, metadata) => {
+    setConnecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('plaid-sync', {
+        body: {
+          action: 'exchange_token',
+          public_token,
+          dealer_id: dealerId,
+          metadata
+        }
+      });
+
+      if (error) throw error;
+
+      showToast(`Connected ${data.accounts?.length || 0} account(s) successfully!`, 'success');
+      await fetchAll(); // Refresh accounts
+      setLinkToken(null); // Reset link token
+    } catch (err) {
+      console.error('Failed to connect account:', err);
+      showToast('Failed to connect account', 'error');
+    } finally {
+      setConnecting(false);
+    }
+  }, [dealerId]);
+
+  const { open, ready } = usePlaidLink({
+    token: linkToken,
+    onSuccess: onPlaidSuccess,
+  });
+
+  // Sync transactions for an account
+  async function syncAccount(accountId = null) {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('plaid-sync', {
+        body: {
+          action: 'sync_transactions',
+          dealer_id: dealerId,
+          account_id: accountId
+        }
+      });
+
+      if (error) throw error;
+      showToast(data.message || 'Sync complete', 'success');
+      await fetchAll(); // Refresh transactions
+    } catch (err) {
+      console.error('Sync failed:', err);
+      showToast('Failed to sync transactions', 'error');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // Disconnect account
+  async function disconnectAccount(accountId) {
+    if (!confirm('Are you sure you want to disconnect this account?')) return;
+
+    try {
+      const { error } = await supabase.functions.invoke('plaid-sync', {
+        body: {
+          action: 'disconnect',
+          dealer_id: dealerId,
+          account_id: accountId
+        }
+      });
+
+      if (error) throw error;
+      showToast('Account disconnected', 'success');
+      await fetchAll();
+    } catch (err) {
+      console.error('Failed to disconnect:', err);
+      showToast('Failed to disconnect account', 'error');
+    }
+  }
+
+  function showToast(message, type = 'info') {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
   }
 
   // CALCULATIONS
@@ -88,6 +193,7 @@ export default function BooksPage() {
 
   const formatCurrency = (a) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(a || 0);
   const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+  const formatDateTime = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '-';
   const getHealthColor = (s) => s >= 70 ? '#22c55e' : s >= 40 ? '#eab308' : '#ef4444';
 
   async function bookTransaction(txn, categoryId) { await supabase.from('bank_transactions').update({ status: 'booked', category_id: categoryId }).eq('id', txn.id); fetchAll(); }
@@ -98,15 +204,24 @@ export default function BooksPage() {
 
   const inboxTxns = transactions.filter(t => t.status === 'inbox');
   const bookedTxns = transactions.filter(t => t.status === 'booked');
+  const connectedAccounts = bankAccounts.filter(a => a.is_plaid_connected);
   const tabs = [
     { id: 'health', label: '💪 Business Health', color: '#22c55e' },
+    { id: 'accounts', label: '🏦 Accounts', count: connectedAccounts.length, color: '#3b82f6' },
     { id: 'inbox', label: '📥 Inbox', count: inboxTxns.length, color: '#f97316' },
     { id: 'expenses', label: '💸 Expenses', count: manualExpenses.length, color: '#8b5cf6' },
-    { id: 'booked', label: '📚 Booked', color: '#3b82f6' }
+    { id: 'booked', label: '📚 Booked', color: '#10b981' }
   ];
 
   return (
     <div style={{ padding: '24px', backgroundColor: theme.bg, minHeight: '100vh' }}>
+      {/* Toast Notification */}
+      {toast && (
+        <div style={{ position: 'fixed', top: '24px', right: '24px', zIndex: 100, backgroundColor: toast.type === 'error' ? '#ef4444' : toast.type === 'success' ? '#22c55e' : '#3b82f6', color: '#fff', padding: '16px 24px', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', fontWeight: '500' }}>
+          {toast.message}
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div><h1 style={{ fontSize: '28px', fontWeight: '700', color: theme.text, margin: 0 }}>Books</h1><p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>Your money, simplified</p></div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
@@ -119,7 +234,7 @@ export default function BooksPage() {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '8px' }}>
         {tabs.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: '12px 20px', backgroundColor: activeTab === tab.id ? tab.color : 'transparent', color: activeTab === tab.id ? '#fff' : theme.textSecondary, border: `1px solid ${activeTab === tab.id ? tab.color : theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {tab.label}{tab.count > 0 && <span style={{ backgroundColor: activeTab === tab.id ? 'rgba(255,255,255,0.2)' : tab.color, color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '12px' }}>{tab.count}</span>}
+            {tab.label}{tab.count !== undefined && tab.count > 0 && <span style={{ backgroundColor: activeTab === tab.id ? 'rgba(255,255,255,0.2)' : tab.color, color: '#fff', padding: '2px 8px', borderRadius: '10px', fontSize: '12px' }}>{tab.count}</span>}
           </button>
         ))}
       </div>
@@ -201,6 +316,73 @@ export default function BooksPage() {
             </div>
           )}
 
+          {activeTab === 'accounts' && (
+            <div>
+              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div><div style={{ color: '#3b82f6', fontWeight: '600' }}>🏦 Connected Accounts</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>Automatically sync bank and credit card transactions</div></div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => { createLinkToken(); setTimeout(() => ready && open(), 500); }} disabled={connecting} style={{ padding: '10px 20px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: connecting ? 'not-allowed' : 'pointer', opacity: connecting ? 0.6 : 1 }}>
+                    {connecting ? 'Connecting...' : '+ Connect Bank/Card'}
+                  </button>
+                  {connectedAccounts.length > 0 && (
+                    <button onClick={() => syncAccount()} disabled={syncing} style={{ padding: '10px 20px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing ? 0.6 : 1 }}>
+                      {syncing ? 'Syncing...' : '🔄 Sync All'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {connectedAccounts.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '80px 20px', backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontSize: '64px', marginBottom: '16px' }}>🏦</div>
+                  <div style={{ color: theme.text, fontSize: '20px', fontWeight: '600', marginBottom: '8px' }}>No accounts connected</div>
+                  <div style={{ color: theme.textMuted, marginBottom: '24px' }}>Connect your bank accounts and credit cards to automatically track transactions</div>
+                  <button onClick={() => { createLinkToken(); setTimeout(() => ready && open(), 500); }} style={{ padding: '12px 24px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '15px' }}>
+                    Connect Your First Account
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '16px' }}>
+                  {connectedAccounts.map(account => (
+                    <div key={account.id} style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, padding: '20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '16px' }}>
+                        <div style={{ width: '56px', height: '56px', borderRadius: '12px', backgroundColor: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', flexShrink: 0 }}>
+                          {account.account_type === 'credit_card' ? '💳' : '🏦'}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ color: theme.text, fontWeight: '600', marginBottom: '4px' }}>{account.institution_name || 'Bank Account'}</div>
+                          <div style={{ color: theme.textMuted, fontSize: '13px', marginBottom: '2px' }}>
+                            {account.account_name} {account.account_mask && `••${account.account_mask}`}
+                          </div>
+                          <div style={{ color: theme.textSecondary, fontSize: '12px', display: 'inline-block', padding: '2px 8px', backgroundColor: theme.bg, borderRadius: '4px' }}>
+                            {account.account_type?.replace('_', ' ').toUpperCase()}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '12px', backgroundColor: theme.bg, borderRadius: '8px' }}>
+                        <div style={{ color: theme.textMuted, fontSize: '13px' }}>Balance</div>
+                        <div style={{ color: account.account_type === 'credit_card' ? (account.current_balance > 0 ? '#ef4444' : theme.text) : '#22c55e', fontSize: '20px', fontWeight: '700' }}>
+                          {formatCurrency(account.current_balance)}
+                        </div>
+                      </div>
+                      <div style={{ color: theme.textMuted, fontSize: '12px', marginBottom: '12px' }}>
+                        Last synced: {formatDateTime(account.last_synced_at)}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => syncAccount(account.id)} disabled={syncing} style={{ flex: 1, padding: '8px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '500', cursor: syncing ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: syncing ? 0.6 : 1 }}>
+                          Sync Now
+                        </button>
+                        <button onClick={() => disconnectAccount(account.id)} style={{ padding: '8px 16px', backgroundColor: 'transparent', color: '#ef4444', border: `1px solid ${theme.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                          Disconnect
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'inbox' && (
             <div>
               <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(249, 115, 22, 0.1)', borderRadius: '12px', border: '1px solid rgba(249, 115, 22, 0.3)' }}><div style={{ color: theme.accent, fontWeight: '600' }}>📥 Transactions to Review</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>Pick a category, then "Book It"</div></div>
@@ -220,7 +402,7 @@ export default function BooksPage() {
 
           {activeTab === 'booked' && (
             <div>
-              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.3)' }}><div style={{ color: '#3b82f6', fontWeight: '600' }}>📚 Booked Transactions</div></div>
+              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)' }}><div style={{ color: '#10b981', fontWeight: '600' }}>📚 Booked Transactions</div></div>
               {bookedTxns.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>Nothing booked yet</div> : (
                 <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
