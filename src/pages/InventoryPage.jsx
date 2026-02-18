@@ -29,6 +29,9 @@ export default function InventoryPage() {
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [fleetUnlocked, setFleetUnlocked] = useState(() => sessionStorage.getItem('fleet_unlocked') === 'true');
+  const [showFleetPassword, setShowFleetPassword] = useState(false);
+  const [fleetPassword, setFleetPassword] = useState('');
   const [valueLoading, setValueLoading] = useState(false);
   const [valueData, setValueData] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -60,7 +63,7 @@ export default function InventoryPage() {
     status: 'In Stock', stock_number: '', description: ''
   });
 
-  const statuses = ['All', 'In Stock', 'For Sale', 'Sold', 'BHPH'];
+  const statuses = ['All', 'In Stock', 'For Sale', 'Sold', 'BHPH', 'Fleet'];
   const expenseCategories = ['Repair', 'Parts', 'Detail', 'Transport', 'Inspection', 'Fuel', 'Other'];
 
   // Load commission roles on mount
@@ -312,10 +315,40 @@ export default function InventoryPage() {
   const grossProfit = (parseFloat(selectedVehicle?.sale_price || 0)) - totalCost;
   const netProfit = grossProfit - totalCommissions;
 
+  // Fleet password handling
+  const FLEET_PASSWORD = 'fleet2026'; // Change this to your desired password
+
+  const handleStatusClick = (status) => {
+    if (status === 'Fleet' && !fleetUnlocked) {
+      setShowFleetPassword(true);
+    } else {
+      setStatusFilter(status);
+    }
+  };
+
+  const handleFleetPasswordSubmit = () => {
+    if (fleetPassword === FLEET_PASSWORD) {
+      setFleetUnlocked(true);
+      sessionStorage.setItem('fleet_unlocked', 'true');
+      setStatusFilter('Fleet');
+      setShowFleetPassword(false);
+      setFleetPassword('');
+    } else {
+      alert('Incorrect password');
+      setFleetPassword('');
+    }
+  };
+
   const filteredInventory = inventory.filter(v => {
-    const matchesSearch = searchTerm === '' || 
+    const matchesSearch = searchTerm === '' ||
       `${v.year} ${v.make} ${v.model} ${v.vin || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'All' || v.status === statusFilter;
+
+    // Hide Fleet vehicles unless unlocked
+    if (v.status === 'Fleet' && !fleetUnlocked && statusFilter !== 'Fleet') {
+      return false;
+    }
+
     return matchesSearch && matchesStatus;
   });
 
@@ -325,6 +358,7 @@ export default function InventoryPage() {
     inStock: inventory.filter(v => v.status === 'In Stock').length,
     sold: inventory.filter(v => v.status === 'Sold').length,
     bhph: inventory.filter(v => v.status === 'BHPH').length,
+    fleet: inventory.filter(v => v.status === 'Fleet').length,
     totalValue: inventory.reduce((sum, v) => sum + (parseFloat(v.sale_price) || 0), 0)
   };
 
@@ -650,6 +684,7 @@ export default function InventoryPage() {
             { label: 'In Stock', value: stats.inStock, color: '#60a5fa' },
             { label: 'Sold', value: stats.sold, color: '#a78bfa' },
             { label: 'BHPH', value: stats.bhph, color: '#fbbf24' },
+            ...(fleetUnlocked && stats.fleet > 0 ? [{ label: 'Fleet 🔓', value: stats.fleet, color: '#ec4899' }] : []),
             { label: 'Total Value', value: formatCurrency(stats.totalValue), color: theme.accent }
           ].map((stat, i) => (
             <div key={i} style={{ ...cardStyle, textAlign: 'center', padding: '14px' }}>
@@ -665,7 +700,9 @@ export default function InventoryPage() {
             <input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ ...inputStyle, maxWidth: '250px' }} />
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {statuses.map(s => (
-                <button key={s} onClick={() => setStatusFilter(s)} style={btnStyle(statusFilter === s)}>{s}</button>
+                <button key={s} onClick={() => handleStatusClick(s)} style={btnStyle(statusFilter === s)}>
+                  {s}{s === 'Fleet' && !fleetUnlocked && ' 🔒'}
+                </button>
               ))}
             </div>
           </div>
@@ -980,7 +1017,7 @@ export default function InventoryPage() {
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Miles</label><input type="number" value={formData.miles} onChange={e => setFormData({...formData, miles: e.target.value})} style={inputStyle} placeholder="60000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Color</label><input type="text" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} style={inputStyle} placeholder="Silver" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Stock #</label><input type="text" value={formData.stock_number} onChange={e => setFormData({...formData, stock_number: e.target.value})} style={inputStyle} placeholder="STK001" /></div>
-                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Status</label><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}><option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option></select></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Status</label><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}><option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option></select></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Purchase Price</label><input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Sale Price</label><input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" /></div>
                 <div style={{ gridColumn: 'span 2' }}><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Purchased From</label><input type="text" value={formData.purchased_from} onChange={e => setFormData({...formData, purchased_from: e.target.value})} style={inputStyle} placeholder="Auction, Trade-in" /></div>
@@ -1011,6 +1048,77 @@ export default function InventoryPage() {
               <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                 <button onClick={() => setShowAddModal(false)} style={{ ...btnStyle(), flex: 1 }}>Cancel</button>
                 <button onClick={saveVehicle} disabled={saving} style={{ ...btnStyle(true), flex: 1, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving...' : (selectedVehicle ? 'Update' : 'Add Vehicle')}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Fleet Password Modal */}
+        {showFleetPassword && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+            <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '32px', maxWidth: '400px', width: '90%', border: `1px solid ${theme.border}` }}>
+              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>🔒</div>
+                <h2 style={{ fontSize: '24px', fontWeight: '700', margin: '0 0 8px' }}>Fleet Access</h2>
+                <p style={{ color: theme.textMuted, fontSize: '14px', margin: 0 }}>Enter password to view Fleet vehicles</p>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <input
+                  type="password"
+                  value={fleetPassword}
+                  onChange={e => setFleetPassword(e.target.value)}
+                  onKeyPress={e => e.key === 'Enter' && handleFleetPasswordSubmit()}
+                  placeholder="Enter password"
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    backgroundColor: theme.bg,
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: '8px',
+                    color: theme.text,
+                    fontSize: '15px',
+                    textAlign: 'center',
+                    letterSpacing: '2px'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={() => {
+                    setShowFleetPassword(false);
+                    setFleetPassword('');
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: theme.bg,
+                    color: theme.textSecondary,
+                    border: `1px solid ${theme.border}`,
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleFleetPasswordSubmit}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: theme.accent,
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  Unlock
+                </button>
               </div>
             </div>
           </div>
