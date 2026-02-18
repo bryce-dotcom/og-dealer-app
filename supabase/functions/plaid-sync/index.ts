@@ -277,7 +277,8 @@ async function syncTransactions(
   });
 
   if (!txResponse.ok) {
-    console.error(`[PLAID] Failed to fetch transactions: ${txResponse.statusText}`);
+    const errorData = await txResponse.json();
+    console.error(`[PLAID] Failed to fetch transactions:`, errorData);
     return 0;
   }
 
@@ -285,6 +286,8 @@ async function syncTransactions(
   const transactions = txData.transactions || [];
 
   console.log(`[PLAID] Found ${transactions.length} transactions from Plaid`);
+  console.log(`[PLAID] Date range: ${startDate.toISOString().split("T")[0]} to ${endDate.toISOString().split("T")[0]}`);
+  console.log(`[PLAID] Accounts to match:`, accounts.map(a => ({ id: a.id, plaid_account_id: a.plaid_account_id })));
 
   for (const tx of transactions) {
     // Find the matching bank account

@@ -28,6 +28,10 @@ export default function BooksPage() {
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // Date filter state
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
+
   const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', expense_date: new Date().toISOString().split('T')[0], vendor: '', category_id: null });
   const [assetForm, setAssetForm] = useState({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' });
   const [liabilityForm, setLiabilityForm] = useState({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' });
@@ -38,7 +42,7 @@ export default function BooksPage() {
     setLoading(true);
     const [cats, banks, txns, expenses, assetData, liabData] = await Promise.all([
       supabase.from('expense_categories').select('*').or(`dealer_id.eq.${dealerId},dealer_id.is.null`).order('sort_order'),
-      supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId),
+      supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId).eq('is_plaid_connected', true),
       supabase.from('bank_transactions').select('*').eq('dealer_id', dealerId).order('transaction_date', { ascending: false }),
       supabase.from('manual_expenses').select('*').eq('dealer_id', dealerId).order('expense_date', { ascending: false }),
       supabase.from('assets').select('*').eq('dealer_id', dealerId).eq('status', 'active'),
@@ -112,10 +116,16 @@ export default function BooksPage() {
     }
   }, [dealerId]);
 
-  const { open, ready } = usePlaidLink({
+  const config = {
     token: linkToken,
     onSuccess: onPlaidSuccess,
-  });
+  };
+
+  console.log('[PLAID] usePlaidLink config:', { token: linkToken, hasToken: !!linkToken });
+
+  const { open, ready } = usePlaidLink(config);
+
+  console.log('[PLAID] usePlaidLink result:', { ready, hasOpen: !!open, openType: typeof open });
 
   // Track if we should auto-open when ready
   const shouldOpenRef = useRef(false);
@@ -238,8 +248,26 @@ export default function BooksPage() {
   async function addAsset() { if (!assetForm.name || !assetForm.current_value) return; await supabase.from('assets').insert({ ...assetForm, purchase_price: parseFloat(assetForm.purchase_price) || 0, current_value: parseFloat(assetForm.current_value), dealer_id: dealerId, status: 'active' }); setShowAddAsset(false); setAssetForm({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' }); fetchAll(); }
   async function addLiability() { if (!liabilityForm.name || !liabilityForm.current_balance) return; await supabase.from('liabilities').insert({ ...liabilityForm, current_balance: parseFloat(liabilityForm.current_balance), monthly_payment: parseFloat(liabilityForm.monthly_payment) || 0, dealer_id: dealerId, status: 'active' }); setShowAddLiability(false); setLiabilityForm({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' }); fetchAll(); }
 
-  const inboxTxns = transactions.filter(t => t.status === 'inbox');
-  const bookedTxns = transactions.filter(t => t.status === 'booked');
+  // Filter transactions by date
+  const filterByDate = (txn) => {
+    if (!filterStartDate && !filterEndDate) return true;
+    const txnDate = new Date(txn.transaction_date || txn.expense_date);
+    const start = filterStartDate ? new Date(filterStartDate) : null;
+    const end = filterEndDate ? new Date(filterEndDate) : null;
+
+    if (start && end) {
+      return txnDate >= start && txnDate <= end;
+    } else if (start) {
+      return txnDate >= start;
+    } else if (end) {
+      return txnDate <= end;
+    }
+    return true;
+  };
+
+  const inboxTxns = transactions.filter(t => t.status === 'inbox').filter(filterByDate);
+  const bookedTxns = transactions.filter(t => t.status === 'booked').filter(filterByDate);
+  const filteredExpenses = manualExpenses.filter(filterByDate);
   const connectedAccounts = bankAccounts.filter(a => a.is_plaid_connected);
   const tabs = [
     { id: 'health', label: '💪 Business Health', color: '#22c55e' },
@@ -260,7 +288,16 @@ export default function BooksPage() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div><h1 style={{ fontSize: '28px', fontWeight: '700', color: theme.text, margin: 0 }}>Books</h1><p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>Your money, simplified</p></div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '8px 12px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '8px' }}>
+            <label style={{ color: theme.textMuted, fontSize: '13px', whiteSpace: 'nowrap' }}>From:</label>
+            <input type="date" value={filterStartDate} onChange={(e) => setFilterStartDate(e.target.value)} style={{ padding: '6px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.text, fontSize: '13px' }} />
+            <label style={{ color: theme.textMuted, fontSize: '13px', whiteSpace: 'nowrap' }}>To:</label>
+            <input type="date" value={filterEndDate} onChange={(e) => setFilterEndDate(e.target.value)} style={{ padding: '6px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.text, fontSize: '13px' }} />
+            {(filterStartDate || filterEndDate) && (
+              <button onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }} style={{ padding: '4px 8px', backgroundColor: 'transparent', color: theme.textMuted, border: 'none', cursor: 'pointer', fontSize: '12px' }}>Clear</button>
+            )}
+          </div>
           <button onClick={() => setShowAddExpense(true)} style={{ padding: '10px 20px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>+ Expense</button>
           <button onClick={() => setShowAddAsset(true)} style={{ padding: '10px 20px', backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>+ I Own</button>
           <button onClick={() => setShowAddLiability(true)} style={{ padding: '10px 20px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>+ I Owe</button>
@@ -421,15 +458,15 @@ export default function BooksPage() {
 
           {activeTab === 'inbox' && (
             <div>
-              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(249, 115, 22, 0.1)', borderRadius: '12px', border: '1px solid rgba(249, 115, 22, 0.3)' }}><div style={{ color: theme.accent, fontWeight: '600' }}>📥 Transactions to Review</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>Pick a category, then "Book It"</div></div>
+              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(249, 115, 22, 0.1)', borderRadius: '12px', border: '1px solid rgba(249, 115, 22, 0.3)' }}><div style={{ color: theme.accent, fontWeight: '600' }}>📥 Transactions to Review</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>{filterStartDate || filterEndDate ? `Showing ${inboxTxns.length} filtered transactions` : 'Pick a category, then "Book It"'}</div></div>
               {inboxTxns.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}><div style={{ fontSize: '48px', marginBottom: '16px' }}>✨</div><div>All caught up!</div></div> : inboxTxns.map(txn => <TxnCard key={txn.id} txn={txn} categories={categories} theme={theme} f={formatCurrency} fd={formatDate} onBook={bookTransaction} onIgnore={ignoreTransaction} />)}
             </div>
           )}
 
           {activeTab === 'expenses' && (
             <div>
-              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '12px', border: '1px solid rgba(139, 92, 246, 0.3)' }}><div style={{ color: '#8b5cf6', fontWeight: '600' }}>💸 Your Expenses</div></div>
-              {manualExpenses.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>No expenses yet</div> : manualExpenses.map(exp => {
+              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '12px', border: '1px solid rgba(139, 92, 246, 0.3)' }}><div style={{ color: '#8b5cf6', fontWeight: '600' }}>💸 Your Expenses</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>{filterStartDate || filterEndDate ? `Filtered: ${filteredExpenses.length} of ${manualExpenses.length}` : `Total: ${manualExpenses.length}`}</div></div>
+              {filteredExpenses.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>{filterStartDate || filterEndDate ? 'No expenses in this date range' : 'No expenses yet'}</div> : filteredExpenses.map(exp => {
                 const cat = categories.find(c => c.id === exp.category_id);
                 return (<div key={exp.id} style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}><div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}><div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>{cat?.icon || '📄'}</div><div><div style={{ color: theme.text, fontWeight: '600' }}>{exp.description}</div><div style={{ color: theme.textMuted, fontSize: '13px' }}>{exp.vendor} • {formatDate(exp.expense_date)}</div></div></div><div style={{ color: '#ef4444', fontWeight: '700', fontSize: '18px' }}>{formatCurrency(exp.amount)}</div></div>);
               })}
@@ -438,7 +475,7 @@ export default function BooksPage() {
 
           {activeTab === 'booked' && (
             <div>
-              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)' }}><div style={{ color: '#10b981', fontWeight: '600' }}>📚 Booked Transactions</div></div>
+              <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)' }}><div style={{ color: '#10b981', fontWeight: '600' }}>📚 Booked Transactions</div><div style={{ color: theme.textSecondary, fontSize: '14px' }}>{filterStartDate || filterEndDate ? `Showing ${bookedTxns.length} filtered transactions` : `Total: ${bookedTxns.length}`}</div></div>
               {bookedTxns.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>Nothing booked yet</div> : (
                 <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
