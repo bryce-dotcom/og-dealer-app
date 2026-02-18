@@ -53,7 +53,8 @@
       "Bash(gh api:*)",
       "Bash(find:*)",
       "WebSearch",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(supabase db push:*)"
     ]
   }
 }

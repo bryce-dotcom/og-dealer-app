@@ -4,13 +4,13 @@
 -- Email templates for reusable designs
 CREATE TABLE IF NOT EXISTS email_templates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  dealer_id UUID NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
+  dealer_id BIGINT REFERENCES dealer_settings(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   subject_line TEXT,
   body_html TEXT,
   body_text TEXT,
   thumbnail_url TEXT,
-  category TEXT DEFAULT 'general', -- general, promotion, reminder, follow_up, newsletter
+  category TEXT DEFAULT 'general',
   is_default BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS email_templates (
 -- Customer segments for targeted campaigns
 CREATE TABLE IF NOT EXISTS customer_segments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  dealer_id UUID NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
+  dealer_id BIGINT NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   criteria JSONB DEFAULT '{}'::jsonb, -- Store segment rules: {deal_type: 'BHPH', has_active_loan: true, etc}
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS customer_segments (
 -- Email campaigns
 CREATE TABLE IF NOT EXISTS email_campaigns (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  dealer_id UUID NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
+  dealer_id BIGINT NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   subject_line TEXT NOT NULL,
   preview_text TEXT, -- Shows in inbox preview
@@ -62,9 +62,9 @@ CREATE TABLE IF NOT EXISTS email_campaigns (
 -- Individual email logs for tracking
 CREATE TABLE IF NOT EXISTS email_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  dealer_id UUID NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
+  dealer_id BIGINT NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   campaign_id UUID REFERENCES email_campaigns(id) ON DELETE CASCADE,
-  customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+  customer_id BIGINT REFERENCES customers(id) ON DELETE CASCADE,
   to_email TEXT NOT NULL,
   to_name TEXT,
   subject_line TEXT,
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS email_clicks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email_log_id UUID NOT NULL REFERENCES email_logs(id) ON DELETE CASCADE,
   campaign_id UUID REFERENCES email_campaigns(id) ON DELETE CASCADE,
-  customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+  customer_id BIGINT REFERENCES customers(id) ON DELETE CASCADE,
   url TEXT NOT NULL,
   clicked_at TIMESTAMPTZ DEFAULT now()
 );
@@ -96,8 +96,8 @@ CREATE TABLE IF NOT EXISTS email_clicks (
 -- Customer communication preferences
 CREATE TABLE IF NOT EXISTS customer_preferences (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  dealer_id UUID NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
+  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  dealer_id BIGINT NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   email_enabled BOOLEAN DEFAULT true,
   sms_enabled BOOLEAN DEFAULT true,
   unsubscribed_at TIMESTAMPTZ,
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS customer_preferences (
 -- Automation rules for triggered emails
 CREATE TABLE IF NOT EXISTS email_automations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  dealer_id UUID NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
+  dealer_id BIGINT NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
   trigger_type TEXT NOT NULL CHECK (trigger_type IN ('bhph_payment_due', 'bhph_payment_overdue', 'new_inventory', 'vehicle_match', 'follow_up', 'birthday', 'custom')),
@@ -156,10 +156,10 @@ ALTER TABLE email_clicks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE customer_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_automations ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies (dealer can access their own data)
+-- RLS Policies (allow viewing system templates with NULL dealer_id)
 CREATE POLICY "Dealers can manage their email templates"
   ON email_templates FOR ALL
-  USING (dealer_id IN (SELECT id FROM dealer_settings))
+  USING (dealer_id IS NULL OR dealer_id IN (SELECT id FROM dealer_settings))
   WITH CHECK (dealer_id IN (SELECT id FROM dealer_settings));
 
 CREATE POLICY "Dealers can manage their customer segments"
