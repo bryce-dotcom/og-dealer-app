@@ -22,6 +22,9 @@ export default function EmailMarketingPage() {
   const [showAIGenerator, setShowAIGenerator] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [aiGenerating, setAiGenerating] = useState(false);
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
+  const [showCreateSegment, setShowCreateSegment] = useState(false);
+  const [showCreateAutomation, setShowCreateAutomation] = useState(false);
 
   // Campaign form
   const [campaignForm, setCampaignForm] = useState({
@@ -32,6 +35,30 @@ export default function EmailMarketingPage() {
     from_name: dealer?.dealer_name || '',
     from_email: dealer?.email || '',
     segment_id: null
+  });
+
+  // Template form
+  const [templateForm, setTemplateForm] = useState({
+    name: '',
+    subject_line: '',
+    body_html: '',
+    category: 'general'
+  });
+
+  // Segment form
+  const [segmentForm, setSegmentForm] = useState({
+    name: '',
+    description: '',
+    criteria: {}
+  });
+
+  // Automation form
+  const [automationForm, setAutomationForm] = useState({
+    name: '',
+    description: '',
+    trigger_type: 'bhph_payment_due',
+    subject_line: '',
+    body_html: ''
   });
 
   // AI Generator form
@@ -153,6 +180,73 @@ export default function EmailMarketingPage() {
       from_email: dealer?.email || '',
       segment_id: null
     });
+  }
+
+  async function createTemplate() {
+    if (!templateForm.name || !templateForm.body_html) {
+      alert('Please fill in template name and content.');
+      return;
+    }
+
+    const { error } = await supabase.from('email_templates').insert({
+      ...templateForm,
+      dealer_id: dealerId
+    });
+
+    if (error) {
+      console.error('Error creating template:', error);
+      alert('Failed to create template.');
+      return;
+    }
+
+    setShowCreateTemplate(false);
+    setTemplateForm({ name: '', subject_line: '', body_html: '', category: 'general' });
+    fetchAllData();
+  }
+
+  async function createSegment() {
+    if (!segmentForm.name) {
+      alert('Please fill in segment name.');
+      return;
+    }
+
+    const { error } = await supabase.from('customer_segments').insert({
+      ...segmentForm,
+      dealer_id: dealerId
+    });
+
+    if (error) {
+      console.error('Error creating segment:', error);
+      alert('Failed to create segment.');
+      return;
+    }
+
+    setShowCreateSegment(false);
+    setSegmentForm({ name: '', description: '', criteria: {} });
+    fetchAllData();
+  }
+
+  async function createAutomation() {
+    if (!automationForm.name || !automationForm.body_html) {
+      alert('Please fill in automation name and content.');
+      return;
+    }
+
+    const { error } = await supabase.from('email_automations').insert({
+      ...automationForm,
+      dealer_id: dealerId,
+      is_active: true
+    });
+
+    if (error) {
+      console.error('Error creating automation:', error);
+      alert('Failed to create automation.');
+      return;
+    }
+
+    setShowCreateAutomation(false);
+    setAutomationForm({ name: '', description: '', trigger_type: 'bhph_payment_due', subject_line: '', body_html: '' });
+    fetchAllData();
   }
 
   const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
@@ -314,34 +408,49 @@ export default function EmailMarketingPage() {
 
           {/* Templates Tab */}
           {activeTab === 'templates' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-              {templates.map(template => (
-                <div key={template.id} style={{ backgroundColor: theme.bgCard, borderRadius: '12px', padding: '20px', border: `1px solid ${theme.border}`, cursor: 'pointer' }}>
-                  <div style={{ fontSize: '16px', fontWeight: '600', color: theme.text, marginBottom: '8px' }}>{template.name}</div>
-                  <div style={{ fontSize: '13px', color: theme.textMuted, marginBottom: '12px' }}>{template.subject_line}</div>
-                  <div style={{ padding: '8px 12px', backgroundColor: theme.bg, borderRadius: '6px', fontSize: '12px', color: theme.textSecondary, marginBottom: '12px' }}>
-                    Category: {template.category}
+            <div>
+              <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button onClick={() => setShowCreateTemplate(true)} style={buttonStyle}>
+                  + New Template
+                </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                {templates.map(template => (
+                  <div key={template.id} style={{ backgroundColor: theme.bgCard, borderRadius: '12px', padding: '20px', border: `1px solid ${theme.border}`, cursor: 'pointer' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '600', color: theme.text, marginBottom: '8px' }}>{template.name}</div>
+                    <div style={{ fontSize: '13px', color: theme.textMuted, marginBottom: '12px' }}>{template.subject_line}</div>
+                    <div style={{ padding: '8px 12px', backgroundColor: theme.bg, borderRadius: '6px', fontSize: '12px', color: theme.textSecondary, marginBottom: '12px' }}>
+                      Category: {template.category}
+                    </div>
+                    {template.is_default && (
+                      <span style={{ fontSize: '11px', backgroundColor: '#22c55e20', color: '#22c55e', padding: '4px 8px', borderRadius: '6px', fontWeight: '600' }}>
+                        DEFAULT
+                      </span>
+                    )}
                   </div>
-                  {template.is_default && (
-                    <span style={{ fontSize: '11px', backgroundColor: '#22c55e20', color: '#22c55e', padding: '4px 8px', borderRadius: '6px', fontWeight: '600' }}>
-                      DEFAULT
-                    </span>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 
           {/* Segments Tab */}
           {activeTab === 'segments' && (
             <div>
+              <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button onClick={() => setShowCreateSegment(true)} style={buttonStyle}>
+                  + New Audience
+                </button>
+              </div>
               {segments.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '60px', backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}` }}>
                   <div style={{ fontSize: '48px', marginBottom: '16px' }}>👥</div>
                   <h3 style={{ fontSize: '20px', fontWeight: '600', color: theme.text, margin: '0 0 8px' }}>No audience segments</h3>
-                  <p style={{ color: theme.textMuted, fontSize: '14px', margin: 0 }}>
+                  <p style={{ color: theme.textMuted, fontSize: '14px', margin: '0 0 24px' }}>
                     Create customer segments for targeted campaigns
                   </p>
+                  <button onClick={() => setShowCreateSegment(true)} style={buttonStyle}>
+                    Create First Audience
+                  </button>
                 </div>
               ) : (
                 <div style={{ display: 'grid', gap: '16px' }}>
@@ -366,13 +475,21 @@ export default function EmailMarketingPage() {
           {/* Automations Tab */}
           {activeTab === 'automations' && (
             <div>
+              <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button onClick={() => setShowCreateAutomation(true)} style={buttonStyle}>
+                  + New Automation
+                </button>
+              </div>
               {automations.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '60px', backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}` }}>
                   <div style={{ fontSize: '48px', marginBottom: '16px' }}>🤖</div>
                   <h3 style={{ fontSize: '20px', fontWeight: '600', color: theme.text, margin: '0 0 8px' }}>No automations</h3>
-                  <p style={{ color: theme.textMuted, fontSize: '14px', margin: 0 }}>
+                  <p style={{ color: theme.textMuted, fontSize: '14px', margin: '0 0 24px' }}>
                     Set up automated emails for payment reminders, new inventory alerts, and more
                   </p>
+                  <button onClick={() => setShowCreateAutomation(true)} style={buttonStyle}>
+                    Create First Automation
+                  </button>
                 </div>
               ) : (
                 <div style={{ display: 'grid', gap: '16px' }}>
@@ -476,6 +593,111 @@ export default function EmailMarketingPage() {
               >
                 {aiGenerating ? 'Generating...' : '✨ Generate Email'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Template Modal */}
+      {showCreateTemplate && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }} onClick={() => setShowCreateTemplate(false)}>
+          <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '32px', width: '100%', maxWidth: '600px', border: `1px solid ${theme.border}` }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ color: theme.text, margin: '0 0 24px', fontSize: '24px' }}>Create Email Template</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Template Name *</label>
+                <input type="text" value={templateForm.name} onChange={(e) => setTemplateForm(prev => ({ ...prev, name: e.target.value }))} placeholder="e.g., Monthly Newsletter" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Category</label>
+                <select value={templateForm.category} onChange={(e) => setTemplateForm(prev => ({ ...prev, category: e.target.value }))} style={inputStyle}>
+                  <option value="general">General</option>
+                  <option value="reminder">Reminder</option>
+                  <option value="promotion">Promotion</option>
+                  <option value="follow_up">Follow Up</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Subject Line</label>
+                <input type="text" value={templateForm.subject_line} onChange={(e) => setTemplateForm(prev => ({ ...prev, subject_line: e.target.value }))} placeholder="e.g., {{dealer_name}} Monthly Update" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Email Content *</label>
+                <textarea value={templateForm.body_html} onChange={(e) => setTemplateForm(prev => ({ ...prev, body_html: e.target.value }))} placeholder="Use {{customer_name}}, {{dealer_name}}, etc. for personalization" style={{ ...inputStyle, minHeight: '150px', resize: 'vertical', fontFamily: 'monospace' }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button onClick={() => setShowCreateTemplate(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={createTemplate} style={{ flex: 1, padding: '12px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Create Template</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Segment Modal */}
+      {showCreateSegment && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }} onClick={() => setShowCreateSegment(false)}>
+          <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '32px', width: '100%', maxWidth: '600px', border: `1px solid ${theme.border}` }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ color: theme.text, margin: '0 0 24px', fontSize: '24px' }}>Create Audience Segment</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Segment Name *</label>
+                <input type="text" value={segmentForm.name} onChange={(e) => setSegmentForm(prev => ({ ...prev, name: e.target.value }))} placeholder="e.g., BHPH Customers" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Description</label>
+                <textarea value={segmentForm.description} onChange={(e) => setSegmentForm(prev => ({ ...prev, description: e.target.value }))} placeholder="Describe this audience segment..." style={{ ...inputStyle, minHeight: '80px', resize: 'vertical' }} />
+              </div>
+              <div style={{ padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                <p style={{ fontSize: '13px', color: theme.textMuted, margin: 0 }}>💡 Advanced filtering criteria will be available soon. For now, this creates a manual segment.</p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button onClick={() => setShowCreateSegment(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={createSegment} style={{ flex: 1, padding: '12px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Create Segment</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Automation Modal */}
+      {showCreateAutomation && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px', overflowY: 'auto' }} onClick={() => setShowCreateAutomation(false)}>
+          <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '32px', width: '100%', maxWidth: '600px', border: `1px solid ${theme.border}`, margin: '20px 0' }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ color: theme.text, margin: '0 0 24px', fontSize: '24px' }}>Create Email Automation</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Automation Name *</label>
+                <input type="text" value={automationForm.name} onChange={(e) => setAutomationForm(prev => ({ ...prev, name: e.target.value }))} placeholder="e.g., 3-Day Payment Reminder" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Trigger Type</label>
+                <select value={automationForm.trigger_type} onChange={(e) => setAutomationForm(prev => ({ ...prev, trigger_type: e.target.value }))} style={inputStyle}>
+                  <option value="bhph_payment_due">BHPH Payment Due</option>
+                  <option value="bhph_payment_overdue">BHPH Payment Overdue</option>
+                  <option value="new_inventory">New Inventory</option>
+                  <option value="vehicle_match">Vehicle Match</option>
+                  <option value="follow_up">Follow Up</option>
+                  <option value="birthday">Birthday</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Description</label>
+                <textarea value={automationForm.description} onChange={(e) => setAutomationForm(prev => ({ ...prev, description: e.target.value }))} placeholder="What does this automation do?" style={{ ...inputStyle, minHeight: '60px', resize: 'vertical' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Subject Line *</label>
+                <input type="text" value={automationForm.subject_line} onChange={(e) => setAutomationForm(prev => ({ ...prev, subject_line: e.target.value }))} placeholder="e.g., Payment Reminder: {{amount}} Due Soon" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>Email Content *</label>
+                <textarea value={automationForm.body_html} onChange={(e) => setAutomationForm(prev => ({ ...prev, body_html: e.target.value }))} placeholder="Use {{customer_name}}, {{amount}}, {{due_date}}, etc." style={{ ...inputStyle, minHeight: '150px', resize: 'vertical', fontFamily: 'monospace' }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button onClick={() => setShowCreateAutomation(false)} style={{ flex: 1, padding: '12px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={createAutomation} style={{ flex: 1, padding: '12px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Create Automation</button>
             </div>
           </div>
         </div>
