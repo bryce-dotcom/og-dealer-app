@@ -28,7 +28,8 @@ export default function TeamPage() {
   const [showPTOModal, setShowPTOModal] = useState(false);
   const [ptoForm, setPtoForm] = useState({ start_date: '', end_date: '', request_type: 'pto', reason: '' });
   const [submittingPTO, setSubmittingPTO] = useState(false);
-  
+  const [inviting, setInviting] = useState(false);
+
   const [newEmployee, setNewEmployee] = useState({ name: '', email: '', phone: '', roles: [], pay_type: ['hourly'], hourly_rate: 0, salary: 0, pto_days_per_year: 10, active: true });
 
   const isAdmin = !currentUserId;
@@ -159,6 +160,29 @@ export default function TeamPage() {
     setSubmittingPTO(false);
   }
 
+  async function inviteEmployee(emp) {
+    if (!emp.email) { alert('Employee needs an email address.'); return; }
+    if (!confirm(`Send app invite to ${emp.email}?`)) return;
+    setInviting(true);
+    try {
+      await supabase.functions.invoke('invite-employee', {
+        body: {
+          dealer_id: dealerId, name: emp.name, email: emp.email,
+          role: emp.roles?.[0] || 'Sales', access_level: emp.access_level || 'employee',
+          pay_type: Array.isArray(emp.pay_type) ? emp.pay_type[0] : 'hourly',
+          hourly_rate: emp.hourly_rate, employee_id: emp.id, existing_employee: true
+        }
+      });
+      alert(`Invitation sent to ${emp.email}!`);
+      await refreshEmployees();
+      const { data } = await supabase.from('employees').select('*').eq('id', emp.id).single();
+      if (data) setSelectedEmployee(data);
+    } catch (err) {
+      alert('Failed to send invite: ' + err.message);
+    }
+    setInviting(false);
+  }
+
   const getPTOBalance = (emp) => Math.max(0, (emp?.pto_accrued || 0) - (emp?.pto_used || 0));
   const formatCurrency = (amt) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amt || 0);
   const formatPayType = (pt) => { if (!pt) return 'Hourly'; const t = Array.isArray(pt) ? pt : [pt]; return t.map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(' + '); };
@@ -264,6 +288,22 @@ export default function TeamPage() {
             <div style={{ padding: '20px', maxHeight: '550px', overflowY: 'auto' }}>
               {activeTab === 'info' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  {isAdmin && !(selectedEmployee || currentEmployee)?.user_id && (
+                    <div style={{ gridColumn: 'span 2', padding: '16px', background: 'linear-gradient(135deg, rgba(139,92,246,0.15) 0%, rgba(109,40,217,0.15) 100%)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>📧 Invite to App</div>
+                        <div style={{ color: theme.textMuted, fontSize: '13px' }}>Send {(selectedEmployee || currentEmployee).name} an email to set up their login</div>
+                      </div>
+                      <button onClick={() => inviteEmployee(selectedEmployee || currentEmployee)} disabled={inviting} style={{ padding: '10px 20px', background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: inviting ? 'not-allowed' : 'pointer', opacity: inviting ? 0.6 : 1 }}>
+                        {inviting ? 'Sending...' : 'Send Invite'}
+                      </button>
+                    </div>
+                  )}
+                  {isAdmin && (selectedEmployee || currentEmployee)?.user_id && (
+                    <div style={{ gridColumn: 'span 2', padding: '12px 16px', backgroundColor: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', color: '#22c55e', fontWeight: '600', fontSize: '14px' }}>
+                      ✓ Has app access
+                    </div>
+                  )}
                   <div><label style={labelStyle}>Name</label><input type="text" value={(selectedEmployee || currentEmployee).name || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), name: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
                   <div><label style={labelStyle}>Email</label><input type="email" value={(selectedEmployee || currentEmployee).email || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), email: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
                   <div><label style={labelStyle}>Phone</label><input type="tel" value={(selectedEmployee || currentEmployee).phone || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), phone: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
