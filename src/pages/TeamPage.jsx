@@ -28,8 +28,7 @@ export default function TeamPage() {
   const [showPTOModal, setShowPTOModal] = useState(false);
   const [ptoForm, setPtoForm] = useState({ start_date: '', end_date: '', request_type: 'pto', reason: '' });
   const [submittingPTO, setSubmittingPTO] = useState(false);
-  const [sendingInvite, setSendingInvite] = useState(false);
-
+  
   const [newEmployee, setNewEmployee] = useState({ name: '', email: '', phone: '', roles: [], pay_type: ['hourly'], hourly_rate: 0, salary: 0, pto_days_per_year: 10, active: true });
 
   const isAdmin = !currentUserId;
@@ -160,39 +159,6 @@ export default function TeamPage() {
     setSubmittingPTO(false);
   }
 
-  async function sendAppInvite(employee) {
-    if (!employee.email) {
-      alert('Employee must have an email address.');
-      return;
-    }
-    if (!confirm(`Send app invitation to ${employee.email}?`)) return;
-    setSendingInvite(true);
-    try {
-      const { error } = await supabase.functions.invoke('invite-employee', {
-        body: {
-          dealer_id: dealerId,
-          name: employee.name,
-          email: employee.email,
-          role: employee.roles?.[0] || 'Sales',
-          access_level: employee.access_level || 'employee',
-          pay_type: Array.isArray(employee.pay_type) ? employee.pay_type[0] : 'hourly',
-          hourly_rate: employee.hourly_rate,
-          employee_id: employee.id,
-          existing_employee: true
-        }
-      });
-      if (error) throw error;
-      alert(`Invitation sent to ${employee.email}!`);
-      await refreshEmployees();
-      const { data: updated } = await supabase.from('employees').select('*').eq('id', employee.id).single();
-      if (updated) setSelectedEmployee(updated);
-    } catch (err) {
-      alert(`Failed: ${err.message}`);
-    } finally {
-      setSendingInvite(false);
-    }
-  }
-
   const getPTOBalance = (emp) => Math.max(0, (emp?.pto_accrued || 0) - (emp?.pto_used || 0));
   const formatCurrency = (amt) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amt || 0);
   const formatPayType = (pt) => { if (!pt) return 'Hourly'; const t = Array.isArray(pt) ? pt : [pt]; return t.map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(' + '); };
@@ -239,13 +205,7 @@ export default function TeamPage() {
               const ptoBalance = getPTOBalance(emp);
               const isSelected = selectedEmployee?.id === emp.id;
               return (
-                <div key={emp.id} onClick={() => {
-                    console.log('Clicked employee:', emp.name);
-                    setSelectedEmployee({...emp});
-                    setEditMode(false);
-                    setActiveTab('info');
-                    setSelectedPaystub(null);
-                  }}
+                <div key={emp.id} onClick={() => { setSelectedEmployee({...emp}); setEditMode(false); setActiveTab('info'); setSelectedPaystub(null); }}
                   style={{ backgroundColor: theme.bgCard, borderRadius: '12px', padding: '16px', border: `2px solid ${isSelected ? theme.accent : theme.border}`, cursor: 'pointer' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: roleColor(emp.roles?.[0]), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '16px', fontWeight: '700' }}>
@@ -304,24 +264,6 @@ export default function TeamPage() {
             <div style={{ padding: '20px', maxHeight: '550px', overflowY: 'auto' }}>
               {activeTab === 'info' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  {isAdmin && !(selectedEmployee || currentEmployee)?.user_id && (selectedEmployee || currentEmployee)?.email && (
-                    <div style={{ gridColumn: 'span 2', padding: '16px', backgroundColor: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div style={{ color: theme.text, fontWeight: '600', marginBottom: '4px' }}>📧 Invite to App</div>
-                          <div style={{ color: theme.textMuted, fontSize: '13px' }}>Send {(selectedEmployee || currentEmployee).name} an email invitation to access the app</div>
-                        </div>
-                        <button onClick={() => sendAppInvite(selectedEmployee || currentEmployee)} disabled={sendingInvite} style={{ ...buttonStyle, backgroundColor: '#8b5cf6', opacity: sendingInvite ? 0.6 : 1 }}>
-                          {sendingInvite ? 'Sending...' : 'Send Invite'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {isAdmin && (selectedEmployee || currentEmployee)?.user_id && (
-                    <div style={{ gridColumn: 'span 2', padding: '16px', backgroundColor: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', color: '#22c55e', fontWeight: '600' }}>
-                      ✓ Has app access{(selectedEmployee || currentEmployee)?.invited_at && ` • Invited ${formatDate((selectedEmployee || currentEmployee).invited_at)}`}
-                    </div>
-                  )}
                   <div><label style={labelStyle}>Name</label><input type="text" value={(selectedEmployee || currentEmployee).name || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), name: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
                   <div><label style={labelStyle}>Email</label><input type="email" value={(selectedEmployee || currentEmployee).email || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), email: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
                   <div><label style={labelStyle}>Phone</label><input type="tel" value={(selectedEmployee || currentEmployee).phone || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), phone: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
