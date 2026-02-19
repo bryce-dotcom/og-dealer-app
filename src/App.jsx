@@ -43,8 +43,7 @@ export default function App() {
           <Route path="/bhph" element={<BHPHPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/email-marketing" element={<EmailMarketingPage />} />
-          <Route path="/team" element={<EmployeesPage />} />
-          <Route path="/employees" element={<EmployeesPage />} />
+          <Route path="/team" element={<TeamPage />} />
           <Route path="/commissions" element={<CommissionsPage />} />
           <Route path="/books" element={<BooksPage />} />
           <Route path="/reports" element={<ReportsPage />} />
