@@ -12,6 +12,8 @@ import EmbedFindRig from './pages/EmbedFindRig';
 import CustomersPage from './pages/CustomersPage';
 import EmailMarketingPage from './pages/EmailMarketingPage';
 import TeamPage from './pages/TeamPage';
+import EmployeesPage from './pages/EmployeesPage';
+import EmployeeSetupPage from './pages/EmployeeSetupPage';
 import CommissionsPage from './pages/CommissionsPage';
 import BooksPage from './pages/BooksPage';
 import ReportsPage from './pages/ReportsPage';
@@ -28,6 +30,7 @@ export default function App() {
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<Login />} />
+        <Route path="/employee-setup" element={<EmployeeSetupPage />} />
         <Route path="/embed/:dealerId" element={<EmbedInventory />} />
         <Route path="/find-rig/:dealerId" element={<EmbedFindRig />} />
         
@@ -40,7 +43,8 @@ export default function App() {
           <Route path="/bhph" element={<BHPHPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/email-marketing" element={<EmailMarketingPage />} />
-          <Route path="/team" element={<TeamPage />} />
+          <Route path="/team" element={<EmployeesPage />} />
+          <Route path="/employees" element={<EmployeesPage />} />
           <Route path="/commissions" element={<CommissionsPage />} />
           <Route path="/books" element={<BooksPage />} />
           <Route path="/reports" element={<ReportsPage />} />
