@@ -239,7 +239,13 @@ export default function TeamPage() {
               const ptoBalance = getPTOBalance(emp);
               const isSelected = selectedEmployee?.id === emp.id;
               return (
-                <div key={emp.id} onClick={() => { setSelectedEmployee({...emp}); setEditMode(false); setActiveTab('info'); setSelectedPaystub(null); }}
+                <div key={emp.id} onClick={() => {
+                    console.log('Clicked employee:', emp.name);
+                    setSelectedEmployee({...emp});
+                    setEditMode(false);
+                    setActiveTab('info');
+                    setSelectedPaystub(null);
+                  }}
                   style={{ backgroundColor: theme.bgCard, borderRadius: '12px', padding: '16px', border: `2px solid ${isSelected ? theme.accent : theme.border}`, cursor: 'pointer' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: roleColor(emp.roles?.[0]), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '16px', fontWeight: '700' }}>
