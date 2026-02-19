@@ -28,7 +28,8 @@ export default function TeamPage() {
   const [showPTOModal, setShowPTOModal] = useState(false);
   const [ptoForm, setPtoForm] = useState({ start_date: '', end_date: '', request_type: 'pto', reason: '' });
   const [submittingPTO, setSubmittingPTO] = useState(false);
-  
+  const [sendingInvite, setSendingInvite] = useState(false);
+
   const [newEmployee, setNewEmployee] = useState({ name: '', email: '', phone: '', roles: [], pay_type: ['hourly'], hourly_rate: 0, salary: 0, pto_days_per_year: 10, active: true });
 
   const isAdmin = !currentUserId;
@@ -159,6 +160,46 @@ export default function TeamPage() {
     setSubmittingPTO(false);
   }
 
+  async function sendAppInvite(employee) {
+    if (!employee.email) {
+      alert('Employee must have an email address to receive an invitation.');
+      return;
+    }
+
+    if (!confirm(`Send app invitation to ${employee.email}?`)) return;
+
+    setSendingInvite(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('invite-employee', {
+        body: {
+          dealer_id: dealerId,
+          name: employee.name,
+          email: employee.email,
+          role: employee.roles?.[0] || 'Sales',
+          access_level: employee.access_level || 'employee',
+          pay_type: Array.isArray(employee.pay_type) ? employee.pay_type[0] : (employee.pay_type || 'hourly'),
+          hourly_rate: employee.hourly_rate || null,
+          employee_id: employee.id,
+          existing_employee: true
+        }
+      });
+
+      if (error) throw error;
+
+      alert(`Invitation sent to ${employee.email}! They will receive an email with setup instructions.`);
+      await refreshEmployees();
+
+      // Refresh the selected employee to show updated status
+      const { data: updated } = await supabase.from('employees').select('*').eq('id', employee.id).single();
+      if (updated) setSelectedEmployee(updated);
+    } catch (err) {
+      console.error('Invitation error:', err);
+      alert(`Failed to send invitation: ${err.message || 'Please try again'}`);
+    } finally {
+      setSendingInvite(false);
+    }
+  }
+
   const getPTOBalance = (emp) => Math.max(0, (emp?.pto_accrued || 0) - (emp?.pto_used || 0));
   const formatCurrency = (amt) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amt || 0);
   const formatPayType = (pt) => { if (!pt) return 'Hourly'; const t = Array.isArray(pt) ? pt : [pt]; return t.map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(' + '); };
@@ -242,8 +283,22 @@ export default function TeamPage() {
                   <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>{(selectedEmployee || currentEmployee).roles?.join(', ') || 'No roles'}</p>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                 {!isAdmin && <button onClick={() => setShowPTOModal(true)} style={{ ...buttonStyle, background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)' }}>🏖️ Request Time Off</button>}
+                {isAdmin && !(selectedEmployee || currentEmployee)?.user_id && (
+                  <button
+                    onClick={() => sendAppInvite(selectedEmployee || currentEmployee)}
+                    disabled={sendingInvite}
+                    style={{ ...buttonStyle, backgroundColor: '#8b5cf6', opacity: sendingInvite ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    📧 {sendingInvite ? 'Sending...' : 'Invite to App'}
+                  </button>
+                )}
+                {isAdmin && (selectedEmployee || currentEmployee)?.user_id && (selectedEmployee || currentEmployee)?.invited_at && (
+                  <div style={{ padding: '8px 12px', backgroundColor: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '6px', color: '#22c55e', fontSize: '12px', fontWeight: '600' }}>
+                    ✓ Has App Access
+                  </div>
+                )}
                 {editMode ? (
                   <><button onClick={() => setEditMode(false)} style={{ ...buttonStyle, backgroundColor: theme.border, color: theme.text }}>Cancel</button>
                   <button onClick={handleSave} disabled={saving} style={{ ...buttonStyle, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving...' : 'Save'}</button></>

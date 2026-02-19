@@ -61,12 +61,66 @@ serve(async (req) => {
     }
 
     // New invitation
-    const { dealer_id, name, email, role, access_level, pay_type, hourly_rate } = body;
+    const { dealer_id, name, email, role, access_level, pay_type, hourly_rate, employee_id, existing_employee } = body;
 
     if (!dealer_id || !name || !email) {
       return new Response(
         JSON.stringify({ error: 'Missing required fields: dealer_id, name, email' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // If inviting existing employee, update their record instead of creating new
+    if (existing_employee && employee_id) {
+      const { data: existingEmp } = await supabase
+        .from('employees')
+        .select('id, email, user_id')
+        .eq('id', employee_id)
+        .single();
+
+      if (!existingEmp) {
+        return new Response(
+          JSON.stringify({ error: 'Employee not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (existingEmp.user_id) {
+        return new Response(
+          JSON.stringify({ error: 'Employee already has app access' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Send invitation
+      const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(email, {
+        redirectTo: `${Deno.env.get('PUBLIC_SITE_URL') || 'https://app.ogdix.com'}/employee-setup`,
+        data: { dealer_id, name, role, access_level }
+      });
+
+      if (authError) {
+        console.error('Auth invitation error:', authError);
+        return new Response(
+          JSON.stringify({ error: `Failed to send invitation: ${authError.message}` }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Update employee with user_id and invited_at
+      await supabase
+        .from('employees')
+        .update({
+          user_id: authData.user?.id,
+          invited_at: new Date().toISOString()
+        })
+        .eq('id', employee_id);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: `Invitation sent to ${email}`
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
