@@ -469,6 +469,12 @@ export default function InventoryPage() {
       alert('Year, Make, and Model are required');
       return;
     }
+
+    if (!dealerId) {
+      alert('Error: Dealer ID not found. Please refresh the page and try again.');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -488,18 +494,28 @@ export default function InventoryPage() {
         dealer_id: dealerId
       };
 
+      console.log('Saving vehicle with payload:', payload);
+
+      let result;
       if (selectedVehicle?.id) {
-        await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id);
+        result = await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id);
       } else {
-        await supabase.from('inventory').insert(payload);
+        result = await supabase.from('inventory').insert(payload);
       }
-      
+
+      // Check for errors from Supabase
+      if (result.error) {
+        console.error('Supabase error:', result.error);
+        throw new Error(result.error.message || 'Database error');
+      }
+
+      console.log('Vehicle saved successfully:', result.data);
       await refreshData();
       setShowAddModal(false);
       setSelectedVehicle(null);
     } catch (err) {
       console.error('Save failed:', err);
-      alert('Save failed: ' + err.message);
+      alert('Failed to save vehicle: ' + (err.message || 'Unknown error. Check console for details.'));
     } finally {
       setSaving(false);
     }
