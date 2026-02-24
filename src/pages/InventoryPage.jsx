@@ -429,6 +429,56 @@ export default function InventoryPage() {
     await uploadPhoto(file);
   };
 
+  const scanVin = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSaving(true);
+    try {
+      // Convert image to base64
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const base64 = event.target.result.split(',')[1]; // Remove data:image/xxx;base64, prefix
+
+          // Call edge function to extract VIN
+          const { data, error } = await supabase.functions.invoke('scan-vin', {
+            body: { image: base64 }
+          });
+
+          if (error) {
+            console.error('VIN scan error:', error);
+            alert('Failed to scan VIN: ' + error.message);
+            return;
+          }
+
+          if (data.success && data.vin) {
+            setFormData(prev => ({ ...prev, vin: data.vin }));
+            alert(`VIN detected: ${data.vin}`);
+          } else {
+            alert(data.error || 'No VIN found in image. Please try again or enter manually.');
+          }
+        } catch (err) {
+          console.error('VIN processing error:', err);
+          alert('Failed to process VIN image');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      reader.onerror = () => {
+        alert('Failed to read image file');
+        setSaving(false);
+      };
+
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('VIN scan error:', err);
+      alert('Failed to scan VIN');
+      setSaving(false);
+    }
+  };
+
   const uploadPhoto = async (file) => {
     if (!file || !selectedVehicle?.id) return;
     setUploading(true);
@@ -1014,8 +1064,8 @@ export default function InventoryPage() {
                   <label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>VIN</label>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <input type="text" value={formData.vin} onChange={e => setFormData({...formData, vin: e.target.value.toUpperCase()})} style={{ ...inputStyle, fontFamily: 'monospace', flex: 1 }} placeholder="1HGBH41JXMN109186" maxLength={17} />
-                    <input type="file" ref={vinCameraRef} accept="image/*" capture="environment" style={{ display: 'none' }} />
-                    <button onClick={() => vinCameraRef.current?.click()} style={{ padding: '10px 14px', backgroundColor: theme.border, border: 'none', borderRadius: '6px', color: theme.text, cursor: 'pointer', fontSize: '16px' }} title="Scan VIN">📷</button>
+                    <input type="file" ref={vinCameraRef} accept="image/*" capture="environment" onChange={scanVin} style={{ display: 'none' }} />
+                    <button onClick={() => vinCameraRef.current?.click()} disabled={saving} style={{ padding: '10px 14px', backgroundColor: saving ? theme.border : theme.accent, border: 'none', borderRadius: '6px', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '16px', opacity: saving ? 0.6 : 1 }} title="Scan VIN">📷</button>
                   </div>
                 </div>
                 
