@@ -9,6 +9,7 @@ export default function InventoryPage() {
   const dealer = store.dealer || {};
   const dealerId = store.dealerId;
   const employees = store.employees || [];
+  const currentEmployee = store.currentEmployee;
   
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
@@ -29,9 +30,6 @@ export default function InventoryPage() {
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [fleetUnlocked, setFleetUnlocked] = useState(() => sessionStorage.getItem('fleet_unlocked') === 'true');
-  const [showFleetPassword, setShowFleetPassword] = useState(false);
-  const [fleetPassword, setFleetPassword] = useState('');
   const [valueLoading, setValueLoading] = useState(false);
   const [valueData, setValueData] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -315,36 +313,27 @@ export default function InventoryPage() {
   const grossProfit = (parseFloat(selectedVehicle?.sale_price || 0)) - totalCost;
   const netProfit = grossProfit - totalCommissions;
 
-  // Fleet password handling
-  const FLEET_PASSWORD = 'fleet2026'; // Change this to your desired password
+  // Role-based access control for Fleet vehicles
+  const userRoles = currentEmployee?.roles || [];
+  const hasNoEmployee = !currentEmployee;
+  const canViewFleet = hasNoEmployee || userRoles.some(r =>
+    ['Owner', 'CEO', 'Admin', 'President', 'VP Operations', 'Manager'].includes(r)
+  );
 
   const handleStatusClick = (status) => {
-    if (status === 'Fleet' && !fleetUnlocked) {
-      setShowFleetPassword(true);
-    } else {
-      setStatusFilter(status);
+    if (status === 'Fleet' && !canViewFleet) {
+      alert('Access restricted. Only managers and admins can view Fleet vehicles.');
+      return;
     }
-  };
-
-  const handleFleetPasswordSubmit = () => {
-    if (fleetPassword === FLEET_PASSWORD) {
-      setFleetUnlocked(true);
-      sessionStorage.setItem('fleet_unlocked', 'true');
-      setStatusFilter('Fleet');
-      setShowFleetPassword(false);
-      setFleetPassword('');
-    } else {
-      alert('Incorrect password');
-      setFleetPassword('');
-    }
+    setStatusFilter(status);
   };
 
   const filteredInventory = inventory.filter(v => {
     const matchesSearch = searchTerm === '' ||
       `${v.year} ${v.make} ${v.model} ${v.vin || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
 
-    // Hide Fleet vehicles unless unlocked
-    if (v.status === 'Fleet' && !fleetUnlocked) {
+    // Hide Fleet vehicles unless user has access
+    if (v.status === 'Fleet' && !canViewFleet) {
       return false;
     }
 
@@ -684,7 +673,7 @@ export default function InventoryPage() {
             { label: 'In Stock', value: stats.inStock, color: '#60a5fa' },
             { label: 'Sold', value: stats.sold, color: '#a78bfa' },
             { label: 'BHPH', value: stats.bhph, color: '#fbbf24' },
-            ...(fleetUnlocked && stats.fleet > 0 ? [{ label: 'Fleet 🔓', value: stats.fleet, color: '#ec4899' }] : []),
+            ...(canViewFleet && stats.fleet > 0 ? [{ label: 'Fleet', value: stats.fleet, color: '#ec4899' }] : []),
             { label: 'Total Value', value: formatCurrency(stats.totalValue), color: theme.accent }
           ].map((stat, i) => (
             <div key={i} style={{ ...cardStyle, textAlign: 'center', padding: '14px' }}>
@@ -701,7 +690,7 @@ export default function InventoryPage() {
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {statuses.map(s => (
                 <button key={s} onClick={() => handleStatusClick(s)} style={btnStyle(statusFilter === s)}>
-                  {s}{s === 'Fleet' && !fleetUnlocked && ' 🔒'}
+                  {s}{s === 'Fleet' && !canViewFleet && ' 🔒'}
                 </button>
               ))}
             </div>
@@ -1048,77 +1037,6 @@ export default function InventoryPage() {
               <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                 <button onClick={() => setShowAddModal(false)} style={{ ...btnStyle(), flex: 1 }}>Cancel</button>
                 <button onClick={saveVehicle} disabled={saving} style={{ ...btnStyle(true), flex: 1, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving...' : (selectedVehicle ? 'Update' : 'Add Vehicle')}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Fleet Password Modal */}
-        {showFleetPassword && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-            <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '32px', maxWidth: '400px', width: '90%', border: `1px solid ${theme.border}` }}>
-              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-                <div style={{ fontSize: '48px', marginBottom: '12px' }}>🔒</div>
-                <h2 style={{ fontSize: '24px', fontWeight: '700', margin: '0 0 8px' }}>Fleet Access</h2>
-                <p style={{ color: theme.textMuted, fontSize: '14px', margin: 0 }}>Enter password to view Fleet vehicles</p>
-              </div>
-
-              <div style={{ marginBottom: '20px' }}>
-                <input
-                  type="password"
-                  value={fleetPassword}
-                  onChange={e => setFleetPassword(e.target.value)}
-                  onKeyPress={e => e.key === 'Enter' && handleFleetPasswordSubmit()}
-                  placeholder="Enter password"
-                  autoFocus
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    backgroundColor: theme.bg,
-                    border: `1px solid ${theme.border}`,
-                    borderRadius: '8px',
-                    color: theme.text,
-                    fontSize: '15px',
-                    textAlign: 'center',
-                    letterSpacing: '2px'
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  onClick={() => {
-                    setShowFleetPassword(false);
-                    setFleetPassword('');
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '12px',
-                    backgroundColor: theme.bg,
-                    color: theme.textSecondary,
-                    border: `1px solid ${theme.border}`,
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontWeight: '600'
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleFleetPasswordSubmit}
-                  style={{
-                    flex: 1,
-                    padding: '12px',
-                    backgroundColor: theme.accent,
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontWeight: '600'
-                  }}
-                >
-                  Unlock
-                </button>
               </div>
             </div>
           </div>
