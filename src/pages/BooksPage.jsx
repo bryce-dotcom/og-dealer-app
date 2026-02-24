@@ -366,7 +366,7 @@ export default function BooksPage() {
   const inventoryCount = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH').length;
   const bhphCount = (bhphLoans || []).filter(l => l.status === 'Active').length;
 
-  // AI BUSINESS VALUATION
+  // AI BUSINESS VALUATION - AUTOMOTIVE DEALERSHIP INDUSTRY STANDARDS
   const now = new Date();
   const yearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
   const recentDeals = (deals || []).filter(d => new Date(d.date_of_sale) >= yearAgo);
@@ -378,20 +378,56 @@ export default function BooksPage() {
   const bhphAnnualIncome = bhphMonthly * 12;
   const customerCount = (customers || []).length;
 
+  // Calculate average customer lifetime value (CLV)
+  const avgDealPrice = recentDeals.length > 0 ? annualRevenue / recentDeals.length : 0;
+  const repeatCustomerRate = 0.15; // Industry avg: 15% of customers return for another purchase
+  const customerLifetimeValue = avgDealPrice * (1 + repeatCustomerRate);
+
+  // Calculate BHPH portfolio quality multiplier (1.2x-1.5x based on performance)
+  const bhphPerformanceMultiplier = bhphCount > 0 ?
+    Math.min(1.5, Math.max(1.2, 1.2 + (bhphAnnualIncome / Math.max(1, bhphOwed)) * 0.3)) : 1.3;
+
+  // Calculate monthly profit for goodwill calculation
+  const monthlyProfit = recentDeals.length > 0 ? annualProfit / 12 : 0;
+  const profitableMonths = annualProfit > 0 ? 12 : Math.max(1, Math.round(recentDeals.length / 2));
+
+  // Goodwill = 6-18 months of profit based on deal volume and profitability
+  const goodwillMonths = recentDeals.length >= 24 ? 18 : // High volume: 18 months
+                         recentDeals.length >= 12 ? 12 : // Medium volume: 12 months
+                         recentDeals.length >= 6 ? 9 :   // Low volume: 9 months
+                         6;                               // Startup: 6 months
+  const goodwillValue = Math.max(0, monthlyProfit * goodwillMonths);
+
+  // Industry standard: Small dealerships trade at 1.5-2.5x SDE (Seller's Discretionary Earnings)
+  // BHPH lots command higher multiples (2.0-3.5x) due to recurring revenue
+  const hasBHPH = bhphCount > 5 && bhphAnnualIncome > 12000;
+  const sdeMultiple = hasBHPH ?
+    (bhphAnnualIncome > 50000 ? 3.0 : 2.5) : // Strong BHPH: 2.5-3.0x
+    (annualRevenue > 500000 ? 2.5 : 2.0);    // Standard used car lot: 2.0-2.5x
+
+  // Owner compensation: Industry standard for small dealership owner
+  const ownerCompensation = annualRevenue > 500000 ? 75000 :
+                           annualRevenue > 250000 ? 60000 :
+                           50000;
+
   // Valuation components
   const val = {
     inventory: inventoryValue,
-    bhphPortfolio: bhphOwed * 1.3,
+    bhphPortfolio: bhphOwed * bhphPerformanceMultiplier,
     cash: cashInBank,
     equipment: otherAssets,
-    customers: customerCount * 100,
-    goodwill: Math.min(10000 + (24 * 5000), 75000),
+    customers: customerCount * Math.min(customerLifetimeValue, 500), // Cap at $500/customer
+    goodwill: goodwillValue,
     liabilities: totalOwe
   };
   const enterpriseValue = val.inventory + val.bhphPortfolio + val.cash + val.equipment + val.customers + val.goodwill - val.liabilities;
-  const sdeValuation = (annualProfit + 50000) * 2.5;
+  const sdeValuation = (annualProfit + ownerCompensation) * sdeMultiple;
   const finalValuation = Math.max(enterpriseValue, sdeValuation, netWorth);
-  const confidence = annualRevenue > 100000 ? 'High' : annualRevenue > 50000 ? 'Medium' : 'Low';
+
+  // Confidence based on deal volume and revenue consistency
+  const confidence = recentDeals.length >= 24 && annualRevenue > 250000 ? 'High' :
+                    recentDeals.length >= 12 && annualRevenue > 100000 ? 'Medium' :
+                    'Low';
 
   const formatCurrency = (a) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(a || 0);
   const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
@@ -649,15 +685,15 @@ export default function BooksPage() {
                       <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Valuation Breakdown</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
                         <ValRow label="Inventory (at cost)" value={val.inventory} f={formatCurrency} />
-                        <ValRow label="BHPH Portfolio (1.3x)" value={val.bhphPortfolio} f={formatCurrency} note="Recurring income premium" />
+                        <ValRow label={`BHPH Portfolio (${bhphPerformanceMultiplier.toFixed(2)}x)`} value={val.bhphPortfolio} f={formatCurrency} note="Quality-adjusted recurring income" />
                         <ValRow label="Cash & Bank" value={val.cash} f={formatCurrency} />
                         <ValRow label="Equipment & Assets" value={val.equipment} f={formatCurrency} />
-                        <ValRow label={`Customer Base (${customerCount})`} value={val.customers} f={formatCurrency} note="$100 per customer" />
-                        <ValRow label="Goodwill & Brand" value={val.goodwill} f={formatCurrency} note="24 years reputation" />
+                        <ValRow label={`Customer Base (${customerCount})`} value={val.customers} f={formatCurrency} note={`~$${Math.round(customerLifetimeValue)} CLV per customer`} />
+                        <ValRow label="Goodwill & Brand" value={val.goodwill} f={formatCurrency} note={`${goodwillMonths} months of profit`} />
                         <ValRow label="Less: Debts" value={-val.liabilities} f={formatCurrency} neg />
                       </div>
                       <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.2)', display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'rgba(255,255,255,0.8)', fontWeight: '600' }}>Enterprise Value</span><span style={{ color: '#fff', fontWeight: '700' }}>{formatCurrency(enterpriseValue)}</span></div>
-                      <div style={{ marginTop: '8px', color: 'rgba(255,255,255,0.6)', fontSize: '12px' }}>Alternative: {formatCurrency(sdeValuation)} (2.5x Seller's Discretionary Earnings)</div>
+                      <div style={{ marginTop: '8px', color: 'rgba(255,255,255,0.6)', fontSize: '12px' }}>Alternative: {formatCurrency(sdeValuation)} ({sdeMultiple.toFixed(1)}x SDE - {hasBHPH ? 'BHPH Premium' : 'Standard Dealership'})</div>
                     </div>
                   )}
                 </div>
