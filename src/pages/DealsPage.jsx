@@ -154,6 +154,7 @@ const INITIAL_DEAL_FORM = {
   // Fees
   service_contract_price: '0',
   gap_insurance_price: '0',
+  protection_package_price: '895',
   tax_rate: '0.0725',
   license_fee: '0',
   registration_fee: '0',
@@ -553,7 +554,7 @@ export default function DealsPage() {
     // Use actual form values for product pricing (not hardcoded)
     const gap = parseFloat(dealForm.gap_insurance_price) || 0;
     const warranty = parseFloat(dealForm.service_contract_price) || 0;
-    const protection = dealForm.protection_package ? 895 : 0; // No form field for this yet
+    const protection = parseFloat(dealForm.protection_package_price) || 0;
 
     // Sales tax calculation using form tax rate (not hardcoded)
     const taxableAmount = Math.max(0, price - tradeValue);
@@ -639,7 +640,7 @@ export default function DealsPage() {
     const warrantyPrice = parseFloat(dealForm.service_contract_price) || 1495;
     const warrantyProfit = Math.round(warrantyPrice * 0.50); // ~50% profit margin typical for warranties
 
-    const protectionPrice = 895; // No form field yet
+    const protectionPrice = parseFloat(dealForm.protection_package_price) || 895;
     const protectionProfit = Math.round(protectionPrice * 0.70); // ~70% profit margin typical for protection
 
     if (!dealForm.gap_insurance && dealForm.deal_type !== 'Cash' && analysis.ltv > 80) {
@@ -796,6 +797,7 @@ export default function DealsPage() {
       // New fee fields
       service_contract_price: deal.service_contract_price || '0',
       gap_insurance_price: deal.gap_insurance_price || '0',
+      protection_package_price: deal.protection_package_price || '895',
       tax_rate: deal.tax_rate || '0.0725',
       license_fee: deal.license_fee || '0',
       registration_fee: deal.registration_fee || '0',
@@ -894,6 +896,7 @@ export default function DealsPage() {
         // Fees (inputs)
         service_contract_price: parseFloat(dealForm.service_contract_price) || 0,
         gap_insurance_price: parseFloat(dealForm.gap_insurance_price) || 0,
+        protection_package_price: parseFloat(dealForm.protection_package_price) || 895,
         tax_rate: parseFloat(dealForm.tax_rate) || 0.0725,
         license_fee: parseFloat(dealForm.license_fee) || 0,
         registration_fee: parseFloat(dealForm.registration_fee) || 0,
@@ -951,7 +954,7 @@ export default function DealsPage() {
         // Products/Add-ons - use actual form values (not hardcoded)
         gap_insurance: dealForm.gap_insurance ? (parseFloat(dealForm.gap_insurance_price) || 595) : 0,
         extended_warranty: dealForm.extended_warranty ? (parseFloat(dealForm.service_contract_price) || 1495) : 0,
-        protection_package: dealForm.protection_package ? 895 : 0, // No form field yet, keep default
+        protection_package: dealForm.protection_package ? (parseFloat(dealForm.protection_package_price) || 895) : 0,
         accessory_1_desc: dealForm.accessory_1_desc || null,
         accessory_1_price: parseFloat(dealForm.accessory_1_price) || 0,
         accessory_2_desc: dealForm.accessory_2_desc || null,
@@ -1494,6 +1497,7 @@ export default function DealsPage() {
                     <div><label style={labelStyle}>Service Contract Price</label><input type="number" value={dealForm.service_contract_price} onChange={(e) => setDealForm(prev => ({ ...prev, service_contract_price: e.target.value }))} style={inputStyle} placeholder="0" /></div>
                     <div><label style={labelStyle}>Doc Fee</label><input type="number" value={dealForm.doc_fee} onChange={(e) => setDealForm(prev => ({ ...prev, doc_fee: e.target.value }))} style={inputStyle} placeholder="299" /></div>
                     <div><label style={labelStyle}>GAP Insurance Price</label><input type="number" value={dealForm.gap_insurance_price} onChange={(e) => setDealForm(prev => ({ ...prev, gap_insurance_price: e.target.value }))} style={inputStyle} placeholder="0" /></div>
+                    <div><label style={labelStyle}>Protection Package Price</label><input type="number" value={dealForm.protection_package_price} onChange={(e) => setDealForm(prev => ({ ...prev, protection_package_price: e.target.value }))} style={inputStyle} placeholder="895" /></div>
                     <div><label style={labelStyle}>Tax Rate (decimal)</label><input type="number" step="0.0001" value={dealForm.tax_rate} onChange={(e) => setDealForm(prev => ({ ...prev, tax_rate: e.target.value }))} style={inputStyle} placeholder="0.0725" /></div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                       <div><label style={labelStyle}>License Fee</label><input type="number" value={dealForm.license_fee} onChange={(e) => setDealForm(prev => ({ ...prev, license_fee: e.target.value }))} style={inputStyle} placeholder="0" /></div>
