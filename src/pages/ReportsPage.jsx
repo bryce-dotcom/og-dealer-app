@@ -38,7 +38,7 @@ export default function ReportsPage() {
       supabase.from('expense_categories').select('*').or(`dealer_id.eq.${dealerId},dealer_id.is.null`),
       supabase.from('time_clock').select('*, employees(name)').eq('dealer_id', dealerId),
       isHR ? supabase.from('paystubs').select('*, employees(name)').eq('dealer_id', dealerId) : { data: [] },
-      supabase.from('commissions').select('*, employees(name), deals(*)').eq('dealer_id', dealerId),
+      supabase.from('inventory_commissions').select('*, employees(name)').eq('dealer_id', dealerId),
       isManager ? supabase.from('saved_reports').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }) : { data: [] }
     ]);
     if (txns.data) setTransactions(txns.data);
