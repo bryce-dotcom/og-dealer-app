@@ -63,10 +63,12 @@ const getSuggestedRate = (creditScore, dealType) => {
   };
 };
 
+// Product checkboxes - actual prices come from form fields (gap_insurance_price, service_contract_price)
+// These are just reference defaults
 const UPSELL_PRODUCTS = [
-  { id: 'gap_insurance', name: 'GAP Insurance', price: 595, profit: 450 },
-  { id: 'extended_warranty', name: 'Extended Warranty', price: 1495, profit: 800 },
-  { id: 'protection_package', name: 'Protection Package', price: 895, profit: 650 }
+  { id: 'gap_insurance', name: 'GAP Insurance', defaultPrice: 595 },
+  { id: 'extended_warranty', name: 'Extended Warranty', defaultPrice: 1495 },
+  { id: 'protection_package', name: 'Protection Package', defaultPrice: 895 }
 ];
 
 const INITIAL_DEAL_FORM = {
@@ -547,13 +549,15 @@ export default function DealsPage() {
     const interestRate = parseFloat(dealForm.interest_rate) || 18;
     const docFee = parseFloat(dealForm.doc_fee) || 299;
     const creditScore = parseInt(dealForm.credit_score) || 0;
-    const gap = dealForm.gap_insurance ? 595 : 0;
-    const warranty = dealForm.extended_warranty ? 1495 : 0;
-    const protection = dealForm.protection_package ? 895 : 0;
 
-    // Sales tax calculation (on price minus trade, typical rate 6.85%)
+    // Use actual form values for product pricing (not hardcoded)
+    const gap = parseFloat(dealForm.gap_insurance_price) || 0;
+    const warranty = parseFloat(dealForm.service_contract_price) || 0;
+    const protection = dealForm.protection_package ? 895 : 0; // No form field for this yet
+
+    // Sales tax calculation using form tax rate (not hardcoded)
     const taxableAmount = Math.max(0, price - tradeValue);
-    const salesTaxRate = 0.0685;
+    const salesTaxRate = parseFloat(dealForm.tax_rate) || 0.0725;
     const salesTax = taxableAmount * salesTaxRate;
 
     const negativeEquity = Math.max(0, tradePayoff - tradeValue);
@@ -628,14 +632,24 @@ export default function DealsPage() {
       }
     }
 
+    // Calculate typical F&I product profit margins (cost vs retail)
+    const gapPrice = parseFloat(dealForm.gap_insurance_price) || 595;
+    const gapProfit = Math.round(gapPrice * 0.75); // ~75% profit margin typical for GAP
+
+    const warrantyPrice = parseFloat(dealForm.service_contract_price) || 1495;
+    const warrantyProfit = Math.round(warrantyPrice * 0.50); // ~50% profit margin typical for warranties
+
+    const protectionPrice = 895; // No form field yet
+    const protectionProfit = Math.round(protectionPrice * 0.70); // ~70% profit margin typical for protection
+
     if (!dealForm.gap_insurance && dealForm.deal_type !== 'Cash' && analysis.ltv > 80) {
-      analysis.suggestions.push({ title: 'GAP Insurance', message: 'LTV over 80% - protect against total loss', profit: 450, product: 'gap_insurance', price: 595 });
+      analysis.suggestions.push({ title: 'GAP Insurance', message: 'LTV over 80% - protect against total loss', profit: gapProfit, product: 'gap_insurance', price: gapPrice });
     }
     if (!dealForm.extended_warranty && selectedVehicle && ((selectedVehicle.miles || selectedVehicle.mileage || 0) > 50000 || (new Date().getFullYear() - selectedVehicle.year) > 5)) {
-      analysis.suggestions.push({ title: 'Extended Warranty', message: 'Higher miles/age vehicle', profit: 800, product: 'extended_warranty', price: 1495 });
+      analysis.suggestions.push({ title: 'Extended Warranty', message: 'Higher miles/age vehicle', profit: warrantyProfit, product: 'extended_warranty', price: warrantyPrice });
     }
     if (!dealForm.protection_package) {
-      analysis.suggestions.push({ title: 'Protection Package', message: 'Paint, interior, tire/wheel', profit: 650, product: 'protection_package', price: 895 });
+      analysis.suggestions.push({ title: 'Protection Package', message: 'Paint, interior, tire/wheel', profit: protectionProfit, product: 'protection_package', price: protectionPrice });
     }
     if (accessoryTotal === 0) {
       analysis.suggestions.push({ title: 'Add Accessories', message: 'Window tint, bed liner, floor mats', profit: 200, product: 'accessory' });
@@ -934,10 +948,10 @@ export default function DealsPage() {
         term_months: parseInt(dealForm.term_months) || 48,
         interest_rate: parseFloat(dealForm.apr) || parseFloat(dealForm.interest_rate) || 18,
         credit_score: dealForm.credit_score ? parseInt(dealForm.credit_score) : null,
-        // Products/Add-ons
-        gap_insurance: dealForm.gap_insurance ? 595 : 0,
-        extended_warranty: dealForm.extended_warranty ? 1495 : 0,
-        protection_package: dealForm.protection_package ? 895 : 0,
+        // Products/Add-ons - use actual form values (not hardcoded)
+        gap_insurance: dealForm.gap_insurance ? (parseFloat(dealForm.gap_insurance_price) || 595) : 0,
+        extended_warranty: dealForm.extended_warranty ? (parseFloat(dealForm.service_contract_price) || 1495) : 0,
+        protection_package: dealForm.protection_package ? 895 : 0, // No form field yet, keep default
         accessory_1_desc: dealForm.accessory_1_desc || null,
         accessory_1_price: parseFloat(dealForm.accessory_1_price) || 0,
         accessory_2_desc: dealForm.accessory_2_desc || null,
