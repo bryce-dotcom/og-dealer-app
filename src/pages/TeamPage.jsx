@@ -29,6 +29,7 @@ export default function TeamPage() {
   const [ptoForm, setPtoForm] = useState({ start_date: '', end_date: '', request_type: 'pto', reason: '' });
   const [submittingPTO, setSubmittingPTO] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   const [newEmployee, setNewEmployee] = useState({ name: '', email: '', phone: '', roles: [], pay_type: ['hourly'], hourly_rate: 0, salary: 0, pto_days_per_year: 10, active: true });
 
@@ -94,6 +95,30 @@ export default function TeamPage() {
     }).eq('id', selectedEmployee.id);
     await refreshEmployees();
     setEditMode(false);
+    setSaving(false);
+  };
+
+  const handleArchive = async (emp) => {
+    if (!confirm(`Archive ${emp.name}?\n\nThis will:\n• Deactivate their account\n• Revoke app access\n• Keep all their data (deals, paystubs, etc.)\n\nYou can reactivate them later.`)) return;
+    setSaving(true);
+    await supabase.from('employees').update({
+      active: false,
+      user_id: null
+    }).eq('id', emp.id);
+    await refreshEmployees();
+    setSelectedEmployee(null);
+    setSaving(false);
+  };
+
+  const handleReactivate = async (emp) => {
+    if (!confirm(`Reactivate ${emp.name}?\n\nThis will make them active again, but they'll need a new invite to access the app.`)) return;
+    setSaving(true);
+    await supabase.from('employees').update({
+      active: true
+    }).eq('id', emp.id);
+    await refreshEmployees();
+    const { data } = await supabase.from('employees').select('*').eq('id', emp.id).single();
+    if (data) setSelectedEmployee(data);
     setSaving(false);
   };
 
@@ -202,7 +227,9 @@ export default function TeamPage() {
   const requiredDocs = selectedEmployee ? getRequiredDocs(selectedEmployee.pay_type) : [];
   const completedRequired = requiredDocs.filter(doc => doc.required && documents.some(d => d.document_type === doc.type)).length;
   const requiredCount = requiredDocs.filter(d => d.required).length;
-  const displayEmployees = isAdmin ? employees : employees.filter(e => e.id === currentUserId);
+  const displayEmployees = isAdmin
+    ? employees.filter(e => showArchived ? !e.active : e.active)
+    : employees.filter(e => e.id === currentUserId);
   const myRequests = ptoRequests.filter(r => r.employee_id === (selectedEmployee?.id || currentUserId));
 
   return (
@@ -210,9 +237,16 @@ export default function TeamPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Team</h1>
-          <p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>{isAdmin ? `${employees.filter(e => e.active).length} active` : 'My Profile'}</p>
+          <p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>
+            {isAdmin ? `${employees.filter(e => e.active).length} active${employees.filter(e => !e.active).length > 0 ? `, ${employees.filter(e => !e.active).length} archived` : ''}` : 'My Profile'}
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {isAdmin && employees.filter(e => !e.active).length > 0 && (
+            <button onClick={() => setShowArchived(!showArchived)} style={{ ...buttonStyle, backgroundColor: showArchived ? theme.accent : theme.border, color: showArchived ? '#fff' : theme.text }}>
+              {showArchived ? '✓ Archived' : '🗄️ Show Archived'}
+            </button>
+          )}
           <select value={currentUserId || ''} onChange={(e) => { setCurrentUserId(e.target.value ? parseInt(e.target.value) : null); setSelectedEmployee(null); setSelectedPaystub(null); }} style={{ ...inputStyle, width: '180px', backgroundColor: theme.bgCard }}>
             <option value="">👑 Admin View</option>
             {employees.filter(e => e.active).map(emp => <option key={emp.id} value={emp.id}>👤 {emp.name}</option>)}
@@ -271,7 +305,17 @@ export default function TeamPage() {
                 {editMode ? (
                   <><button onClick={() => setEditMode(false)} style={{ ...buttonStyle, backgroundColor: theme.border, color: theme.text }}>Cancel</button>
                   <button onClick={handleSave} disabled={saving} style={{ ...buttonStyle, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving...' : 'Save'}</button></>
-                ) : <button onClick={() => setEditMode(true)} style={buttonStyle}>Edit</button>}
+                ) : (
+                  <>
+                    {isAdmin && !(selectedEmployee || currentEmployee)?.active && (
+                      <button onClick={() => handleReactivate(selectedEmployee || currentEmployee)} disabled={saving} style={{ ...buttonStyle, backgroundColor: '#22c55e', opacity: saving ? 0.6 : 1 }}>✓ Reactivate</button>
+                    )}
+                    <button onClick={() => setEditMode(true)} style={buttonStyle}>Edit</button>
+                    {isAdmin && (selectedEmployee || currentEmployee)?.active && (
+                      <button onClick={() => handleArchive(selectedEmployee || currentEmployee)} disabled={saving} style={{ ...buttonStyle, backgroundColor: '#ef4444', opacity: saving ? 0.6 : 1 }}>🗄️ Archive</button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
 
