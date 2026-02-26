@@ -3,12 +3,13 @@ import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import FormTemplateGenerator from '../components/FormTemplateGenerator';
 
-// Pricing constants for subscription plans
+// Pricing constants for subscription plans (CREDIT-BASED SYSTEM)
+// Note: These are now for display/reference only. Actual credit limits defined in PLAN_CREDITS below.
 const PLAN_PRICES = {
-  starter: 99.00,
-  pro: 199.00,
-  dealer: 399.00,
-  unlimited: 399.00
+  free: 0.00,
+  pro: 79.00,
+  dealer: 149.00,
+  unlimited: 299.00
 };
 
 export default function DevConsolePage() {
@@ -102,34 +103,38 @@ export default function DevConsolePage() {
   const [creditModal, setCreditModal] = useState(null); // { dealerId, dealerName, currentCredits }
   const [planModal, setPlanModal] = useState(null); // { dealerId, dealerName, currentPlan }
 
-  // Pricing Plans state
+  // Pricing Plans state (UPDATED FOR CREDIT-BASED SYSTEM)
   const [pricingPlans, setPricingPlans] = useState([
     {
-      id: 'starter',
-      name: 'Starter',
-      price: 99.00,
-      features: ['1 user', '50 vehicles', 'Basic features', 'Email support'],
+      id: 'free',
+      name: 'Free',
+      price: 0.00,
+      credits: 10,
+      features: ['10 credits/month', 'All features', 'Rate limited when out', 'Converts to paid after 30 days'],
       popular: false
     },
     {
       id: 'pro',
       name: 'Pro',
-      price: 199.00,
-      features: ['5 users', '200 vehicles', 'All features', 'Priority support', 'Email marketing', 'BHPH tracking'],
+      price: 79.00,
+      credits: 500,
+      features: ['500 credits/month', 'All features', 'Email support', 'Buy additional credit packs'],
       popular: true
     },
     {
       id: 'dealer',
       name: 'Dealer',
-      price: 399.00,
-      features: ['10 users', '500 vehicles', 'All features', 'Priority support', 'Custom forms', 'API access'],
+      price: 149.00,
+      credits: 1500,
+      features: ['1,500 credits/month', 'All features', 'Priority support', 'Buy additional credit packs'],
       popular: false
     },
     {
       id: 'unlimited',
       name: 'Unlimited',
-      price: 399.00,
-      features: ['Unlimited users', 'Unlimited vehicles', 'All features', 'Priority support', 'White label', 'Dedicated support'],
+      price: 299.00,
+      credits: 999999,
+      features: ['Unlimited credits', 'All features', 'Priority support', 'Dedicated account manager'],
       popular: false
     }
   ]);
@@ -3332,11 +3337,14 @@ export default function DevConsolePage() {
                     <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '8px' }}>
                       {plan.name}
                     </h3>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '8px' }}>
                       <span style={{ fontSize: '36px', fontWeight: '700', color: '#22c55e' }}>
                         ${plan.price.toFixed(0)}
                       </span>
                       <span style={{ fontSize: '14px', color: '#a1a1aa' }}>/month</span>
+                    </div>
+                    <div style={{ fontSize: '16px', fontWeight: '600', color: '#3b82f6' }}>
+                      {plan.credits === 999999 ? '∞ Unlimited Credits' : `${plan.credits.toLocaleString()} Credits/Month`}
                     </div>
                   </div>
 
