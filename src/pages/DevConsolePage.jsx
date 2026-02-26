@@ -70,6 +70,8 @@ export default function DevConsolePage() {
   const [promoModal, setPromoModal] = useState(null);
   const [templateModal, setTemplateModal] = useState(null);
   const [smsModal, setSmsModal] = useState(null);
+  const [addDealerModal, setAddDealerModal] = useState(false);
+  const [inviteDealerModal, setInviteDealerModal] = useState(null);
 
   // Help content for each section
   const helpContent = {
@@ -410,6 +412,71 @@ export default function DevConsolePage() {
     }
     setLoading(false);
     setConfirmDelete(null);
+  };
+
+  const handleUpdateDealerStatus = async (dealerId, status) => {
+    try {
+      const { error } = await supabase
+        .from('dealer_settings')
+        .update({ account_status: status })
+        .eq('id', dealerId);
+
+      if (error) {
+        showToast('Failed to update status: ' + error.message, 'error');
+      } else {
+        setAllDealers(allDealers.map(d => d.id === dealerId ? { ...d, account_status: status } : d));
+        showToast(`Status updated to ${status}`);
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  };
+
+  const handleAddDealer = async (dealerData) => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('dealer_settings')
+        .insert([dealerData])
+        .select()
+        .single();
+
+      if (error) {
+        showToast('Failed to add dealer: ' + error.message, 'error');
+      } else {
+        setAllDealers([...allDealers, data]);
+        showToast('Dealer added successfully');
+        setAddDealerModal(false);
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const handleSendInvite = async (dealer, recipientEmail) => {
+    setLoading(true);
+    try {
+      // Send invitation email using Resend
+      const { data, error } = await supabase.functions.invoke('send-beta-invite', {
+        body: {
+          dealer_id: dealer.id,
+          dealer_name: dealer.dealer_name,
+          recipient_email: recipientEmail,
+          recipient_name: dealer.dealer_name
+        }
+      });
+
+      if (error) {
+        showToast('Failed to send invite: ' + error.message, 'error');
+      } else {
+        showToast(`Invitation sent to ${recipientEmail}`);
+        setInviteDealerModal(null);
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
   };
 
   // Bulk operations
@@ -2262,20 +2329,45 @@ export default function DevConsolePage() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Dealers ({allDealers.length})</h2>
-              <HelpButton />
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={() => setAddDealerModal(true)} style={btnPrimary}>+ Add Dealer</button>
+                <HelpButton />
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {allDealers.map(d => (
                 <div key={d.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 0 }}>
-                  <div>
-                    <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 4px 0' }}>
-                      {d.dealer_name}
-                      {d.id === dealerId && <span style={{ marginLeft: '8px', fontSize: '10px', backgroundColor: '#f97316', padding: '2px 6px', borderRadius: '4px' }}>CURRENT</span>}
-                    </h3>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>
+                        {d.dealer_name}
+                      </h3>
+                      {d.id === dealerId && <span style={{ fontSize: '10px', backgroundColor: '#f97316', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>CURRENT</span>}
+                      <span style={{
+                        fontSize: '10px',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        backgroundColor: d.account_status === 'beta' ? '#8b5cf6' : d.account_status === 'trial' ? '#eab308' : d.account_status === 'suspended' ? '#ef4444' : '#22c55e',
+                        color: '#fff'
+                      }}>
+                        {(d.account_status || 'active').toUpperCase()}
+                      </span>
+                    </div>
                     <p style={{ color: '#a1a1aa', fontSize: '13px', margin: 0 }}>{d.city}, {d.state} | {d.phone}</p>
-                    <p style={{ color: '#52525b', fontSize: '12px', margin: '4px 0 0 0' }}>ID: {d.id} | Created: {new Date(d.created_at).toLocaleDateString()}</p>
+                    <p style={{ color: '#52525b', fontSize: '12px', margin: '4px 0 0 0' }}>ID: {d.id} | Owner: {d.owner_user_id || 'N/A'} | Created: {new Date(d.created_at).toLocaleDateString()}</p>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <select
+                      value={d.account_status || 'active'}
+                      onChange={(e) => handleUpdateDealerStatus(d.id, e.target.value)}
+                      style={{ padding: '8px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff', fontSize: '13px', cursor: 'pointer' }}
+                    >
+                      <option value="beta">Beta</option>
+                      <option value="trial">Trial</option>
+                      <option value="active">Active</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                    <button onClick={() => setInviteDealerModal(d)} style={{ ...btnPrimary, backgroundColor: '#8b5cf6' }}>📧 Invite</button>
                     <button onClick={() => setImpersonateModal(d)} style={btnPrimary}>View As</button>
                     <button onClick={() => setConfirmDelete(d)} disabled={d.id === dealerId} style={{ ...btnDanger, opacity: d.id === dealerId ? 0.5 : 1, cursor: d.id === dealerId ? 'not-allowed' : 'pointer' }}>Delete</button>
                   </div>
@@ -4720,6 +4812,141 @@ export default function DevConsolePage() {
               </div>
               <button onClick={() => { setUpdateCheckModal(null); setPostUpdateForm(null); }} style={btnSecondary}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Dealer Modal */}
+      {addDealerModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '16px', padding: '32px', maxWidth: '600px', width: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h2 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '24px' }}>Add New Dealer</h2>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.target);
+              handleAddDealer({
+                dealer_name: formData.get('dealer_name'),
+                state: formData.get('state'),
+                county: formData.get('county'),
+                dealer_license: formData.get('dealer_license'),
+                address: formData.get('address'),
+                city: formData.get('city'),
+                zip: formData.get('zip'),
+                phone: formData.get('phone'),
+                email: formData.get('email'),
+                account_status: formData.get('account_status'),
+                owner_user_id: formData.get('owner_user_id') || null
+              });
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Dealer Name *</label>
+                  <input name="dealer_name" required style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>State *</label>
+                    <input name="state" required style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>County</label>
+                    <input name="county" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Dealer License #</label>
+                  <input name="dealer_license" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Address</label>
+                  <input name="address" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>City</label>
+                    <input name="city" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>ZIP</label>
+                    <input name="zip" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Phone</label>
+                    <input name="phone" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Email</label>
+                    <input name="email" type="email" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Account Status *</label>
+                    <select name="account_status" defaultValue="beta" required style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }}>
+                      <option value="beta">Beta</option>
+                      <option value="trial">Trial</option>
+                      <option value="active">Active</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Owner User ID (optional)</label>
+                    <input name="owner_user_id" placeholder="UUID" style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
+                  <button type="button" onClick={() => setAddDealerModal(false)} style={{ padding: '10px 20px', backgroundColor: '#3f3f46', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" disabled={loading} style={{ padding: '10px 20px', backgroundColor: '#f97316', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', opacity: loading ? 0.5 : 1 }}>
+                    {loading ? 'Adding...' : 'Add Dealer'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Invite Dealer Modal */}
+      {inviteDealerModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ backgroundColor: '#18181b', borderRadius: '16px', padding: '32px', maxWidth: '500px', width: '90%' }}>
+            <h2 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '16px' }}>Send Beta Invitation</h2>
+            <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
+              <p style={{ fontSize: '14px', color: '#a1a1aa', margin: 0 }}>
+                <strong style={{ color: '#fff' }}>Dealer:</strong> {inviteDealerModal.dealer_name}
+              </p>
+              <p style={{ fontSize: '14px', color: '#a1a1aa', margin: '8px 0 0 0' }}>
+                <strong style={{ color: '#fff' }}>Location:</strong> {inviteDealerModal.city}, {inviteDealerModal.state}
+              </p>
+            </div>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.target);
+              handleSendInvite(inviteDealerModal, formData.get('recipient_email'));
+            }}>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Recipient Email *</label>
+                <input
+                  name="recipient_email"
+                  type="email"
+                  required
+                  defaultValue={inviteDealerModal.email}
+                  placeholder="beta-tester@example.com"
+                  style={{ width: '100%', padding: '10px 12px', backgroundColor: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px', color: '#fff' }}
+                />
+                <p style={{ fontSize: '12px', color: '#71717a', marginTop: '6px' }}>
+                  📧 Will send the beta invitation email template with login instructions
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setInviteDealerModal(null)} style={{ padding: '10px 20px', backgroundColor: '#3f3f46', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer' }}>Cancel</button>
+                <button type="submit" disabled={loading} style={{ padding: '10px 20px', backgroundColor: '#8b5cf6', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', opacity: loading ? 0.5 : 1 }}>
+                  {loading ? 'Sending...' : '📧 Send Invite'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
