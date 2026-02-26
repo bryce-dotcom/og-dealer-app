@@ -43,7 +43,7 @@ serve(async (req) => {
 
       // Resend invitation using Supabase Auth
       const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(employee.email, {
-        redirectTo: `${Deno.env.get('PUBLIC_SITE_URL') || 'https://app.ogdix.com'}/employee-setup`
+        redirectTo: 'https://app.ogdix.com/employee-setup'
       });
 
       if (inviteError) {
@@ -94,7 +94,7 @@ serve(async (req) => {
 
       // Send invitation
       const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(email, {
-        redirectTo: `${Deno.env.get('PUBLIC_SITE_URL') || 'https://app.ogdix.com'}/employee-setup`,
+        redirectTo: 'https://app.ogdix.com/employee-setup',
         data: { dealer_id, name, role, access_level }
       });
 
@@ -141,7 +141,7 @@ serve(async (req) => {
 
     // Step 1: Send invitation via Supabase Auth (creates auth.users record)
     const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(email, {
-      redirectTo: `${Deno.env.get('PUBLIC_SITE_URL') || 'https://app.ogdix.com'}/employee-setup`,
+      redirectTo: 'https://app.ogdix.com/employee-setup',
       data: {
         dealer_id,
         name,

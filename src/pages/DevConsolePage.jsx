@@ -73,6 +73,16 @@ export default function DevConsolePage() {
   const [addDealerModal, setAddDealerModal] = useState(false);
   const [inviteDealerModal, setInviteDealerModal] = useState(null);
 
+  // Sales Reps states
+  const [salesReps, setSalesReps] = useState([]);
+  const [repSignups, setRepSignups] = useState([]);
+  const [commissionPayouts, setCommissionPayouts] = useState([]);
+  const [selectedRep, setSelectedRep] = useState(null);
+  const [addRepModal, setAddRepModal] = useState(false);
+  const [addSignupModal, setAddSignupModal] = useState(false);
+  const [payoutCalculator, setPayoutCalculator] = useState(null);
+  const [dealersList, setDealersList] = useState([]);
+
   // Help content for each section
   const helpContent = {
     dashboard: {
@@ -269,7 +279,7 @@ export default function DevConsolePage() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [dealers, users, feedback, audit, promos, templates, rules, staging, library] = await Promise.all([
+      const [dealers, users, feedback, audit, promos, templates, rules, staging, library, reps, signups, payouts, allDealersList] = await Promise.all([
         supabase.from('dealer_settings').select('*').order('id'),
         supabase.from('employees').select('*').order('name'),
         supabase.from('feedback').select('*').order('created_at', { ascending: false }),
@@ -279,6 +289,10 @@ export default function DevConsolePage() {
         supabase.from('compliance_rules').select('*').order('state').order('category'),
         supabase.from('form_staging').select('*').order('created_at', { ascending: false }),
         supabase.from('form_library').select('*').order('created_at', { ascending: false }),
+        supabase.from('sales_reps').select('*').order('created_at', { ascending: false }),
+        supabase.from('rep_signups').select('*').order('signup_date', { ascending: false }),
+        supabase.from('commission_payouts').select('*').order('payout_period', { ascending: false }),
+        supabase.from('dealer_settings').select('id, dealer_name, account_status').order('dealer_name'),
       ]);
       if (dealers.data) setAllDealers(dealers.data);
       if (users.data) setAllUsers(users.data);
@@ -287,6 +301,10 @@ export default function DevConsolePage() {
       if (promos.data) setPromoCodes(promos.data);
       if (templates.data) setMessageTemplates(templates.data);
       if (rules.data) setComplianceRules(rules.data);
+      if (reps.data) setSalesReps(reps.data);
+      if (signups.data) setRepSignups(signups.data);
+      if (payouts.data) setCommissionPayouts(payouts.data);
+      if (allDealersList.data) setDealersList(allDealersList.data);
       if (staging.data) {
         console.log('[DevConsole] Loaded form_staging:', staging.data.length, 'forms');
         setFormStaging(staging.data);
@@ -2111,6 +2129,7 @@ export default function DevConsolePage() {
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'feedback', label: 'Feedback (' + feedbackList.filter(f => f.status === 'new').length + ')' },
     { id: 'dealers', label: 'Dealers' },
+    { id: 'salesreps', label: 'Sales Reps' },
     { id: 'users', label: 'Users' },
     { id: 'forms', label: 'Form Library (' + formLibrary.length + ')' },
     { id: 'data', label: 'Data Browser' },

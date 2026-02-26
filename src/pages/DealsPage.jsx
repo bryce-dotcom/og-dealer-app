@@ -429,6 +429,24 @@ export default function DealsPage() {
     }
   }, [dealerId]);
 
+  // Handle incoming vehicle from inventory page
+  useEffect(() => {
+    if (location.state?.vehicleId && location.state?.vehicle) {
+      // Open the deal form with the selected vehicle
+      setDealForm(prev => ({
+        ...INITIAL_DEAL_FORM,
+        vehicle_id: location.state.vehicleId,
+        price: location.state.vehicle.sale_price?.toString() || '',
+        vehicle_cash_price: location.state.vehicle.sale_price?.toString() || ''
+      }));
+      setShowDealForm(true);
+      setEditingDeal(null);
+
+      // Clear the location state so it doesn't re-trigger
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
   useEffect(() => {
     if (toast) {
       const timer = setTimeout(() => setToast(null), 3000);
@@ -909,7 +927,7 @@ export default function DealsPage() {
         // Financing (inputs)
         apr: parseFloat(dealForm.apr) || 18,
 
-        // CALCULATED VALUES from calculateDeal
+        // CALCULATED VALUES from calculateDeal (for document generation)
         sales_tax: Math.round(calculateDeal.taxAmount * 100) / 100,
         total_sale: Math.round(calculateDeal.totalDue * 100) / 100,
         total_price: Math.round(calculateDeal.totalDue * 100) / 100,
@@ -918,6 +936,16 @@ export default function DealsPage() {
         total_of_payments: Math.round(calculateDeal.totalOfPayments * 100) / 100,
         balance_due: Math.round(calculateDeal.balanceDue * 100) / 100,
         negative_equity: Math.max(0, parseFloat(dealForm.trade_in_payoff) || 0 - parseFloat(dealForm.trade_in_allowance) || 0),
+
+        // Additional calculated fields for forms (subtotals, breakdowns)
+        total_cash_price: Math.round(calculateDeal.totalCashPrice * 100) / 100,
+        subtotal_price: Math.round(calculateDeal.subtotalPrice * 100) / 100,
+        subtotal_taxable: Math.round(calculateDeal.subtotalTaxable * 100) / 100,
+        net_trade_allowance: Math.round(calculateDeal.netTradeAllowance * 100) / 100,
+        total_credits: Math.round(calculateDeal.totalCredits * 100) / 100,
+        net_taxable_amount: Math.round(calculateDeal.netTaxableAmount * 100) / 100,
+        tax_amount: Math.round(calculateDeal.taxAmount * 100) / 100,
+        total_fees: Math.round(calculateDeal.totalFees * 100) / 100,
         // Buyer ID
         purchaser_dl: dealForm.purchaser_dl || null,
         purchaser_dl_state: dealForm.purchaser_dl_state || null,

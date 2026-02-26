@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 
 export default function InventoryPage() {
+  const navigate = useNavigate();
   const store = useStore();
   const inventory = store.inventory || [];
   const dealer = store.dealer || {};
   const dealerId = store.dealerId;
   const employees = store.employees || [];
   const currentEmployee = store.currentEmployee;
-  
+
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
     bg: '#09090b', bgCard: '#18181b', border: '#27272a',
@@ -663,6 +665,12 @@ export default function InventoryPage() {
     window.location.href = `/research?${params.toString()}`;
   };
 
+  const startDeal = () => {
+    // Navigate to deals page with vehicle pre-selected
+    navigate('/deals', { state: { vehicleId: selectedVehicle.id, vehicle: selectedVehicle } });
+    setShowDetailModal(false);
+  };
+
   const getValue = (obj, ...paths) => {
     for (const path of paths) {
       const keys = path.split('.');
@@ -1013,6 +1021,7 @@ export default function InventoryPage() {
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
                 <button onClick={() => { setShowDetailModal(false); openAddModal(selectedVehicle); }} style={btnStyle()}>Edit</button>
                 <button onClick={() => getMarketValue(selectedVehicle)} disabled={valueLoading} style={{ ...btnStyle(true), opacity: valueLoading ? 0.6 : 1 }}>{valueLoading ? 'Checking...' : 'Check Value'}</button>
+                <button onClick={startDeal} style={{ ...btnStyle(true), backgroundColor: '#22c55e', color: '#fff' }}>🤝 Start Deal</button>
                 <button onClick={() => deleteVehicle(selectedVehicle.id)} style={{ ...btnStyle(), backgroundColor: '#7f1d1d', color: '#fca5a5' }}>Delete</button>
               </div>
 

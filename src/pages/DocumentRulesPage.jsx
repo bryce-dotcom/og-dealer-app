@@ -102,6 +102,23 @@ export default function DocumentRulesPage() {
         setForms(formsData || []);
       }
 
+      // Load dealer custom forms
+      let customData = [];
+      if (dealerId) {
+        const { data: customFormsData, error: customError } = await supabase
+          .from('dealer_custom_forms')
+          .select('*')
+          .eq('dealer_id', dealerId)
+          .order('created_at', { ascending: false });
+
+        if (customError) {
+          console.error('[DocumentRules] Custom forms error:', customError);
+        } else {
+          customData = customFormsData || [];
+          setDealerCustomForms(customData);
+        }
+      }
+
       // Load document packages for this dealer
       if (dealerId) {
         const { data: pkgData, error: pkgError } = await supabase
@@ -112,22 +129,43 @@ export default function DocumentRulesPage() {
         if (pkgError) {
           console.error('[DocumentRules] Packages error:', pkgError);
         } else {
-          setPackages(pkgData || []);
-        }
-      }
+          // Clean up deleted form references from packages
+          const validFormIds = new Set([
+            ...(formsData || []).map(f => f.id),
+            ...customData.map(f => f.id)
+          ]);
 
-      // Load dealer custom forms
-      if (dealerId) {
-        const { data: customData, error: customError } = await supabase
-          .from('dealer_custom_forms')
-          .select('*')
-          .eq('dealer_id', dealerId)
-          .order('created_at', { ascending: false });
+          let packagesNeedUpdate = false;
+          const cleanedPackages = (pkgData || []).map(pkg => {
+            if (!pkg.form_ids || pkg.form_ids.length === 0) return pkg;
 
-        if (customError) {
-          console.error('[DocumentRules] Custom forms error:', customError);
-        } else {
-          setDealerCustomForms(customData || []);
+            const originalLength = pkg.form_ids.length;
+            const cleanedFormIds = pkg.form_ids.filter(id => validFormIds.has(id));
+
+            if (cleanedFormIds.length !== originalLength) {
+              packagesNeedUpdate = true;
+              console.log(`[DocumentRules] Cleaning package ${pkg.deal_type}: removed ${originalLength - cleanedFormIds.length} deleted form(s)`);
+
+              // Update package in database
+              supabase
+                .from('document_packages')
+                .update({ form_ids: cleanedFormIds })
+                .eq('id', pkg.id)
+                .then(({ error }) => {
+                  if (error) console.error('[DocumentRules] Failed to update package:', error);
+                });
+
+              return { ...pkg, form_ids: cleanedFormIds };
+            }
+
+            return pkg;
+          });
+
+          setPackages(cleanedPackages);
+
+          if (packagesNeedUpdate) {
+            console.log('[DocumentRules] Auto-cleaned deleted form references from packages');
+          }
         }
       }
 
@@ -355,22 +393,86 @@ export default function DocumentRulesPage() {
     }
   };
 
-  const deleteCustomForm = async (form) => {
-    if (!confirm(`Delete "${form.form_name}"? This cannot be undone.`)) return;
+  const deleteForm = async (form) => {
+    const isCustom = form._isCustom;
+
+    // Different warnings for platform vs custom forms
+    const warningMessage = isCustom
+      ? `Delete custom form "${form.form_name}"?\n\nThis cannot be undone.`
+      : `⚠️ WARNING: Delete platform form "${form.form_name}"?\n\n` +
+        `This will remove it from the library for ALL dealers.\n` +
+        `You can ONLY get it back by contacting support.\n\n` +
+        `Are you absolutely sure?`;
+
+    if (!confirm(warningMessage)) return;
+
+    // Extra confirmation for platform forms
+    if (!isCustom) {
+      if (!confirm('Final confirmation: This will DELETE the form from the platform library. Continue?')) return;
+    }
+
     try {
-      // Delete from storage
-      if (form.storage_path) {
-        await supabase.storage.from(form.storage_bucket || 'dealer-forms').remove([form.storage_path]);
+      if (isCustom) {
+        // Delete custom form
+        if (form.storage_path) {
+          await supabase.storage.from(form.storage_bucket || 'dealer-forms').remove([form.storage_path]);
+        }
+        const { error } = await supabase.from('dealer_custom_forms').delete().eq('id', form.id);
+        if (error) throw error;
+        showToast('Custom form deleted');
+      } else {
+        // Delete platform form - must clean up all references first
+
+        // 1. Null out generated_documents that reference this form
+        await supabase.from('generated_documents').update({ form_library_id: null }).eq('form_library_id', form.id);
+
+        // 2. Remove from compliance_rules.required_forms arrays
+        const { data: rulesWithForm } = await supabase
+          .from('compliance_rules')
+          .select('id, required_forms')
+          .contains('required_forms', [form.id]);
+
+        if (rulesWithForm && rulesWithForm.length > 0) {
+          for (const rule of rulesWithForm) {
+            const updatedForms = (rule.required_forms || []).filter(fid => fid !== form.id);
+            await supabase
+              .from('compliance_rules')
+              .update({ required_forms: updatedForms })
+              .eq('id', rule.id);
+          }
+        }
+
+        // 3. Remove from document_packages
+        const { data: pkgs } = await supabase.from('document_packages').select('id, form_ids');
+        if (pkgs) {
+          for (const pkg of pkgs) {
+            if (pkg.form_ids && pkg.form_ids.includes(form.id)) {
+              const newFormIds = pkg.form_ids.filter(id => id !== form.id);
+              await supabase.from('document_packages').update({ form_ids: newFormIds }).eq('id', pkg.id);
+            }
+          }
+        }
+
+        // 4. Update form_staging if this was promoted
+        const { data: libForm } = await supabase.from('form_library').select('promoted_from').eq('id', form.id).single();
+        if (libForm?.promoted_from) {
+          await supabase.from('form_staging').update({ status: 'pending', promoted_at: null }).eq('id', libForm.promoted_from);
+        }
+
+        // 5. Finally, delete from form_library
+        const { error } = await supabase.from('form_library').delete().eq('id', form.id);
+        if (error) throw error;
+        showToast('Platform form deleted - contact support to restore');
       }
-      // Delete from database
-      const { error } = await supabase.from('dealer_custom_forms').delete().eq('id', form.id);
-      if (error) throw error;
-      showToast('Custom form deleted');
+
       loadData();
     } catch (err) {
       showToast('Delete failed: ' + err.message, 'error');
     }
   };
+
+  // Keep old function name for compatibility
+  const deleteCustomForm = deleteForm;
 
   // === PACKAGE FUNCTIONS ===
   const getPackage = (dealType) => packages.find(p => p.deal_type === dealType);
@@ -633,15 +735,21 @@ export default function DocumentRulesPage() {
                                 Pending
                               </span>
                             )}
-                            {isCustom && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); deleteCustomForm(form); }}
-                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', padding: '4px 6px' }}
-                                title="Delete custom form"
-                              >
-                                Delete
-                              </button>
-                            )}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); deleteForm(form); }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: isCustom ? '#ef4444' : '#dc2626',
+                                cursor: 'pointer',
+                                fontSize: '12px',
+                                padding: '4px 6px',
+                                fontWeight: isCustom ? 'normal' : '700'
+                              }}
+                              title={isCustom ? "Delete custom form" : "⚠️ Delete platform form (requires support to restore)"}
+                            >
+                              {isCustom ? 'Delete' : '⚠️ Delete'}
+                            </button>
                           </td>
                         </tr>
                       );

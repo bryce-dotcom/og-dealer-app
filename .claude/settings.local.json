@@ -54,7 +54,12 @@
       "Bash(find:*)",
       "WebSearch",
       "Bash(grep:*)",
-      "Bash(supabase db push:*)"
+      "Bash(supabase db push:*)",
+      "Bash(supabase functions list:*)",
+      "Bash(npm install:*)",
+      "Bash(choco install:*)",
+      "Bash(vercel env:*)",
+      "Bash(npx vercel env ls:*)"
     ]
   }
 }

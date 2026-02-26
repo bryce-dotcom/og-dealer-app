@@ -158,11 +158,21 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
     price: formatCurrency(deal.price || deal.sale_price || 0),
     sale_price: formatCurrency(deal.price || deal.sale_price || 0),
     down_payment: formatCurrency(deal.down_payment || 0),
-    sales_tax: formatCurrency(deal.sales_tax || 0),
+    sales_tax: formatCurrency(deal.sales_tax || deal.tax_amount || 0),
     total_price: formatCurrency(deal.total_price || 0),
     total_sale: formatCurrency(deal.total_price || 0),
     doc_fee: formatCurrency(deal.doc_fee || 0),
     balance_due: formatCurrency(deal.balance_due || 0),
+
+    // === CALCULATED SUBTOTALS (for itemized forms) ===
+    total_cash_price: formatCurrency(deal.total_cash_price || 0),
+    subtotal_price: formatCurrency(deal.subtotal_price || 0),
+    subtotal_taxable: formatCurrency(deal.subtotal_taxable || 0),
+    net_trade_allowance: formatCurrency(deal.net_trade_allowance || 0),
+    total_credits: formatCurrency(deal.total_credits || 0),
+    net_taxable_amount: formatCurrency(deal.net_taxable_amount || 0),
+    tax_amount: formatCurrency(deal.tax_amount || deal.sales_tax || 0),
+    total_fees: formatCurrency(deal.total_fees || 0),
 
     // === FINANCING ===
     'financing.loan_amount': formatCurrency(amtFinanced),
@@ -261,6 +271,18 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
 function resolveFieldValue(mapping: any, context: Record<string, any>): string {
   if (!mapping) return '';
 
+  // Check for FORMULA (e.g., sum(field1,field2,field3))
+  if (mapping.formula) {
+    return evaluateFormula(mapping.formula, context);
+  }
+
+  // Check for REFERENCE (e.g., ref:other_pdf_field_name)
+  if (mapping.universal_field && mapping.universal_field.startsWith('ref:')) {
+    const refFieldName = mapping.universal_field.substring(4); // Remove 'ref:' prefix
+    // This will be resolved in a second pass after all fields are filled
+    return `__REF__${refFieldName}`;
+  }
+
   // Support both universal_field (string) and universal_fields (array)
   const fields: string[] = [];
   if (mapping.universal_fields && Array.isArray(mapping.universal_fields)) {
@@ -300,6 +322,53 @@ function resolveFieldValue(mapping: any, context: Record<string, any>): string {
   }
 
   return values.join(separator);
+}
+
+// ============================================
+// EVALUATE FORMULA
+// ============================================
+function evaluateFormula(formula: string, context: Record<string, any>): string {
+  try {
+    // Parse formula: sum(field1,field2,field3) or multiply(field1,field2)
+    const match = formula.match(/^(\w+)\((.*)\)$/);
+    if (!match) return '';
+
+    const operation = match[1].toLowerCase();
+    const fieldNames = match[2].split(',').map(f => f.trim());
+
+    // Resolve field values
+    const values = fieldNames.map(fieldName => {
+      const val = context[fieldName] || context[fieldName.split('.').pop() || ''] || '';
+      // Parse currency/number
+      const numStr = String(val).replace(/[$,]/g, '');
+      return parseFloat(numStr) || 0;
+    });
+
+    let result = 0;
+    switch (operation) {
+      case 'sum':
+        result = values.reduce((a, b) => a + b, 0);
+        break;
+      case 'multiply':
+      case 'product':
+        result = values.reduce((a, b) => a * b, 1);
+        break;
+      case 'subtract':
+        result = values[0] - (values.slice(1).reduce((a, b) => a + b, 0));
+        break;
+      case 'divide':
+        result = values[0] / (values[1] || 1);
+        break;
+      default:
+        return '';
+    }
+
+    // Return formatted as currency
+    return formatCurrency(result);
+  } catch (err) {
+    console.error('[FORMULA] Error evaluating:', formula, err);
+    return '';
+  }
 }
 
 // ============================================
@@ -363,9 +432,26 @@ async function fillPdfForm(
         if (value) {
           try {
             const textField = form.getTextField(fieldName);
+
             textField.setText(value);
+
+            // Set smaller font size for VIN fields to fit all characters
+            const fieldNameLower = fieldName.toLowerCase();
+            if (fieldNameLower.includes('vin') || fieldNameLower.includes('vehicle_id')) {
+              try {
+                textField.setMaxLength(50); // Allow full VIN length
+                textField.enableScrolling(); // Enable scrolling for long text
+                textField.setFontSize(7); // Very small to fit full VIN
+                textField.updateAppearances(form.getDefaultFont()); // Regenerate appearance
+                console.log(`[FILL] ${fieldName} = "${value}" (fontSize: 7, maxLength: 50, scrolling enabled)`);
+              } catch (e) {
+                console.log(`[FILL] ${fieldName} - Warning: Could not configure VIN field:`, e.message);
+              }
+            } else {
+              console.log(`[FILL] ${fieldName} = "${value.substring(0, 40)}"`);
+            }
+
             filledCount++;
-            console.log(`[FILL] ${fieldName} = "${value.substring(0, 40)}"`);
           } catch {
             // Might be a checkbox or other type
             try {
@@ -384,6 +470,38 @@ async function fillPdfForm(
 
     if (highlightCount > 0) {
       console.log(`[FILL] Highlighted ${highlightCount} fields`);
+    }
+
+    // SECOND PASS: Resolve reference fields (fields that copy from other fields)
+    console.log('[FILL] Starting second pass for reference field resolution...');
+    for (const field of fields) {
+      const fieldName = field.getName();
+      const mapping = mappingLookup.get(fieldName);
+
+      if (mapping && mapping.status !== 'highlight') {
+        const value = resolveFieldValue(mapping, context);
+
+        // Check if this is a reference field
+        if (value && value.startsWith('__REF__')) {
+          const refFieldName = value.substring(7); // Remove __REF__ prefix
+          console.log(`[FILL] Found reference field: ${fieldName} -> ${refFieldName}`);
+          try {
+            // Get the value from the referenced field
+            const refField = form.getTextField(refFieldName);
+            const refValue = refField.getText();
+
+            if (refValue) {
+              const textField = form.getTextField(fieldName);
+              textField.setText(refValue);
+              console.log(`[FILL] ${fieldName} = "${refValue}" (copied from: ${refFieldName})`);
+            } else {
+              console.log(`[FILL] ${fieldName} - referenced field ${refFieldName} has no value yet`);
+            }
+          } catch (err) {
+            console.error(`[FILL] Failed to resolve reference ${refFieldName} -> ${fieldName}:`, err.message);
+          }
+        }
+      }
     }
 
     // Capture field positions BEFORE flattening (flatten removes form fields)
