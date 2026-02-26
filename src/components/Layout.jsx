@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import AIAssistant from './AIAssistant';
 import FeedbackButton from './FeedbackButton';
+import CreditBalanceWidget from './CreditBalanceWidget';
 
 const ThemeContext = createContext(null);
 export const useTheme = () => ({
@@ -175,20 +176,23 @@ export default function Layout() {
 
   const SidebarContent = ({ onNavClick }) => (
     <>
-      <div style={{ padding: '16px', borderBottom: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{ backgroundColor: '#000', borderRadius: '8px', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <img src="/favicon.png" alt="OG Dealer" style={{ height: '28px', width: 'auto' }} />
-        </div>
-        {(sidebarOpen || isMobile) && (
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {dealer?.dealer_name || ''}
-            </div>
-            <div style={{ color: theme.textMuted, fontSize: '12px' }}>
-              {dealer?.subscription_status === 'trial' ? '14-day trial' : dealer?.state || 'UT'}
-            </div>
+      <div style={{ padding: '16px', borderBottom: `1px solid ${theme.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+          <div style={{ backgroundColor: '#000', borderRadius: '8px', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <img src="/favicon.png" alt="OG Dealer" style={{ height: '28px', width: 'auto' }} />
           </div>
-        )}
+          {(sidebarOpen || isMobile) && (
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {dealer?.dealer_name || ''}
+              </div>
+              <div style={{ color: theme.textMuted, fontSize: '12px' }}>
+                {dealer?.subscription_status === 'trial' ? '14-day trial' : dealer?.state || 'UT'}
+              </div>
+            </div>
+          )}
+        </div>
+        {(sidebarOpen || isMobile) && <CreditBalanceWidget />}
       </div>
 
       <nav style={{ flex: 1, padding: '8px', overflowY: 'auto' }}>
@@ -438,6 +442,7 @@ export default function Layout() {
                   <img src="/favicon.png" alt="OG Dealer" style={{ height: '28px', width: 'auto' }} />
                 </div>
                 <span style={{ fontWeight: '600', fontSize: '15px' }}>{dealer?.dealer_name || ''}</span>
+                <CreditBalanceWidget />
               </div>
               <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={{ background: 'none', border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '8px', cursor: 'pointer' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '20px' }}>

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { useTheme } from '../components/Layout';
 import { usePlaidLink } from 'react-plaid-link';
+import { CreditService } from '../lib/creditService';
 
 export default function BooksPage() {
   const { dealerId, inventory, bhphLoans, deals, customers } = useStore();
@@ -242,6 +243,22 @@ export default function BooksPage() {
 
   // Sync transactions for an account
   async function syncAccount(accountId = null, startDate = null, endDate = null) {
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealerId, 'PLAID_SYNC');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        showToast(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`, 'error');
+        return;
+      }
+      showToast(creditCheck.message || 'Unable to sync bank account', 'error');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setSyncing(true);
     try {
       const body = {
@@ -256,6 +273,20 @@ export default function BooksPage() {
       const { data, error } = await supabase.functions.invoke('plaid-sync', { body });
 
       if (error) throw error;
+
+      // Consume credits AFTER successful sync
+      await CreditService.consumeCredits(
+        dealerId,
+        'PLAID_SYNC',
+        accountId?.toString() || null,
+        {
+          account_id: accountId,
+          start_date: startDate,
+          end_date: endDate,
+          transactions_synced: data.transactions_count || 0
+        }
+      );
+
       showToast(data.message || 'Sync complete', 'success');
       await fetchAll(); // Refresh transactions
       setShowCustomSync(false);

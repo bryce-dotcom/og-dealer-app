@@ -7,6 +7,7 @@ import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 import { calculateFees } from '../lib/feeCalculator';
+import { CreditService } from '../lib/creditService';
 
 // ============ CONSTANTS ============
 const STAGES = [
@@ -760,6 +761,26 @@ export default function DealsPage() {
   };
 
   const openEditDeal = async (deal) => {
+    // Check credits for Deal Doctor analysis (shown in sidebar)
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'DEAL_DOCTOR');
+
+    if (!creditCheck.success && creditCheck.rate_limited) {
+      showToast(`Rate limit reached for Deal Doctor. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`, 'error');
+      // Still allow editing, but don't consume credits
+    } else if (creditCheck.success) {
+      // Consume credits for analysis (will happen async, non-blocking)
+      CreditService.consumeCredits(
+        dealer.id,
+        'DEAL_DOCTOR',
+        deal.id.toString(),
+        { deal_id: deal.id, vehicle_id: deal.vehicle_id }
+      ).catch(err => console.error('Failed to consume Deal Doctor credits:', err));
+
+      if (creditCheck.warning) {
+        console.warn(creditCheck.warning);
+      }
+    }
+
     setEditingDeal(deal);
     setDealForm({
       vehicle_id: deal.vehicle_id || '',
@@ -1105,6 +1126,22 @@ export default function DealsPage() {
       return;
     }
 
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'FORM_GENERATION');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        showToast(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`, 'error');
+        return;
+      }
+      showToast(creditCheck.message || 'Unable to generate documents', 'error');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setGenerating(true);
     try {
       // Call edge function to fill and generate documents
@@ -1115,15 +1152,27 @@ export default function DealsPage() {
       if (error) throw error;
 
       if (data?.success) {
+        // Consume credits AFTER successful generation
+        await CreditService.consumeCredits(
+          dealer.id,
+          'FORM_GENERATION',
+          editingDeal.id.toString(),
+          {
+            deal_id: editingDeal.id,
+            forms_count: data.documents?.length || 0,
+            deal_type: editingDeal.deal_type
+          }
+        );
+
         // Reload generated documents
         await loadGeneratedDocs(editingDeal.id);
-        
+
         // Update deal with generated docs info
         await supabase.from('deals').update({
           docs_generated: data.documents?.map(doc => doc.form_number) || [],
           docs_generated_at: new Date().toISOString()
         }).eq('id', editingDeal.id);
-        
+
         await refreshDeals();
         showToast(`${data.count || data.documents?.length || 0} documents generated`);
       } else {

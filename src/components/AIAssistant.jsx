@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import { CreditService } from '../lib/creditService';
 
 const MicIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -271,6 +272,29 @@ export default function AIAssistant({ isOpen, onClose }) {
     const userMessage = textToSend.trim();
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'AI_ARNIE_QUERY');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `⏱️ Yo, slow down! Rate limit hit. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`
+        }]);
+        return;
+      }
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: '⚠️ ' + (creditCheck.message || 'Unable to process query right now.')
+      }]);
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setLoading(true);
 
     let reply;
@@ -286,11 +310,19 @@ export default function AIAssistant({ isOpen, onClose }) {
 
       if (error) throw error;
       reply = data?.reply;
-      
+
       if (!reply) {
         console.log('No reply in data, falling back to local');
         throw new Error('No reply');
       }
+
+      // Consume credits AFTER successful API response
+      await CreditService.consumeCredits(
+        dealer.id,
+        'AI_ARNIE_QUERY',
+        null,
+        { query: userMessage, response_length: reply?.length, mode: 'api' }
+      );
     } catch (err) {
       console.log('API unavailable:', err.message, '- using local fallback');
       isLocal = true;
@@ -300,6 +332,14 @@ export default function AIAssistant({ isOpen, onClose }) {
     if (!reply) {
       reply = generateLocalResponse(userMessage);
       isLocal = true;
+
+      // Consume credits even for local fallback (still valuable)
+      await CreditService.consumeCredits(
+        dealer.id,
+        'AI_ARNIE_QUERY',
+        null,
+        { query: userMessage, response_length: reply?.length, mode: 'local' }
+      );
     }
 
     // Add indicator if using local mode (for debugging)
@@ -308,13 +348,13 @@ export default function AIAssistant({ isOpen, onClose }) {
     }
 
     setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-    
+
     // Speak the response if voice mode is on (without the debug text)
     if (voiceMode) {
       const speakReply = reply.replace("\n\n(Local mode - AI offline)", "");
       setTimeout(() => speakText(speakReply), 100);
     }
-    
+
     setLoading(false);
   };
 

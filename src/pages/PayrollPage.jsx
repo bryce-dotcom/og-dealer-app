@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { useTheme } from '../components/Layout';
+import { CreditService } from '../lib/creditService';
 
 export default function PayrollPage() {
   const { dealerId, dealer, employees, refreshEmployees, refreshDealer } = useStore();
@@ -244,11 +245,27 @@ export default function PayrollPage() {
   }
 
   async function runPayroll() {
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealerId, 'PAYROLL_RUN');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        alert(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      alert(creditCheck.message || 'Unable to run payroll');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setRunningPayroll(true);
     const { start, end } = getPayPeriodDates();
     const payDate = getNextPayDate();
     const activeEmps = employees.filter(e => e.active);
-    
+
     const { data: runData, error: runError } = await supabase.from('payroll_runs').insert({
       pay_period_start: start.toISOString().split('T')[0],
       pay_period_end: end.toISOString().split('T')[0],
@@ -256,7 +273,7 @@ export default function PayrollPage() {
       employee_count: activeEmps.length,
       total_gross: 0, total_net: 0, status: 'finalized', dealer_id: dealerId
     }).select().single();
-    
+
     if (runError) { alert('Failed: ' + runError.message); setRunningPayroll(false); return; }
     
     let totalGross = 0, totalNet = 0;
@@ -317,6 +334,20 @@ export default function PayrollPage() {
     }
     
     await supabase.from('payroll_runs').update({ total_gross: totalGross, total_net: totalNet }).eq('id', runData.id);
+
+    // Consume credits AFTER successful payroll run
+    await CreditService.consumeCredits(
+      dealerId,
+      'PAYROLL_RUN',
+      runData.id.toString(),
+      {
+        payroll_run_id: runData.id,
+        employee_count: activeEmps.length,
+        total_gross: totalGross,
+        pay_period: `${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`
+      }
+    );
+
     await fetchPayrollRuns();
     await fetchPaystubs();
     setRunningPayroll(false);

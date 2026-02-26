@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import { CreditService } from '../lib/creditService';
 
 // Vehicle makes and models
 const VEHICLE_DATA = {
@@ -244,6 +245,22 @@ export default function ResearchPage() {
 
   // Scanner functions
   const startScanner = async () => {
+    // Check credits BEFORE starting scanner
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'VIN_DECODE');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        alert(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      alert(creditCheck.message || 'Unable to decode VIN');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setShowScanner(true);
     setScannerError(null);
     try {
@@ -255,9 +272,17 @@ export default function ResearchPage() {
           await html5QrCodeRef.current.start(
             { facingMode: 'environment' },
             { fps: 10, qrbox: { width: 300, height: 100 }, aspectRatio: 3.0 },
-            (decodedText) => {
+            async (decodedText) => {
               const cleanVin = decodedText.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase();
               if (cleanVin.length === 17) {
+                // Consume credits AFTER successful decode
+                await CreditService.consumeCredits(
+                  dealer.id,
+                  'VIN_DECODE',
+                  cleanVin,
+                  { vin: cleanVin, method: 'camera_scan' }
+                );
+
                 setVin(cleanVin);
                 stopScanner();
               }
@@ -403,6 +428,22 @@ export default function ResearchPage() {
       return;
     }
 
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'MARKET_COMP_REPORT');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        setCompError(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      setCompError(creditCheck.message || 'Unable to search comparables');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setCompLoading(true);
     setCompError(null);
     setCompResults(null);
@@ -423,6 +464,21 @@ export default function ResearchPage() {
 
       if (fnError) throw fnError;
       if (data?.error) throw new Error(data.error);
+
+      // Consume credits AFTER successful operation
+      const vehicleId = `${compYearMin || 'any'}-${compYearMax || 'any'}-${compMake}-${compModel || 'any'}`;
+      await CreditService.consumeCredits(
+        dealer.id,
+        'MARKET_COMP_REPORT',
+        vehicleId,
+        {
+          year_min: compYearMin,
+          year_max: compYearMax,
+          make: compMake,
+          model: compModel,
+          results_count: data.vehicles?.length || 0
+        }
+      );
 
       setCompResults(data);
     } catch (err) {
@@ -455,6 +511,23 @@ export default function ResearchPage() {
       return;
     }
 
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'VEHICLE_RESEARCH');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        setError(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      setError(creditCheck.message || 'Unable to perform research');
+      return;
+    }
+
+    // Show warning if low on credits
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
     setLoading(true);
     setError(null);
     setResults(null);
@@ -477,6 +550,15 @@ export default function ResearchPage() {
 
       if (fnError) throw fnError;
       if (data?.error) throw new Error(data.error);
+
+      // Consume credits AFTER successful operation
+      const vehicleId = searchMode === 'vin' ? vin : `${year}-${make}-${model}`;
+      await CreditService.consumeCredits(
+        dealer.id,
+        'VEHICLE_RESEARCH',
+        vehicleId,
+        { searchMode, year, make, model, vin }
+      );
 
       setResults(data);
       setActiveTab('values');
