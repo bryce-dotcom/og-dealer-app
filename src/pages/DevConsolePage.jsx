@@ -95,6 +95,13 @@ export default function DevConsolePage() {
   const [payoutCalculator, setPayoutCalculator] = useState(null);
   const [dealersList, setDealersList] = useState([]);
 
+  // Subscription Management states
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [usageLogs, setUsageLogs] = useState([]);
+  const [selectedDealerSub, setSelectedDealerSub] = useState(null);
+  const [creditModal, setCreditModal] = useState(null); // { dealerId, dealerName, currentCredits }
+  const [planModal, setPlanModal] = useState(null); // { dealerId, dealerName, currentPlan }
+
   // Pricing Plans state
   const [pricingPlans, setPricingPlans] = useState([
     {
@@ -178,6 +185,24 @@ export default function DevConsolePage() {
         'Commission calculations use date ranges - verify period before processing',
       ],
       whenToUse: 'Track sales team performance, process monthly commission payouts, manage rep accounts.'
+    },
+    subscriptions: {
+      title: 'Subscription Management',
+      description: 'Admin panel for managing dealer subscriptions, credits, and billing.',
+      functions: [
+        { name: 'Add Bonus Credits', desc: 'Grant additional credits to any dealer (shown separately from monthly allowance)' },
+        { name: 'Change Plan', desc: 'Move dealer between Free/Pro/Dealer/Unlimited tiers - resets monthly credits' },
+        { name: 'Reset Credits', desc: 'Manually reset monthly credit allowance (use for billing cycle adjustments)' },
+        { name: 'View Usage', desc: 'See detailed credit usage logs for the last 30 days' },
+        { name: 'Usage Stats', desc: 'Breakdown of credits consumed by feature type' },
+      ],
+      warnings: [
+        'Changing plans RESETS monthly credits to the new plan allowance',
+        'Bonus credits are preserved when changing plans',
+        'Unlimited tier never deducts credits (usage is logged for analytics)',
+        'Credit changes are immediate - dealers see them instantly',
+      ],
+      whenToUse: 'Handle billing issues, comp credits for problems, upgrade/downgrade plans, investigate usage patterns.'
     },
     pricing: {
       title: 'Pricing Plans',
@@ -352,7 +377,7 @@ export default function DevConsolePage() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [dealers, users, feedback, audit, promos, templates, rules, staging, library, reps, signups, payouts, allDealersList] = await Promise.all([
+      const [dealers, users, feedback, audit, promos, templates, rules, staging, library, reps, signups, payouts, allDealersList, subs, usage] = await Promise.all([
         supabase.from('dealer_settings').select('*').order('id'),
         supabase.from('employees').select('*').order('name'),
         supabase.from('feedback').select('*').order('created_at', { ascending: false }),
@@ -366,6 +391,8 @@ export default function DevConsolePage() {
         supabase.from('rep_signups').select('*').order('signup_date', { ascending: false }),
         supabase.from('commission_payouts').select('*').order('payout_period', { ascending: false }),
         supabase.from('dealer_settings').select('id, dealer_name, account_status').order('dealer_name'),
+        supabase.from('subscriptions').select('*').order('dealer_id'),
+        supabase.from('credit_usage_log').select('*').order('created_at', { ascending: false }).limit(500),
       ]);
       if (dealers.data) setAllDealers(dealers.data);
       if (users.data) setAllUsers(users.data);
@@ -378,6 +405,8 @@ export default function DevConsolePage() {
       if (signups.data) setRepSignups(signups.data);
       if (payouts.data) setCommissionPayouts(payouts.data);
       if (allDealersList.data) setDealersList(allDealersList.data);
+      if (subs.data) setSubscriptions(subs.data);
+      if (usage.data) setUsageLogs(usage.data);
       if (staging.data) {
         console.log('[DevConsole] Loaded form_staging:', staging.data.length, 'forms');
         setFormStaging(staging.data);
@@ -859,6 +888,142 @@ export default function DevConsolePage() {
   const sendSMS = async () => {
     if (!smsModal?.to || !smsModal?.message) return;
     showToast('SMS integration not configured yet', 'error');
+  };
+
+  // ========== SUBSCRIPTION MANAGEMENT FUNCTIONS ==========
+
+  const CREDIT_COSTS = {
+    VEHICLE_RESEARCH: 10,
+    DEAL_DOCTOR: 15,
+    MARKET_COMP_REPORT: 20,
+    AI_ARNIE_QUERY: 3,
+    VIN_DECODE: 1,
+    FORM_GENERATION: 5,
+    PLAID_SYNC: 5,
+    PAYROLL_RUN: 10
+  };
+
+  const PLAN_CREDITS = {
+    free: 10,
+    pro: 500,
+    dealer: 1500,
+    unlimited: 999999
+  };
+
+  const refreshSubscriptionData = async () => {
+    try {
+      const [subs, usage] = await Promise.all([
+        supabase.from('subscriptions').select('*').order('dealer_id'),
+        supabase.from('credit_usage_log').select('*').order('created_at', { ascending: false }).limit(500)
+      ]);
+      if (subs.data) setSubscriptions(subs.data);
+      if (usage.data) setUsageLogs(usage.data);
+    } catch (err) {
+      showToast('Error fetching subscription data: ' + err.message, 'error');
+    }
+  };
+
+  const addBonusCredits = async (dealerId, amount) => {
+    setLoading(true);
+    try {
+      const sub = subscriptions.find(s => s.dealer_id === dealerId);
+      if (!sub) {
+        showToast('No subscription found for this dealer', 'error');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('subscriptions')
+        .update({
+          bonus_credits: sub.bonus_credits + amount,
+          updated_at: new Date().toISOString()
+        })
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+
+      showToast(`Added ${amount} bonus credits successfully`);
+      await refreshSubscriptionData();
+      setCreditModal(null);
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const changeDealerPlan = async (dealerId, newPlan) => {
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('subscriptions')
+        .update({
+          plan_tier: newPlan,
+          monthly_credit_allowance: PLAN_CREDITS[newPlan],
+          credits_remaining: PLAN_CREDITS[newPlan],
+          credits_used_this_cycle: 0,
+          billing_cycle_start: new Date().toISOString(),
+          billing_cycle_end: new Date(Date.now() + 30*24*60*60*1000).toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+
+      showToast(`Plan changed to ${newPlan.toUpperCase()} successfully`);
+      await refreshSubscriptionData();
+      setPlanModal(null);
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const resetMonthlyCredits = async (dealerId) => {
+    setLoading(true);
+    try {
+      const sub = subscriptions.find(s => s.dealer_id === dealerId);
+      if (!sub) {
+        showToast('No subscription found', 'error');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('subscriptions')
+        .update({
+          credits_remaining: sub.monthly_credit_allowance,
+          credits_used_this_cycle: 0,
+          billing_cycle_start: new Date().toISOString(),
+          billing_cycle_end: new Date(Date.now() + 30*24*60*60*1000).toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+
+      showToast('Monthly credits reset successfully');
+      await refreshSubscriptionData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const getDealerUsageStats = (dealerId) => {
+    const logs = usageLogs.filter(log => log.dealer_id === dealerId);
+    const last30Days = logs.filter(log =>
+      new Date(log.created_at) > new Date(Date.now() - 30*24*60*60*1000)
+    );
+
+    const byFeature = {};
+    last30Days.forEach(log => {
+      if (!byFeature[log.feature_type]) {
+        byFeature[log.feature_type] = { count: 0, credits: 0 };
+      }
+      byFeature[log.feature_type].count++;
+      byFeature[log.feature_type].credits += log.credits_used;
+    });
+
+    return { totalLogs: logs.length, last30Days: last30Days.length, byFeature };
   };
 
   // ========== FORM LIBRARY FUNCTIONS (3-Tab System) ==========
@@ -2423,6 +2588,7 @@ export default function DevConsolePage() {
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'feedback', label: 'Feedback (' + feedbackList.filter(f => f.status === 'new').length + ')' },
     { id: 'dealers', label: 'Dealers' },
+    { id: 'subscriptions', label: 'Subscriptions' },
     { id: 'salesreps', label: 'Sales Reps' },
     { id: 'pricing', label: 'Pricing Plans' },
     { id: 'users', label: 'Users' },
@@ -3220,6 +3386,293 @@ export default function DevConsolePage() {
                 <li>New signups will automatically use the updated pricing</li>
                 <li>The "Popular" badge highlights the recommended plan for new customers</li>
               </ul>
+            </div>
+          </div>
+        )}
+
+        {/* SUBSCRIPTIONS */}
+        {activeSection === 'subscriptions' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Subscription Management ({subscriptions.length})</h2>
+              <button onClick={refreshSubscriptionData} style={btnPrimary}>Refresh</button>
+            </div>
+
+            {/* Stats Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              <div style={cardStyle}>
+                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Total Subscriptions</div>
+                <div style={{ fontSize: '32px', fontWeight: '700' }}>{subscriptions.length}</div>
+              </div>
+              <div style={cardStyle}>
+                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Free Tier</div>
+                <div style={{ fontSize: '32px', fontWeight: '700', color: '#94a3b8' }}>
+                  {subscriptions.filter(s => s.plan_tier === 'free').length}
+                </div>
+              </div>
+              <div style={cardStyle}>
+                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Pro</div>
+                <div style={{ fontSize: '32px', fontWeight: '700', color: '#3b82f6' }}>
+                  {subscriptions.filter(s => s.plan_tier === 'pro').length}
+                </div>
+              </div>
+              <div style={cardStyle}>
+                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Dealer</div>
+                <div style={{ fontSize: '32px', fontWeight: '700', color: '#8b5cf6' }}>
+                  {subscriptions.filter(s => s.plan_tier === 'dealer').length}
+                </div>
+              </div>
+              <div style={cardStyle}>
+                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Unlimited</div>
+                <div style={{ fontSize: '32px', fontWeight: '700', color: '#22c55e' }}>
+                  {subscriptions.filter(s => s.plan_tier === 'unlimited').length}
+                </div>
+              </div>
+              <div style={cardStyle}>
+                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Total Usage (30d)</div>
+                <div style={{ fontSize: '32px', fontWeight: '700', color: '#f97316' }}>
+                  {usageLogs.filter(log => new Date(log.created_at) > new Date(Date.now() - 30*24*60*60*1000)).reduce((sum, log) => sum + log.credits_used, 0).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            {/* Subscriptions Table */}
+            <div style={cardStyle}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                      <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Dealer</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Plan</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Status</th>
+                      <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Credits</th>
+                      <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Bonus</th>
+                      <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Used</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Next Reset</th>
+                      <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subscriptions.map(sub => {
+                      const dealer = allDealers.find(d => d.id === sub.dealer_id);
+                      const stats = getDealerUsageStats(sub.dealer_id);
+                      const isLowCredits = sub.plan_tier !== 'unlimited' && (sub.credits_remaining + sub.bonus_credits) < (sub.monthly_credit_allowance * 0.2);
+
+                      return (
+                        <tr key={sub.id} style={{ borderBottom: '1px solid #3f3f46', backgroundColor: selectedDealerSub === sub.dealer_id ? '#3f3f46' : 'transparent' }}>
+                          <td style={{ padding: '12px', fontSize: '14px' }}>
+                            <div style={{ fontWeight: '600' }}>{dealer?.dealer_name || 'Unknown'}</div>
+                            <div style={{ fontSize: '12px', color: '#a1a1aa' }}>ID: {sub.dealer_id}</div>
+                          </td>
+                          <td style={{ padding: '12px' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 8px',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              backgroundColor: sub.plan_tier === 'unlimited' ? '#22c55e33' : sub.plan_tier === 'dealer' ? '#8b5cf633' : sub.plan_tier === 'pro' ? '#3b82f633' : '#3f3f46',
+                              color: sub.plan_tier === 'unlimited' ? '#22c55e' : sub.plan_tier === 'dealer' ? '#8b5cf6' : sub.plan_tier === 'pro' ? '#3b82f6' : '#a1a1aa'
+                            }}>
+                              {sub.plan_tier.toUpperCase()}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 8px',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              backgroundColor: sub.status === 'active' ? '#22c55e33' : sub.status === 'trialing' ? '#3b82f633' : '#ef444433',
+                              color: sub.status === 'active' ? '#22c55e' : sub.status === 'trialing' ? '#3b82f6' : '#ef4444'
+                            }}>
+                              {sub.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px', textAlign: 'right', fontSize: '14px', color: isLowCredits ? '#f97316' : '#fff', fontWeight: isLowCredits ? '700' : '400' }}>
+                            {sub.plan_tier === 'unlimited' ? '∞' : sub.credits_remaining.toLocaleString()}
+                          </td>
+                          <td style={{ padding: '12px', textAlign: 'right', fontSize: '14px', color: sub.bonus_credits > 0 ? '#22c55e' : '#a1a1aa' }}>
+                            {sub.bonus_credits > 0 ? `+${sub.bonus_credits}` : '—'}
+                          </td>
+                          <td style={{ padding: '12px', textAlign: 'right', fontSize: '14px', color: '#a1a1aa' }}>
+                            {sub.credits_used_this_cycle.toLocaleString()}
+                          </td>
+                          <td style={{ padding: '12px', fontSize: '12px', color: '#a1a1aa' }}>
+                            {new Date(sub.billing_cycle_end).toLocaleDateString()}
+                          </td>
+                          <td style={{ padding: '12px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                              <button
+                                onClick={() => setCreditModal({ dealerId: sub.dealer_id, dealerName: dealer?.dealer_name, currentCredits: sub.credits_remaining + sub.bonus_credits })}
+                                style={{ ...btnSecondary, padding: '6px 12px', fontSize: '12px' }}
+                                title="Add Bonus Credits"
+                              >
+                                + Credits
+                              </button>
+                              <button
+                                onClick={() => setPlanModal({ dealerId: sub.dealer_id, dealerName: dealer?.dealer_name, currentPlan: sub.plan_tier })}
+                                style={{ ...btnSecondary, padding: '6px 12px', fontSize: '12px' }}
+                                title="Change Plan"
+                              >
+                                Change Plan
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Reset monthly credits for ${dealer?.dealer_name}?`)) {
+                                    resetMonthlyCredits(sub.dealer_id);
+                                  }
+                                }}
+                                style={{ ...btnSecondary, padding: '6px 12px', fontSize: '12px' }}
+                                title="Reset Monthly Credits"
+                              >
+                                Reset
+                              </button>
+                              <button
+                                onClick={() => setSelectedDealerSub(selectedDealerSub === sub.dealer_id ? null : sub.dealer_id)}
+                                style={{ ...btnPrimary, padding: '6px 12px', fontSize: '12px' }}
+                              >
+                                {selectedDealerSub === sub.dealer_id ? 'Hide' : 'Usage'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Usage Details (Expanded Row) */}
+              {selectedDealerSub && (() => {
+                const stats = getDealerUsageStats(selectedDealerSub);
+                const dealer = allDealers.find(d => d.id === selectedDealerSub);
+                const recentLogs = usageLogs.filter(log => log.dealer_id === selectedDealerSub).slice(0, 10);
+
+                return (
+                  <div style={{ marginTop: '20px', padding: '16px', backgroundColor: '#18181b', borderRadius: '8px' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: '700', marginBottom: '16px' }}>
+                      Usage Details: {dealer?.dealer_name}
+                    </h3>
+
+                    {/* Usage by Feature */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#a1a1aa' }}>
+                        Last 30 Days by Feature:
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
+                        {Object.entries(stats.byFeature).map(([feature, data]) => (
+                          <div key={feature} style={{ padding: '12px', backgroundColor: '#27272a', borderRadius: '6px' }}>
+                            <div style={{ fontSize: '12px', color: '#a1a1aa', marginBottom: '4px' }}>
+                              {feature.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                            </div>
+                            <div style={{ fontSize: '18px', fontWeight: '700' }}>
+                              {data.count}x <span style={{ fontSize: '14px', color: '#a1a1aa' }}>({data.credits} credits)</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Recent Logs */}
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#a1a1aa' }}>
+                        Recent Activity (Last 10):
+                      </div>
+                      <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                        {recentLogs.map(log => (
+                          <div key={log.id} style={{ padding: '8px', backgroundColor: '#27272a', borderRadius: '6px', marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                              <span style={{ fontWeight: '600', fontSize: '13px' }}>
+                                {log.feature_type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                              </span>
+                              <span style={{ fontSize: '12px', color: '#a1a1aa', marginLeft: '12px' }}>
+                                {new Date(log.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '13px', fontWeight: '600', color: log.credits_used === 0 ? '#22c55e' : '#fff' }}>
+                              {log.credits_used === 0 ? 'Unlimited' : `-${log.credits_used}`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Add Credit Modal */}
+        {creditModal && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+            <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Add Bonus Credits</h3>
+              <p style={{ color: '#a1a1aa', fontSize: '14px', marginBottom: '16px' }}>
+                Dealer: <strong>{creditModal.dealerName}</strong><br />
+                Current Total: <strong>{creditModal.currentCredits} credits</strong>
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                {[50, 100, 250, 500, 1000, 2500].map(amount => (
+                  <button
+                    key={amount}
+                    onClick={() => addBonusCredits(creditModal.dealerId, amount)}
+                    style={{ ...btnPrimary, padding: '12px' }}
+                  >
+                    +{amount}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setCreditModal(null)} style={{ ...btnSecondary, flex: 1 }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Change Plan Modal */}
+        {planModal && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+            <div style={{ backgroundColor: '#27272a', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Change Subscription Plan</h3>
+              <p style={{ color: '#a1a1aa', fontSize: '14px', marginBottom: '16px' }}>
+                Dealer: <strong>{planModal.dealerName}</strong><br />
+                Current Plan: <strong style={{ textTransform: 'uppercase' }}>{planModal.currentPlan}</strong>
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                {['free', 'pro', 'dealer', 'unlimited'].map(plan => (
+                  <button
+                    key={plan}
+                    onClick={() => {
+                      if (confirm(`Change to ${plan.toUpperCase()} plan? This will reset their monthly credits to ${PLAN_CREDITS[plan]} (bonus credits preserved).`)) {
+                        changeDealerPlan(planModal.dealerId, plan);
+                      }
+                    }}
+                    disabled={plan === planModal.currentPlan}
+                    style={{
+                      ...btnPrimary,
+                      padding: '16px',
+                      backgroundColor: plan === planModal.currentPlan ? '#3f3f46' : '#3b82f6',
+                      cursor: plan === planModal.currentPlan ? 'not-allowed' : 'pointer',
+                      opacity: plan === planModal.currentPlan ? 0.5 : 1
+                    }}
+                  >
+                    <div style={{ fontWeight: '700', marginBottom: '4px', textTransform: 'uppercase' }}>{plan}</div>
+                    <div style={{ fontSize: '12px', opacity: 0.8 }}>
+                      {PLAN_CREDITS[plan] === 999999 ? '∞ credits' : `${PLAN_CREDITS[plan]} credits`}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setPlanModal(null)} style={{ ...btnSecondary, flex: 1 }}>Cancel</button>
+              </div>
             </div>
           </div>
         )}
