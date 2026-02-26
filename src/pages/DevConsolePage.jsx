@@ -102,6 +102,30 @@ export default function DevConsolePage() {
   const [selectedDealerSub, setSelectedDealerSub] = useState(null);
   const [creditModal, setCreditModal] = useState(null); // { dealerId, dealerName, currentCredits }
   const [planModal, setPlanModal] = useState(null); // { dealerId, dealerName, currentPlan }
+  const [subscriptionTab, setSubscriptionTab] = useState('dealers'); // dealers, config, beta, trials
+
+  // System Configuration states
+  const [systemPricing, setSystemPricing] = useState({
+    free: { price: 0, credits: 10 },
+    pro: { price: 79, credits: 500 },
+    dealer: { price: 149, credits: 1500 },
+    unlimited: { price: 299, credits: 999999 }
+  });
+  const [featureCosts, setFeatureCosts] = useState({
+    VEHICLE_RESEARCH: 10,
+    DEAL_DOCTOR: 15,
+    MARKET_COMP_REPORT: 20,
+    AI_ARNIE_QUERY: 3,
+    VIN_DECODE: 1,
+    FORM_GENERATION: 5,
+    PLAID_SYNC: 5,
+    PAYROLL_RUN: 10
+  });
+  const [trialConfig, setTrialConfig] = useState({
+    default_length_days: 30,
+    default_credits: 10,
+    auto_convert_to: 'free'
+  });
 
   // Pricing Plans state (UPDATED FOR CREDIT-BASED SYSTEM)
   const [pricingPlans, setPricingPlans] = useState([
@@ -1029,6 +1053,51 @@ export default function DevConsolePage() {
     });
 
     return { totalLogs: logs.length, last30Days: last30Days.length, byFeature };
+  };
+
+  const updateSystemPricing = (tier, field, value) => {
+    setSystemPricing({
+      ...systemPricing,
+      [tier]: { ...systemPricing[tier], [field]: value }
+    });
+    showToast(`${tier.toUpperCase()} ${field} updated to ${value}`);
+  };
+
+  const updateFeatureCost = (feature, cost) => {
+    setFeatureCosts({
+      ...featureCosts,
+      [feature]: cost
+    });
+    showToast(`${feature} cost updated to ${cost} credits`);
+  };
+
+  const grantBetaAccess = async (dealerId, accessType) => {
+    setLoading(true);
+    try {
+      const updates = accessType === 'unlimited'
+        ? { plan_tier: 'unlimited', credits_remaining: 999999, monthly_credit_allowance: 999999 }
+        : { plan_tier: 'free', credits_remaining: 10000, bonus_credits: 10000 };
+
+      const { error } = await supabase
+        .from('subscriptions')
+        .update(updates)
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+      showToast(`Beta access granted: ${accessType.toUpperCase()}`);
+      await refreshSubscriptionData();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  const updateTrialConfig = (field, value) => {
+    setTrialConfig({
+      ...trialConfig,
+      [field]: value
+    });
+    showToast(`Trial config updated: ${field} = ${value}`);
   };
 
   // ========== FORM LIBRARY FUNCTIONS (3-Tab System) ==========
@@ -3402,16 +3471,47 @@ export default function DevConsolePage() {
         {activeSection === 'subscriptions' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Subscription Management ({subscriptions.length})</h2>
-              <button onClick={refreshSubscriptionData} style={btnPrimary}>Refresh</button>
+              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Subscription Management</h2>
+              <button onClick={refreshSubscriptionData} style={btnPrimary}>Refresh Data</button>
             </div>
 
-            {/* Stats Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-              <div style={cardStyle}>
-                <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Total Subscriptions</div>
-                <div style={{ fontSize: '32px', fontWeight: '700' }}>{subscriptions.length}</div>
-              </div>
+            {/* Tab Navigation */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', borderBottom: '2px solid #27272a' }}>
+              {[
+                { id: 'dealers', label: 'Dealer Management' },
+                { id: 'config', label: 'System Config' },
+                { id: 'beta', label: 'Beta Access' },
+                { id: 'trials', label: 'Trial Settings' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setSubscriptionTab(tab.id)}
+                  style={{
+                    padding: '12px 24px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    backgroundColor: subscriptionTab === tab.id ? '#f97316' : 'transparent',
+                    color: subscriptionTab === tab.id ? '#000' : '#a1a1aa',
+                    border: 'none',
+                    borderBottom: subscriptionTab === tab.id ? '2px solid #f97316' : 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* TAB: Dealer Management */}
+            {subscriptionTab === 'dealers' && (
+              <div>
+                {/* Stats Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                  <div style={cardStyle}>
+                    <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Total Subscriptions</div>
+                    <div style={{ fontSize: '32px', fontWeight: '700' }}>{subscriptions.length}</div>
+                  </div>
               <div style={cardStyle}>
                 <div style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '8px' }}>Free Tier</div>
                 <div style={{ fontSize: '32px', fontWeight: '700', color: '#94a3b8' }}>
@@ -3610,6 +3710,312 @@ export default function DevConsolePage() {
                 );
               })()}
             </div>
+              </div>
+            )}
+
+            {/* TAB: System Configuration */}
+            {subscriptionTab === 'config' && (
+              <div>
+                {/* Pricing Tier Configuration */}
+                <div style={cardStyle}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Pricing Tier Configuration</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
+                    {Object.entries(systemPricing).map(([tier, config]) => (
+                      <div key={tier} style={{ padding: '16px', backgroundColor: '#18181b', borderRadius: '8px', border: '1px solid #27272a' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '700', marginBottom: '12px', textTransform: 'uppercase', color: tier === 'unlimited' ? '#22c55e' : tier === 'dealer' ? '#8b5cf6' : tier === 'pro' ? '#3b82f6' : '#a1a1aa' }}>
+                          {tier}
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <label style={{ fontSize: '12px', color: '#a1a1aa', display: 'block', marginBottom: '4px' }}>Monthly Price ($)</label>
+                          <input
+                            type="number"
+                            value={config.price}
+                            onChange={(e) => updateSystemPricing(tier, 'price', parseFloat(e.target.value) || 0)}
+                            style={{ ...inputStyle, width: '100%' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', color: '#a1a1aa', display: 'block', marginBottom: '4px' }}>Monthly Credits</label>
+                          <input
+                            type="number"
+                            value={config.credits === 999999 ? '∞' : config.credits}
+                            onChange={(e) => updateSystemPricing(tier, 'credits', parseInt(e.target.value) || 0)}
+                            disabled={tier === 'unlimited'}
+                            style={{ ...inputStyle, width: '100%' }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#18181b', borderRadius: '8px', fontSize: '13px', color: '#a1a1aa' }}>
+                    <strong>Note:</strong> These changes are in-memory only. To persist, you'd need to store in a config table or environment variables.
+                  </div>
+                </div>
+
+                {/* Feature Credit Costs */}
+                <div style={cardStyle}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Feature Credit Costs</h3>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Feature</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Credit Cost</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(featureCosts).map(([feature, cost]) => (
+                          <tr key={feature} style={{ borderBottom: '1px solid #3f3f46' }}>
+                            <td style={{ padding: '12px', fontSize: '14px', fontWeight: '600' }}>
+                              {feature.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}
+                            </td>
+                            <td style={{ padding: '12px', textAlign: 'right' }}>
+                              <input
+                                type="number"
+                                value={cost}
+                                onChange={(e) => updateFeatureCost(feature, parseInt(e.target.value) || 0)}
+                                style={{ ...inputStyle, width: '80px', textAlign: 'right', padding: '8px' }}
+                              />
+                            </td>
+                            <td style={{ padding: '12px', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                <button
+                                  onClick={() => updateFeatureCost(feature, 0)}
+                                  style={{ ...btnSuccess, padding: '6px 12px', fontSize: '12px' }}
+                                  title="Make Free"
+                                >
+                                  Free
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const newCost = prompt(`Enter new credit cost for ${feature}:`, cost);
+                                    if (newCost !== null && !isNaN(newCost)) {
+                                      updateFeatureCost(feature, parseInt(newCost));
+                                    }
+                                  }}
+                                  style={{ ...btnSecondary, padding: '6px 12px', fontSize: '12px' }}
+                                >
+                                  Edit
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#18181b', borderRadius: '8px', fontSize: '13px', color: '#a1a1aa' }}>
+                    <strong>Tip:</strong> Set cost to 0 to make a feature free. Costs are checked in creditService.js's CREDIT_COSTS object.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: Beta Access */}
+            {subscriptionTab === 'beta' && (
+              <div>
+                <div style={cardStyle}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Grant Beta Access</h3>
+                  <p style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '20px' }}>
+                    Quickly grant special access to dealers for beta testing or troubleshooting.
+                  </p>
+
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Dealer</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Current Plan</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Quick Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {subscriptions.slice(0, 20).map(sub => {
+                          const dealer = allDealers.find(d => d.id === sub.dealer_id);
+                          return (
+                            <tr key={sub.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                              <td style={{ padding: '12px', fontSize: '14px', fontWeight: '600' }}>
+                                {dealer?.dealer_name || 'Unknown'}
+                              </td>
+                              <td style={{ padding: '12px' }}>
+                                <span style={{
+                                  display: 'inline-block',
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  backgroundColor: sub.plan_tier === 'unlimited' ? '#22c55e33' : '#3f3f46',
+                                  color: sub.plan_tier === 'unlimited' ? '#22c55e' : '#a1a1aa'
+                                }}>
+                                  {sub.plan_tier.toUpperCase()}
+                                </span>
+                              </td>
+                              <td style={{ padding: '12px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                  <button
+                                    onClick={() => {
+                                      if (confirm(`Grant UNLIMITED access to ${dealer?.dealer_name}?`)) {
+                                        grantBetaAccess(sub.dealer_id, 'unlimited');
+                                      }
+                                    }}
+                                    disabled={sub.plan_tier === 'unlimited'}
+                                    style={{
+                                      ...btnSuccess,
+                                      padding: '6px 12px',
+                                      fontSize: '12px',
+                                      opacity: sub.plan_tier === 'unlimited' ? 0.5 : 1,
+                                      cursor: sub.plan_tier === 'unlimited' ? 'not-allowed' : 'pointer'
+                                    }}
+                                  >
+                                    Unlimited Access
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      if (confirm(`Grant 10,000 bonus credits to ${dealer?.dealer_name}?`)) {
+                                        grantBetaAccess(sub.dealer_id, 'bonus');
+                                      }
+                                    }}
+                                    style={{ ...btnPrimary, padding: '6px 12px', fontSize: '12px' }}
+                                  >
+                                    +10K Credits
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: Trial Settings */}
+            {subscriptionTab === 'trials' && (
+              <div>
+                <div style={cardStyle}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Trial Configuration</h3>
+                  <p style={{ fontSize: '14px', color: '#a1a1aa', marginBottom: '20px' }}>
+                    Configure default trial settings for new signups.
+                  </p>
+
+                  <div style={{ maxWidth: '600px' }}>
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                        Default Trial Length (Days)
+                      </label>
+                      <input
+                        type="number"
+                        value={trialConfig.default_length_days}
+                        onChange={(e) => updateTrialConfig('default_length_days', parseInt(e.target.value) || 30)}
+                        style={{ ...inputStyle, width: '200px' }}
+                      />
+                      <div style={{ fontSize: '12px', color: '#a1a1aa', marginTop: '4px' }}>
+                        New dealers get this many days of trial access
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                        Trial Credit Allowance
+                      </label>
+                      <input
+                        type="number"
+                        value={trialConfig.default_credits}
+                        onChange={(e) => updateTrialConfig('default_credits', parseInt(e.target.value) || 10)}
+                        style={{ ...inputStyle, width: '200px' }}
+                      />
+                      <div style={{ fontSize: '12px', color: '#a1a1aa', marginTop: '4px' }}>
+                        Credits given during trial period
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ fontSize: '14px', fontWeight: '600', display: 'block', marginBottom: '8px' }}>
+                        Auto-Convert To
+                      </label>
+                      <select
+                        value={trialConfig.auto_convert_to}
+                        onChange={(e) => updateTrialConfig('auto_convert_to', e.target.value)}
+                        style={{ ...inputStyle, width: '200px' }}
+                      >
+                        <option value="free">Free Tier</option>
+                        <option value="pro">Pro Tier ($79/mo)</option>
+                        <option value="dealer">Dealer Tier ($149/mo)</option>
+                        <option value="require_payment">Require Payment</option>
+                      </select>
+                      <div style={{ fontSize: '12px', color: '#a1a1aa', marginTop: '4px' }}>
+                        What happens when trial ends
+                      </div>
+                    </div>
+
+                    <div style={{ padding: '16px', backgroundColor: '#18181b', borderRadius: '8px' }}>
+                      <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Current Settings</h4>
+                      <ul style={{ fontSize: '13px', color: '#a1a1aa', margin: 0, paddingLeft: '20px' }}>
+                        <li>New signups get {trialConfig.default_length_days} days trial</li>
+                        <li>{trialConfig.default_credits} credits during trial</li>
+                        <li>After trial: Convert to {trialConfig.auto_convert_to}</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Active Trials */}
+                <div style={cardStyle}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Active Trials</h3>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #3f3f46' }}>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Dealer</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Trial Ends</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Days Left</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: '#a1a1aa' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {subscriptions.filter(s => s.status === 'trialing').map(sub => {
+                          const dealer = allDealers.find(d => d.id === sub.dealer_id);
+                          const daysLeft = Math.ceil((new Date(sub.trial_end) - new Date()) / (1000 * 60 * 60 * 24));
+                          return (
+                            <tr key={sub.id} style={{ borderBottom: '1px solid #3f3f46' }}>
+                              <td style={{ padding: '12px', fontSize: '14px', fontWeight: '600' }}>
+                                {dealer?.dealer_name || 'Unknown'}
+                              </td>
+                              <td style={{ padding: '12px', fontSize: '13px', color: '#a1a1aa' }}>
+                                {new Date(sub.trial_end).toLocaleDateString()}
+                              </td>
+                              <td style={{ padding: '12px', textAlign: 'right', fontSize: '14px', fontWeight: '700', color: daysLeft < 7 ? '#f97316' : '#fff' }}>
+                                {daysLeft} days
+                              </td>
+                              <td style={{ padding: '12px', textAlign: 'right' }}>
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Convert ${dealer?.dealer_name} to Pro plan now?`)) {
+                                      changeDealerPlan(sub.dealer_id, 'pro');
+                                    }
+                                  }}
+                                  style={{ ...btnPrimary, padding: '6px 12px', fontSize: '12px' }}
+                                >
+                                  Convert to Pro
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {subscriptions.filter(s => s.status === 'trialing').length === 0 && (
+                      <div style={{ padding: '40px', textAlign: 'center', color: '#a1a1aa' }}>
+                        No active trials
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
