@@ -152,8 +152,25 @@ export default function EmailMarketingPage() {
   }
 
   async function sendCampaign(campaignId) {
-    if (!confirm('Are you sure you want to send this campaign? This action cannot be undone.')) return;
+    const campaign = campaigns.find(c => c.id === campaignId);
+    if (!campaign) return;
 
+    const recipientSegment = segments.find(s => s.id === campaign.segment_id);
+    const recipientCount = campaign.segment_id
+      ? (recipientSegment?.customer_count || 0)
+      : (customers?.length || 0);
+    const recipientLabel = campaign.segment_id
+      ? `${recipientSegment?.name} segment`
+      : 'All Customers';
+
+    if (!confirm(`Send "${campaign.name}" to ${recipientCount} recipients?\n\nRecipients: ${recipientLabel}\nSubject: ${campaign.subject_line}\n\n⚠️ This action cannot be undone!`)) return;
+
+    if (recipientCount === 0) {
+      alert('No recipients found! Add customers or select a different audience.');
+      return;
+    }
+
+    setSaving(true);
     try {
       // Call edge function to send campaign
       const { data, error } = await supabase.functions.invoke('send-email-campaign', {
@@ -162,11 +179,13 @@ export default function EmailMarketingPage() {
 
       if (error) throw error;
 
-      alert(`Campaign sent to ${data.sent_count} recipients!`);
+      alert(`✓ Campaign sent!\n\nSent: ${data.sent_count}\nFailed: ${data.failed_count || 0}\nTotal: ${data.total_recipients}`);
       fetchAllData();
     } catch (err) {
       console.error('Send campaign error:', err);
-      alert('Failed to send campaign. Please try again.');
+      alert(`Failed to send campaign:\n${err.message || 'Unknown error'}\n\nCheck:\n• Resend API key is configured\n• Recipients have valid emails\n• Campaign content is complete`);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -789,16 +808,19 @@ export default function EmailMarketingPage() {
                 </div>
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', color: theme.textSecondary, marginBottom: '6px', fontWeight: '500' }}>
-                  Send To
+              <div style={{ padding: '16px', backgroundColor: theme.bg, border: `2px solid ${theme.accent}40`, borderRadius: '12px' }}>
+                <label style={{ display: 'block', fontSize: '14px', color: theme.text, marginBottom: '8px', fontWeight: '600' }}>
+                  📧 Send To
                 </label>
-                <select value={campaignForm.segment_id || ''} onChange={(e) => setCampaignForm(prev => ({ ...prev, segment_id: e.target.value || null }))} style={inputStyle}>
-                  <option value="">All Customers ({customers?.length || 0})</option>
+                <select value={campaignForm.segment_id || ''} onChange={(e) => setCampaignForm(prev => ({ ...prev, segment_id: e.target.value || null }))} style={{ ...inputStyle, fontSize: '15px', fontWeight: '500' }}>
+                  <option value="">📬 All Customers ({customers?.length || 0} recipients)</option>
                   {segments.map(seg => (
-                    <option key={seg.id} value={seg.id}>{seg.name} ({seg.customer_count || 0})</option>
+                    <option key={seg.id} value={seg.id}>👥 {seg.name} ({seg.customer_count || 0} recipients)</option>
                   ))}
                 </select>
+                <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '8px' }}>
+                  💡 Create audience segments to target specific customer groups
+                </div>
               </div>
             </div>
 
