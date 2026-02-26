@@ -124,9 +124,18 @@ export default function DealerOnboarding({ onComplete }) {
   const handleComplete = async () => {
     setLoading(true);
     try {
+      // Get current user to set as owner
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('You must be logged in to create a dealership');
+        setLoading(false);
+        return;
+      }
+
+      // Insert dealership with owner_user_id for multi-tenancy
       const { data: dealer, error: dealerError } = await supabase
         .from('dealer_settings')
-        .insert([formData])
+        .insert([{ ...formData, owner_user_id: user.id }])
         .select()
         .single();
       if (dealerError) throw dealerError;
