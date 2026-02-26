@@ -17,12 +17,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 };
 
-const CREDIT_PACKS = {
-  100: { credits: 100, price: 2500 }, // $25
-  500: { credits: 500, price: 10000 }, // $100
-  1000: { credits: 1000, price: 17500 } // $175
-};
-
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -30,12 +24,19 @@ serve(async (req) => {
   }
 
   try {
-    const { dealer_id, pack_size } = await req.json();
-    const pack = CREDIT_PACKS[pack_size];
+    const { dealer_id, amount_dollars, credits } = await req.json();
 
-    if (!pack) {
-      throw new Error('Invalid pack size. Choose 100, 500, or 1000.');
+    // Validate inputs
+    if (!dealer_id || !amount_dollars || !credits) {
+      throw new Error('Missing required parameters: dealer_id, amount_dollars, credits');
     }
+
+    // Ensure minimum $20 and $20 increments
+    if (amount_dollars < 20 || amount_dollars % 20 !== 0) {
+      throw new Error('Amount must be at least $20 and in $20 increments');
+    }
+
+    const price_cents = amount_dollars * 100;
 
     // Get Stripe customer
     const { data: subscription } = await supabase
@@ -50,31 +51,31 @@ serve(async (req) => {
 
     // Create payment intent
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: pack.price,
+      amount: price_cents,
       currency: 'usd',
       customer: subscription.stripe_customer_id,
       metadata: {
         dealer_id: dealer_id.toString(),
-        credits: pack.credits.toString(),
+        credits: credits.toString(),
         type: 'credit_pack'
       },
-      description: `${pack.credits} Credit Pack Purchase`
+      description: `${credits} Credit Pack Purchase ($${amount_dollars})`
     });
 
     // Record purchase
     await supabase.from('credit_packs').insert({
       dealer_id,
       stripe_payment_intent_id: paymentIntent.id,
-      credits_purchased: pack.credits,
-      price_cents: pack.price,
+      credits_purchased: credits,
+      price_cents: price_cents,
       status: 'pending'
     });
 
     return new Response(
       JSON.stringify({
         client_secret: paymentIntent.client_secret,
-        amount: pack.price / 100,
-        credits: pack.credits
+        amount: amount_dollars,
+        credits: credits
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

@@ -76,6 +76,40 @@ export default function BillingPage() {
     }
   }
 
+  async function handlePurchaseCredits(dollarAmount) {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Calculate credits (approximately $0.40 per credit)
+      const credits = Math.floor(dollarAmount * 2.5);
+
+      const { data, error: funcError } = await supabase.functions.invoke('stripe-purchase-credits', {
+        body: {
+          dealer_id: dealer.id,
+          amount_dollars: dollarAmount,
+          credits: credits
+        }
+      });
+
+      if (funcError) throw funcError;
+
+      if (data?.client_secret) {
+        // For now, redirect to a simple payment page
+        // In production, you'd use Stripe Elements here
+        setError(`Credit purchase of $${dollarAmount} (${credits} credits) - Payment integration coming soon!`);
+      } else {
+        throw new Error('No payment intent returned');
+      }
+    } catch (err) {
+      console.error('Purchase error:', err);
+      setError(err.message || 'Failed to purchase credits');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const formatFeatureName = (type) => {
     const names = {
       vehicle_research: 'Vehicle Research',
@@ -205,6 +239,32 @@ export default function BillingPage() {
           />
         </div>
       </div>
+
+      {/* Buy Additional Credits */}
+      {!isUnlimited && (
+        <div className="bg-zinc-900 rounded-lg p-6 mb-6 border border-zinc-800">
+          <h2 className="text-xl font-bold mb-4">Buy Additional Credits</h2>
+          <p className="text-gray-400 text-sm mb-4">
+            Need more credits? Purchase in $20 increments - credits never expire!
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {[20, 40, 60, 80, 100, 150, 200, 250, 300, 400, 500, 1000].map(amount => (
+              <button
+                key={amount}
+                onClick={() => handlePurchaseCredits(amount)}
+                disabled={loading}
+                className="p-4 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="text-2xl font-bold text-white mb-1">${amount}</div>
+                <div className="text-xs text-gray-400">≈ {Math.floor(amount * 2.5)} credits</div>
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg text-sm text-blue-400">
+            💡 <strong>Tip:</strong> Credits are approximately $0.40 each. Buying more saves more!
+          </div>
+        </div>
+      )}
 
       {/* Credit Costs Reference */}
       <div className="bg-zinc-900 rounded-lg p-6 mb-6 border border-zinc-800">
