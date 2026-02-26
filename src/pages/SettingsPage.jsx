@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import BillingPage from './BillingPage';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { dealerId, dealer, fetchAllData } = useStore();
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'general');
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
     bg: '#09090b', bgCard: '#18181b', border: '#27272a',
@@ -338,6 +341,11 @@ export default function SettingsPage() {
     cursor: 'pointer'
   };
 
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
+
   return (
     <div style={{ padding: '24px', backgroundColor: theme.bg, minHeight: '100vh' }}>
       {/* Header */}
@@ -348,7 +356,50 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* Message Alert */}
+      {/* Tab Navigation */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', borderBottom: `2px solid ${theme.border}` }}>
+        <button
+          onClick={() => handleTabChange('general')}
+          style={{
+            padding: '12px 24px',
+            fontSize: '14px',
+            fontWeight: '600',
+            backgroundColor: activeTab === 'general' ? theme.accent : 'transparent',
+            color: activeTab === 'general' ? '#000' : theme.textSecondary,
+            border: 'none',
+            borderBottom: activeTab === 'general' ? `2px solid ${theme.accent}` : 'none',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            borderRadius: '8px 8px 0 0'
+          }}
+        >
+          General
+        </button>
+        <button
+          onClick={() => handleTabChange('billing')}
+          style={{
+            padding: '12px 24px',
+            fontSize: '14px',
+            fontWeight: '600',
+            backgroundColor: activeTab === 'billing' ? theme.accent : 'transparent',
+            color: activeTab === 'billing' ? '#000' : theme.textSecondary,
+            border: 'none',
+            borderBottom: activeTab === 'billing' ? `2px solid ${theme.accent}` : 'none',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            borderRadius: '8px 8px 0 0'
+          }}
+        >
+          Billing & Credits
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'billing' ? (
+        <BillingPage />
+      ) : (
+        <>
+          {/* Message Alert */}
       {message.text && (
         <div style={{
           padding: '12px 16px',
@@ -869,6 +920,8 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
