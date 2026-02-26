@@ -3,6 +3,14 @@ import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import FormTemplateGenerator from '../components/FormTemplateGenerator';
 
+// Pricing constants for subscription plans
+const PLAN_PRICES = {
+  starter: 99.00,
+  pro: 199.00,
+  dealer: 399.00,
+  unlimited: 399.00
+};
+
 export default function DevConsolePage() {
   const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, setDealer, fetchAllData: storeRefresh } = useStore();
 
@@ -80,8 +88,44 @@ export default function DevConsolePage() {
   const [selectedRep, setSelectedRep] = useState(null);
   const [addRepModal, setAddRepModal] = useState(false);
   const [addSignupModal, setAddSignupModal] = useState(false);
+  const [signupFormData, setSignupFormData] = useState({
+    plan_type: 'pro',
+    monthly_rate: 199.00
+  });
   const [payoutCalculator, setPayoutCalculator] = useState(null);
   const [dealersList, setDealersList] = useState([]);
+
+  // Pricing Plans state
+  const [pricingPlans, setPricingPlans] = useState([
+    {
+      id: 'starter',
+      name: 'Starter',
+      price: 99.00,
+      features: ['1 user', '50 vehicles', 'Basic features', 'Email support'],
+      popular: false
+    },
+    {
+      id: 'pro',
+      name: 'Pro',
+      price: 199.00,
+      features: ['5 users', '200 vehicles', 'All features', 'Priority support', 'Email marketing', 'BHPH tracking'],
+      popular: true
+    },
+    {
+      id: 'dealer',
+      name: 'Dealer',
+      price: 399.00,
+      features: ['10 users', '500 vehicles', 'All features', 'Priority support', 'Custom forms', 'API access'],
+      popular: false
+    },
+    {
+      id: 'unlimited',
+      name: 'Unlimited',
+      price: 399.00,
+      features: ['Unlimited users', 'Unlimited vehicles', 'All features', 'Priority support', 'White label', 'Dedicated support'],
+      popular: false
+    }
+  ]);
 
   // Help content for each section
   const helpContent = {
@@ -119,6 +163,35 @@ export default function DevConsolePage() {
         'This action is PERMANENT and cannot be undone'
       ],
       whenToUse: 'Use View As to troubleshoot dealer issues. Delete only for test accounts or cancelled subscriptions.'
+    },
+    salesreps: {
+      title: 'Sales Reps',
+      description: 'Manage sales representatives, track signups, and calculate commissions.',
+      functions: [
+        { name: 'Add Rep', desc: 'Create new sales representative account' },
+        { name: 'Add Signup', desc: 'Record new dealer signup with commission details' },
+        { name: 'Payout Calculator', desc: 'Calculate commission payouts for selected period' },
+        { name: 'View Details', desc: 'See all signups and earnings for a specific rep' },
+      ],
+      warnings: [
+        'Canceling a signup stops future commissions but keeps history',
+        'Commission calculations use date ranges - verify period before processing',
+      ],
+      whenToUse: 'Track sales team performance, process monthly commission payouts, manage rep accounts.'
+    },
+    pricing: {
+      title: 'Pricing Plans',
+      description: 'Manage subscription plans, pricing tiers, and service features.',
+      functions: [
+        { name: 'View Plans', desc: 'See all available subscription tiers' },
+        { name: 'Edit Pricing', desc: 'Update monthly rates for each plan' },
+        { name: 'Manage Features', desc: 'Add/remove features included in each tier' },
+      ],
+      warnings: [
+        'Changes here affect new signups only',
+        'Existing customers keep their current rates',
+      ],
+      whenToUse: 'Review pricing regularly based on market conditions and feature additions'
     },
     users: {
       title: 'User Management',
@@ -2351,6 +2424,7 @@ export default function DevConsolePage() {
     { id: 'feedback', label: 'Feedback (' + feedbackList.filter(f => f.status === 'new').length + ')' },
     { id: 'dealers', label: 'Dealers' },
     { id: 'salesreps', label: 'Sales Reps' },
+    { id: 'pricing', label: 'Pricing Plans' },
     { id: 'users', label: 'Users' },
     { id: 'forms', label: 'Form Library (' + formLibrary.length + ')' },
     { id: 'data', label: 'Data Browser' },
@@ -3049,6 +3123,104 @@ export default function DevConsolePage() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* PRICING PLANS */}
+        {activeSection === 'pricing' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Pricing Plans</h2>
+              <HelpButton />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+              {pricingPlans.map(plan => (
+                <div
+                  key={plan.id}
+                  style={{
+                    ...cardStyle,
+                    position: 'relative',
+                    border: plan.popular ? '2px solid #3b82f6' : '2px solid transparent',
+                    marginBottom: 0
+                  }}
+                >
+                  {plan.popular && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '-10px',
+                      right: '16px',
+                      backgroundColor: '#3b82f6',
+                      color: '#fff',
+                      padding: '4px 12px',
+                      borderRadius: '12px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      textTransform: 'uppercase'
+                    }}>
+                      Popular
+                    </div>
+                  )}
+
+                  <div style={{ marginBottom: '16px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '8px' }}>
+                      {plan.name}
+                    </h3>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '16px' }}>
+                      <span style={{ fontSize: '36px', fontWeight: '700', color: '#22c55e' }}>
+                        ${plan.price.toFixed(0)}
+                      </span>
+                      <span style={{ fontSize: '14px', color: '#a1a1aa' }}>/month</span>
+                    </div>
+                  </div>
+
+                  <div style={{ borderTop: '1px solid #3f3f46', paddingTop: '16px' }}>
+                    <div style={{ fontSize: '13px', color: '#a1a1aa', marginBottom: '12px', fontWeight: '600' }}>
+                      Features:
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {plan.features.map((feature, idx) => (
+                        <li key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px' }}>
+                          <span style={{ color: '#22c55e', marginTop: '2px' }}>✓</span>
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      const newPrice = prompt(`Enter new monthly price for ${plan.name}:`, plan.price);
+                      if (newPrice && !isNaN(newPrice)) {
+                        setPricingPlans(pricingPlans.map(p =>
+                          p.id === plan.id ? { ...p, price: parseFloat(newPrice) } : p
+                        ));
+                        showToast(`${plan.name} plan updated to $${parseFloat(newPrice)}/mo`);
+                      }
+                    }}
+                    style={{
+                      ...btnSecondary,
+                      width: '100%',
+                      marginTop: '16px',
+                      fontSize: '13px',
+                      padding: '8px 12px'
+                    }}
+                  >
+                    Edit Price
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ ...cardStyle, marginTop: '24px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Important Notes</h3>
+              <ul style={{ fontSize: '13px', color: '#a1a1aa', lineHeight: '1.6', marginLeft: '20px' }}>
+                <li>Price changes here update the pricing constants used in the Add Signup modal</li>
+                <li>Existing customer subscriptions are not affected by price changes</li>
+                <li>New signups will automatically use the updated pricing</li>
+                <li>The "Popular" badge highlights the recommended plan for new customers</li>
+              </ul>
+            </div>
           </div>
         )}
 
@@ -5689,8 +5861,8 @@ export default function DevConsolePage() {
                 dealer_id: dealerId,
                 dealer_name: dealerName,
                 signup_date: formData.get('signup_date'),
-                plan_type: formData.get('plan_type'),
-                monthly_rate: parseFloat(formData.get('monthly_rate')),
+                plan_type: signupFormData.plan_type,
+                monthly_rate: signupFormData.monthly_rate,
                 status: 'active'
               });
             }}>
@@ -5722,20 +5894,50 @@ export default function DevConsolePage() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Plan Type</label>
-                    <select name="plan_type" defaultValue="pro" style={inputStyle}>
-                      <option value="starter">Starter</option>
-                      <option value="pro">Pro</option>
-                      <option value="dealer">Dealer</option>
-                      <option value="unlimited">Unlimited</option>
+                    <select
+                      name="plan_type"
+                      value={signupFormData.plan_type}
+                      onChange={(e) => {
+                        const newPlanType = e.target.value;
+                        const plan = pricingPlans.find(p => p.id === newPlanType);
+                        const newPrice = plan ? plan.price : 0;
+                        setSignupFormData({
+                          plan_type: newPlanType,
+                          monthly_rate: newPrice
+                        });
+                      }}
+                      style={inputStyle}
+                    >
+                      {pricingPlans.map(plan => (
+                        <option key={plan.id} value={plan.id}>
+                          {plan.name} (${plan.price.toFixed(0)}/mo)
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '13px', color: '#a1a1aa', marginBottom: '6px' }}>Monthly Rate ($)</label>
-                    <input name="monthly_rate" type="number" step="0.01" defaultValue="79.00" style={inputStyle} />
+                    <input
+                      name="monthly_rate"
+                      type="number"
+                      step="0.01"
+                      value={signupFormData.monthly_rate}
+                      readOnly
+                      style={{ ...inputStyle, backgroundColor: '#27272a', cursor: 'not-allowed' }}
+                    />
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
-                  <button type="button" onClick={() => setAddSignupModal(false)} style={btnSecondary}>Cancel</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddSignupModal(false);
+                      setSignupFormData({ plan_type: 'pro', monthly_rate: 199.00 });
+                    }}
+                    style={btnSecondary}
+                  >
+                    Cancel
+                  </button>
                   <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.5 : 1 }}>
                     {loading ? 'Adding...' : 'Add Signup'}
                   </button>
