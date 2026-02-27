@@ -22,6 +22,13 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       return;
     }
     fetchCashFlowData();
+
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(() => {
+      fetchCashFlowData();
+    }, 30000);
+
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dealerId, selectedPeriod]);
 
@@ -59,12 +66,12 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
   async function calculateRevenue(startDate, endDate) {
     try {
-      // Deal profit from completed deals
+      // Deal profit from sold/delivered deals
       const { data: deals, error: dealsError } = await supabase
         .from('deals')
-        .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee')
+        .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee, stage')
         .eq('dealer_id', dealerId)
-        .eq('deal_status', 'Completed')
+        .in('stage', ['Sold', 'Delivered'])
         .gte('date_of_sale', startDate)
         .lte('date_of_sale', endDate);
 
@@ -395,26 +402,52 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
           Cash Flow Waterfall - {periodLabels[selectedPeriod]}
         </h2>
 
-        {/* Period Selector */}
-        <select
-          value={selectedPeriod}
-          onChange={(e) => setSelectedPeriod(e.target.value)}
-          style={{
-            padding: '8px 12px',
-            backgroundColor: theme.bg,
-            color: theme.text,
-            border: `1px solid ${theme.border}`,
-            borderRadius: '6px',
-            fontSize: '13px',
-            cursor: 'pointer',
-            outline: 'none'
-          }}
-        >
-          <option value="current-month">This Month</option>
-          <option value="last-month">Last Month</option>
-          <option value="last-3-months">Last 3 Months</option>
-          <option value="ytd">Year to Date</option>
-        </select>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchCashFlowData()}
+            disabled={loading}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: theme.bg,
+              color: theme.textSecondary,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '6px',
+              fontSize: '13px',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              opacity: loading ? 0.5 : 1
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+            Refresh
+          </button>
+
+          {/* Period Selector */}
+          <select
+            value={selectedPeriod}
+            onChange={(e) => setSelectedPeriod(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: theme.bg,
+              color: theme.text,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '6px',
+              fontSize: '13px',
+              cursor: 'pointer',
+              outline: 'none'
+            }}
+          >
+            <option value="current-month">This Month</option>
+            <option value="last-month">Last Month</option>
+            <option value="last-3-months">Last 3 Months</option>
+            <option value="ytd">Year to Date</option>
+          </select>
+        </div>
       </div>
 
       {/* Revenue Display */}
