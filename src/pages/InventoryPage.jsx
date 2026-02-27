@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 
 export default function InventoryPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const store = useStore();
   const inventory = store.inventory || [];
   const dealer = store.dealer || {};
@@ -26,6 +27,16 @@ export default function InventoryPage() {
       else if (store.refreshInventory) store.refreshInventory();
     }
   }, [dealerId]);
+
+  // Handle navigation from DealsPage with vehicle detail
+  useEffect(() => {
+    if (location.state?.openDetail && location.state?.vehicle) {
+      setSelectedVehicle(location.state.vehicle);
+      setShowDetailModal(true);
+      // Clear state to prevent re-opening on refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('For Sale');

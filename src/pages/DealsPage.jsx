@@ -2,7 +2,7 @@
 // Replace entire file at: C:\OGDealer\src\pages\DealsPage.jsx
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
@@ -171,6 +171,7 @@ const INITIAL_DEAL_FORM = {
 
 export default function DealsPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { deals, inventory, customers, employees, dealer, dealerId, fetchAllData, refreshDeals } = useStore();
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
@@ -704,6 +705,58 @@ export default function DealsPage() {
     return '#ef4444';
   };
 
+  // ============ INVENTORY SYNC HELPERS ============
+  const determineInventoryStatus = (dealType, dealStage) => {
+    if (dealStage === 'Delivered' && dealType === 'BHPH') return 'BHPH';
+    if (dealStage === 'Sold' || dealStage === 'Delivered') return 'Sold';
+    return null; // No change needed for other stages
+  };
+
+  const updateInventoryStatus = async (vehicleId, newStatus) => {
+    if (!vehicleId || !newStatus) return;
+    try {
+      const { error } = await supabase
+        .from('inventory')
+        .update({ status: newStatus })
+        .eq('id', vehicleId)
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+      await fetchAllData(); // Refresh all data including inventory
+    } catch (err) {
+      console.error('Failed to update inventory status:', err);
+      // Don't block deal save, just log
+    }
+  };
+
+  const syncSalePriceToInventory = async (vehicleId, salePrice) => {
+    if (!vehicleId || salePrice <= 0) return;
+    try {
+      const { error } = await supabase
+        .from('inventory')
+        .update({ sale_price: salePrice })
+        .eq('id', vehicleId)
+        .eq('dealer_id', dealerId);
+
+      if (error) throw error;
+      await fetchAllData(); // Refresh all data including inventory
+    } catch (err) {
+      console.error('Failed to sync sale price to inventory:', err);
+      // Don't block deal save, just log
+    }
+  };
+
+  const openVehicleDetail = () => {
+    if (!selectedVehicle) return;
+    navigate('/inventory', {
+      state: {
+        vehicleId: selectedVehicle.id,
+        vehicle: selectedVehicle,
+        openDetail: true
+      }
+    });
+  };
+
   // ============ DRAG AND DROP ============
   const handleDragStart = (e, deal) => {
     if (deal.locked || deal.archived) {
@@ -740,6 +793,13 @@ export default function DealsPage() {
     try {
       const { error } = await supabase.from('deals').update({ stage: newStage }).eq('id', deal.id);
       if (error) throw error;
+
+      // Update inventory status if moving to Sold or Delivered
+      const inventoryStatus = determineInventoryStatus(deal.deal_type, newStage);
+      if (inventoryStatus && deal.vehicle_id) {
+        await updateInventoryStatus(deal.vehicle_id, inventoryStatus);
+      }
+
       await refreshDeals();
       showToast(`Moved to ${newStage}`);
     } catch (err) {
@@ -1038,6 +1098,20 @@ export default function DealsPage() {
         if (result.error) throw result.error;
         setEditingDeal(result.data);
         showToast('Deal created');
+      }
+
+      // Sync inventory status if deal is Sold or Delivered
+      const inventoryStatus = determineInventoryStatus(dealForm.deal_type, dealForm.stage);
+      if (inventoryStatus && dealForm.vehicle_id) {
+        await updateInventoryStatus(dealForm.vehicle_id, inventoryStatus);
+      }
+
+      // Sync sale price to inventory for Pending/Sold/Delivered deals
+      const updatedSalePrice = parseFloat(dealForm.vehicle_cash_price) || 0;
+      if (['Pending', 'Sold', 'Delivered'].includes(dealForm.stage) &&
+          updatedSalePrice > 0 &&
+          dealForm.vehicle_id) {
+        await syncSalePriceToInventory(dealForm.vehicle_id, updatedSalePrice);
       }
 
       await refreshDeals();
@@ -1405,15 +1479,31 @@ export default function DealsPage() {
                   </select>
                 </div>
 
-                {/* Vehicle Info */}
+                {/* Vehicle Info - Clickable */}
                 {selectedVehicle && (
-                  <div style={{ backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '12px', borderLeft: `4px solid ${theme.accent}` }}>
+                  <div
+                    onClick={openVehicleDetail}
+                    style={{
+                      backgroundColor: theme.bg,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: '8px',
+                      padding: '12px',
+                      borderLeft: `4px solid ${theme.accent}`,
+                      cursor: 'pointer',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgCard}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = theme.bg}
+                  >
                     <div style={{ color: theme.text, fontWeight: '600', fontSize: '15px', marginBottom: '6px' }}>{selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '12px' }}>
                       <div><span style={{ color: theme.textMuted }}>VIN:</span> <span style={{ color: theme.textSecondary, fontFamily: 'monospace' }}>{selectedVehicle.vin || 'N/A'}</span></div>
                       <div><span style={{ color: theme.textMuted }}>Miles:</span> <span style={{ color: theme.textSecondary }}>{(selectedVehicle.miles || selectedVehicle.mileage || 0).toLocaleString()}</span></div>
                       <div><span style={{ color: theme.textMuted }}>Color:</span> <span style={{ color: theme.textSecondary }}>{selectedVehicle.color || 'N/A'}</span></div>
                       <div><span style={{ color: theme.textMuted }}>Stock:</span> <span style={{ color: theme.textSecondary }}>{selectedVehicle.stock_number || 'N/A'}</span></div>
+                    </div>
+                    <div style={{ color: theme.accent, fontSize: '11px', marginTop: '8px', textAlign: 'right', fontWeight: '500' }}>
+                      Click to view details →
                     </div>
                   </div>
                 )}
