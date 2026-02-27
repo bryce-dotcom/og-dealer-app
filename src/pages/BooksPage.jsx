@@ -6,16 +6,9 @@ import { usePlaidLink } from 'react-plaid-link';
 import { CreditService } from '../lib/creditService';
 
 export default function BooksPage() {
-  const { dealerId, inventory, bhphLoans, deals, customers, currentEmployee } = useStore();
+  const { dealerId, inventory, bhphLoans, deals, customers } = useStore();
   const themeContext = useTheme();
   const theme = themeContext?.theme || { bg: '#09090b', bgCard: '#18181b', border: '#27272a', text: '#ffffff', textSecondary: '#a1a1aa', textMuted: '#71717a', accent: '#f97316' };
-
-  // Role-based access control for financial data
-  const userRoles = currentEmployee?.roles || [];
-  const hasNoEmployee = !currentEmployee;
-  const canViewFinancials = hasNoEmployee || userRoles.some(r =>
-    ['Owner', 'CEO', 'Admin', 'President', 'VP Operations', 'Finance'].includes(r)
-  );
 
   const [activeTab, setActiveTab] = useState('health');
   const [categories, setCategories] = useState([]);
@@ -655,35 +648,7 @@ export default function BooksPage() {
         </div>
       )}
 
-      {/* Access Control */}
-      {!canViewFinancials ? (
-        <div style={{ maxWidth: '600px', margin: '100px auto', textAlign: 'center' }}>
-          <div style={{ fontSize: '64px', marginBottom: '24px' }}>🔒</div>
-          <h1 style={{ fontSize: '32px', fontWeight: '700', color: theme.text, marginBottom: '16px' }}>Access Restricted</h1>
-          <p style={{ color: theme.textMuted, fontSize: '16px', lineHeight: '1.6', marginBottom: '24px' }}>
-            This page contains sensitive financial information and is only accessible to authorized personnel.
-          </p>
-          <div style={{
-            backgroundColor: theme.bgCard,
-            border: `1px solid ${theme.border}`,
-            borderRadius: '12px',
-            padding: '20px',
-            marginBottom: '24px'
-          }}>
-            <div style={{ color: theme.textSecondary, fontSize: '14px', marginBottom: '12px' }}>
-              <strong style={{ color: theme.text }}>Authorized Roles:</strong>
-            </div>
-            <div style={{ color: theme.accent, fontSize: '13px', lineHeight: '1.8' }}>
-              CEO • President • VP Operations • Finance • Admin • Owner
-            </div>
-          </div>
-          <p style={{ color: theme.textMuted, fontSize: '14px' }}>
-            If you believe you should have access, please contact your administrator.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div><h1 style={{ fontSize: '28px', fontWeight: '700', color: theme.text, margin: 0 }}>Books</h1><p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>Your money, simplified</p></div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '8px 12px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '8px' }}>
@@ -1282,8 +1247,6 @@ function TxnCard({ txn, categories, theme, f, fd, onBook, onIgnore, onReconcile,
           Skip
         </button>
       </div>
-        </>
-      )}
     </div>
   );
 }
