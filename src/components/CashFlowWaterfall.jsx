@@ -110,6 +110,7 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       return totalRevenue;
     } catch (error) {
       console.error('Error calculating revenue:', error);
+      console.error('Error details:', error.message, error.details, error.hint);
       return 0;
     }
   }
