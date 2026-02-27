@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import { CreditService } from '../lib/creditService';
 import FormTemplateGenerator from '../components/FormTemplateGenerator';
 
 // Pricing constants for subscription plans (CREDIT-BASED SYSTEM)
@@ -121,6 +122,9 @@ export default function DevConsolePage() {
     PLAID_SYNC: 5,
     PAYROLL_RUN: 10
   });
+  const [originalFeatureCosts, setOriginalFeatureCosts] = useState({});
+  const [hasUnsavedCostChanges, setHasUnsavedCostChanges] = useState(false);
+  const [savingCosts, setSavingCosts] = useState(false);
   const [trialConfig, setTrialConfig] = useState({
     default_length_days: 30,
     default_credits: 10,
@@ -402,6 +406,26 @@ export default function DevConsolePage() {
   };
 
   useEffect(() => { loadAllData(); }, []);
+
+  // Load credit costs from database
+  useEffect(() => {
+    async function loadCreditCostsFromDB() {
+      try {
+        const costs = await CreditService.getCreditCosts();
+        setFeatureCosts(costs);
+        setOriginalFeatureCosts(costs);
+      } catch (err) {
+        console.error('Failed to load credit costs:', err);
+      }
+    }
+    loadCreditCostsFromDB();
+  }, []);
+
+  // Track unsaved changes
+  useEffect(() => {
+    const hasChanges = JSON.stringify(featureCosts) !== JSON.stringify(originalFeatureCosts);
+    setHasUnsavedCostChanges(hasChanges);
+  }, [featureCosts, originalFeatureCosts]);
 
   const loadAllData = async () => {
     setLoading(true);
@@ -1068,7 +1092,29 @@ export default function DevConsolePage() {
       ...featureCosts,
       [feature]: cost
     });
-    showToast(`${feature} cost updated to ${cost} credits`);
+  };
+
+  const saveFeatureCosts = async () => {
+    setSavingCosts(true);
+    try {
+      const result = await CreditService.updateCreditCosts(featureCosts);
+      if (result.success) {
+        setOriginalFeatureCosts(featureCosts);
+        showToast('Credit costs saved successfully!');
+      } else {
+        showToast(`Failed to save: ${result.error}`, 'error');
+      }
+    } catch (err) {
+      console.error('Error saving credit costs:', err);
+      showToast('Failed to save credit costs', 'error');
+    } finally {
+      setSavingCosts(false);
+    }
+  };
+
+  const resetFeatureCosts = () => {
+    setFeatureCosts(originalFeatureCosts);
+    showToast('Changes discarded');
   };
 
   const grantBetaAccess = async (dealerId, accessType) => {
@@ -3754,7 +3800,14 @@ export default function DevConsolePage() {
 
                 {/* Feature Credit Costs */}
                 <div style={cardStyle}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Feature Credit Costs</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>Feature Credit Costs</h3>
+                    {hasUnsavedCostChanges && (
+                      <span style={{ fontSize: '13px', color: '#f97316', fontWeight: '600' }}>
+                        ● Unsaved Changes
+                      </span>
+                    )}
+                  </div>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
@@ -3773,40 +3826,49 @@ export default function DevConsolePage() {
                             <td style={{ padding: '12px', textAlign: 'right' }}>
                               <input
                                 type="number"
+                                min="0"
                                 value={cost}
                                 onChange={(e) => updateFeatureCost(feature, parseInt(e.target.value) || 0)}
                                 style={{ ...inputStyle, width: '80px', textAlign: 'right', padding: '8px' }}
                               />
                             </td>
                             <td style={{ padding: '12px', textAlign: 'right' }}>
-                              <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                                <button
-                                  onClick={() => updateFeatureCost(feature, 0)}
-                                  style={{ ...btnSuccess, padding: '6px 12px', fontSize: '12px' }}
-                                  title="Make Free"
-                                >
-                                  Free
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    const newCost = prompt(`Enter new credit cost for ${feature}:`, cost);
-                                    if (newCost !== null && !isNaN(newCost)) {
-                                      updateFeatureCost(feature, parseInt(newCost));
-                                    }
-                                  }}
-                                  style={{ ...btnSecondary, padding: '6px 12px', fontSize: '12px' }}
-                                >
-                                  Edit
-                                </button>
-                              </div>
+                              <button
+                                onClick={() => updateFeatureCost(feature, 0)}
+                                style={{ ...btnSecondary, padding: '6px 12px', fontSize: '12px' }}
+                                title="Make Free"
+                              >
+                                Make Free
+                              </button>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Save/Discard buttons */}
+                  {hasUnsavedCostChanges && (
+                    <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'flex-end', padding: '16px', backgroundColor: '#18181b', borderRadius: '8px', border: '1px solid #f97316' }}>
+                      <button
+                        onClick={resetFeatureCosts}
+                        disabled={savingCosts}
+                        style={{ ...btnSecondary, padding: '10px 20px' }}
+                      >
+                        Discard Changes
+                      </button>
+                      <button
+                        onClick={saveFeatureCosts}
+                        disabled={savingCosts}
+                        style={{ ...btnSuccess, padding: '10px 20px' }}
+                      >
+                        {savingCosts ? 'Saving...' : 'Save Changes'}
+                      </button>
+                    </div>
+                  )}
+
                   <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#18181b', borderRadius: '8px', fontSize: '13px', color: '#a1a1aa' }}>
-                    <strong>Tip:</strong> Set cost to 0 to make a feature free. Costs are checked in creditService.js's CREDIT_COSTS object.
+                    <strong>Note:</strong> Changes to credit costs are saved to the database and will take effect immediately across the system. Set cost to 0 to make a feature free.
                   </div>
                 </div>
               </div>

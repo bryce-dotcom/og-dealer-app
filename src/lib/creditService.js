@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 
-// Credit costs for each feature
-export const CREDIT_COSTS = {
+// Default credit costs (fallback if database config not available)
+const DEFAULT_CREDIT_COSTS = {
   VEHICLE_RESEARCH: 10,
   DEAL_DOCTOR: 15,
   MARKET_COMP_REPORT: 20,
@@ -11,6 +11,45 @@ export const CREDIT_COSTS = {
   PLAID_SYNC: 5,
   PAYROLL_RUN: 10
 };
+
+// Cache for credit costs (loaded from database)
+let CREDIT_COSTS_CACHE = null;
+let CACHE_TIMESTAMP = null;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Load credit costs from database (with caching)
+ * @returns {Promise<object>} Credit costs object
+ */
+async function loadCreditCosts() {
+  // Return cache if valid
+  if (CREDIT_COSTS_CACHE && CACHE_TIMESTAMP && (Date.now() - CACHE_TIMESTAMP < CACHE_TTL)) {
+    return CREDIT_COSTS_CACHE;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('system_config')
+      .select('value')
+      .eq('key', 'CREDIT_COSTS')
+      .single();
+
+    if (error || !data) {
+      console.warn('Failed to load credit costs from database, using defaults:', error);
+      return DEFAULT_CREDIT_COSTS;
+    }
+
+    CREDIT_COSTS_CACHE = data.value;
+    CACHE_TIMESTAMP = Date.now();
+    return CREDIT_COSTS_CACHE;
+  } catch (err) {
+    console.error('Error loading credit costs:', err);
+    return DEFAULT_CREDIT_COSTS;
+  }
+}
+
+// Export for backward compatibility (will use cached values)
+export const CREDIT_COSTS = DEFAULT_CREDIT_COSTS;
 
 // Rate limits (uses per hour when out of credits)
 export const RATE_LIMITS = {
@@ -35,7 +74,8 @@ export class CreditService {
    * @returns {Promise<{success: boolean, credits_remaining?: number, warning?: string, rate_limited?: boolean}>}
    */
   static async checkCredits(dealerId, featureType) {
-    const cost = CREDIT_COSTS[featureType.toUpperCase()] || 0;
+    const costs = await loadCreditCosts();
+    const cost = costs[featureType.toUpperCase()] || 0;
 
     const { data: subscription, error } = await supabase
       .from('subscriptions')
@@ -93,7 +133,8 @@ export class CreditService {
    * @returns {Promise<{success: boolean, credits_remaining: number}>}
    */
   static async consumeCredits(dealerId, featureType, contextId = null, metadata = null) {
-    const cost = CREDIT_COSTS[featureType.toUpperCase()] || 0;
+    const costs = await loadCreditCosts();
+    const cost = costs[featureType.toUpperCase()] || 0;
 
     const { data: subscription } = await supabase
       .from('subscriptions')
@@ -263,5 +304,44 @@ export class CreditService {
       unlimited: { price: 299, credits: 999999, name: 'Unlimited' }
     };
     return plans[tier] || plans.free;
+  }
+
+  /**
+   * Get current credit costs from database
+   * @returns {Promise<object>} Credit costs object
+   */
+  static async getCreditCosts() {
+    return await loadCreditCosts();
+  }
+
+  /**
+   * Update credit costs in database (admin only)
+   * @param {object} newCosts - New credit costs object
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  static async updateCreditCosts(newCosts) {
+    try {
+      const { error } = await supabase
+        .from('system_config')
+        .upsert({
+          key: 'CREDIT_COSTS',
+          value: newCosts,
+          description: 'Credit costs for each feature type'
+        }, { onConflict: 'key' });
+
+      if (error) {
+        console.error('Failed to update credit costs:', error);
+        return { success: false, error: error.message };
+      }
+
+      // Clear cache so new values are loaded immediately
+      CREDIT_COSTS_CACHE = null;
+      CACHE_TIMESTAMP = null;
+
+      return { success: true };
+    } catch (err) {
+      console.error('Error updating credit costs:', err);
+      return { success: false, error: err.message };
+    }
   }
 }
