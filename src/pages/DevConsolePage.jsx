@@ -1088,6 +1088,7 @@ export default function DevConsolePage() {
   };
 
   const updateFeatureCost = (feature, cost) => {
+    console.log('[DevConsole] Updating feature cost:', feature, cost);
     setFeatureCosts({
       ...featureCosts,
       [feature]: cost
@@ -1095,18 +1096,24 @@ export default function DevConsolePage() {
   };
 
   const saveFeatureCosts = async () => {
+    console.log('[DevConsole] Saving credit costs:', featureCosts);
     setSavingCosts(true);
     try {
       const result = await CreditService.updateCreditCosts(featureCosts);
+      console.log('[DevConsole] Save result:', result);
       if (result.success) {
         setOriginalFeatureCosts(featureCosts);
         showToast('Credit costs saved successfully!');
+        console.log('[DevConsole] Credit costs saved to database');
       } else {
-        showToast(`Failed to save: ${result.error}`, 'error');
+        console.error('[DevConsole] Failed to save:', result.error);
+        showToast(`Failed to save: ${result.error}`);
+        alert(`Error saving credit costs: ${result.error}`);
       }
     } catch (err) {
-      console.error('Error saving credit costs:', err);
-      showToast('Failed to save credit costs', 'error');
+      console.error('[DevConsole] Error saving credit costs:', err);
+      showToast('Failed to save credit costs');
+      alert(`Exception saving credit costs: ${err.message}`);
     } finally {
       setSavingCosts(false);
     }
@@ -3827,9 +3834,22 @@ export default function DevConsolePage() {
                               <input
                                 type="number"
                                 min="0"
+                                step="1"
                                 value={cost}
-                                onChange={(e) => updateFeatureCost(feature, parseInt(e.target.value) || 0)}
-                                style={{ ...inputStyle, width: '80px', textAlign: 'right', padding: '8px' }}
+                                onChange={(e) => {
+                                  const val = e.target.value === '' ? 0 : parseInt(e.target.value);
+                                  if (!isNaN(val)) {
+                                    updateFeatureCost(feature, val);
+                                  }
+                                }}
+                                onBlur={(e) => {
+                                  // Ensure it's a valid number on blur
+                                  const val = parseInt(e.target.value);
+                                  if (isNaN(val) || val < 0) {
+                                    updateFeatureCost(feature, 0);
+                                  }
+                                }}
+                                style={{ ...inputStyle, width: '100px', textAlign: 'right', padding: '8px' }}
                               />
                             </td>
                             <td style={{ padding: '12px', textAlign: 'right' }}>
