@@ -106,12 +106,11 @@ serve(async (req) => {
         );
       }
 
-      // Update employee with user_id and invited_at
+      // Update employee with user_id
       await supabase
         .from('employees')
         .update({
-          user_id: authData.user?.id,
-          invited_at: new Date().toISOString()
+          user_id: authData.user?.id
         })
         .eq('id', employee_id);
 
@@ -165,12 +164,15 @@ serve(async (req) => {
       dealer_id,
       name,
       email: email.toLowerCase(),
-      role,
-      access_level: access_level || 'employee',
-      pay_type: pay_type || 'hourly',
+      roles: role ? [role] : [],
+      pay_type: [pay_type || 'hourly'],
       active: true,
-      invited_at: new Date().toISOString(),
-      user_id: authData.user?.id || null
+      user_id: authData.user?.id || null,
+      hourly_rate: 0,
+      salary: 0,
+      pto_days_per_year: 10,
+      pto_accrued: 0,
+      pto_used: 0
     };
 
     if (pay_type === 'hourly' && hourly_rate) {
