@@ -66,16 +66,20 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
   async function calculateRevenue(startDate, endDate) {
     try {
+      console.log('Querying deals from', startDate, 'to', endDate);
+
       // Deal profit from sold/delivered deals
       const { data: deals, error: dealsError } = await supabase
         .from('deals')
-        .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee, stage')
+        .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee, stage, date_of_sale')
         .eq('dealer_id', dealerId)
         .in('stage', ['Sold', 'Delivered'])
         .gte('date_of_sale', startDate)
         .lte('date_of_sale', endDate);
 
       if (dealsError) throw dealsError;
+
+      console.log('Found', (deals || []).length, 'sold/delivered deals:', deals);
 
       const dealProfit = (deals || []).reduce((sum, deal) => {
         const vehicleProfit = (deal.sale_price || 0) - (deal.purchase_price || 0);
@@ -96,9 +100,14 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
       if (paymentsError) throw paymentsError;
 
-      const interestIncome = (payments || []).reduce((sum, p) => sum + (p.interest || 0), 0);
+      console.log('Found', (payments || []).length, 'BHPH payments');
 
-      return dealProfit + interestIncome;
+      const interestIncome = (payments || []).reduce((sum, p) => sum + (p.interest || 0), 0);
+      const totalRevenue = dealProfit + interestIncome;
+
+      console.log('Revenue breakdown - Deal profit:', dealProfit, 'Interest:', interestIncome, 'Total:', totalRevenue);
+
+      return totalRevenue;
     } catch (error) {
       console.error('Error calculating revenue:', error);
       return 0;
