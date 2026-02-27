@@ -68,7 +68,16 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
     try {
       console.log('Querying deals from', startDate, 'to', endDate);
 
-      // Deal profit from sold/delivered deals
+      // First check: how many sold/delivered deals exist total?
+      const { data: allSoldDeals } = await supabase
+        .from('deals')
+        .select('id, stage, date_of_sale')
+        .eq('dealer_id', dealerId)
+        .or('stage.eq.Sold,stage.eq.Delivered');
+
+      console.log('Total sold/delivered deals (all time):', (allSoldDeals || []).length, allSoldDeals);
+
+      // Deal profit from sold/delivered deals in date range
       const { data: deals, error: dealsError } = await supabase
         .from('deals')
         .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee, stage, date_of_sale')
@@ -79,7 +88,7 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
       if (dealsError) throw dealsError;
 
-      console.log('Found', (deals || []).length, 'sold/delivered deals:', deals);
+      console.log('Found', (deals || []).length, 'sold/delivered deals in date range:', deals);
 
       const dealProfit = (deals || []).reduce((sum, deal) => {
         const vehicleProfit = (deal.sale_price || 0) - (deal.purchase_price || 0);
