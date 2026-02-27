@@ -78,9 +78,20 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       console.log('Total sold/delivered deals (all time):', (allSoldDeals || []).length, allSoldDeals);
 
       // Deal profit from sold/delivered deals in date range
+      // Join with inventory to get purchase_price
       const { data: deals, error: dealsError } = await supabase
         .from('deals')
-        .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee, stage, date_of_sale')
+        .select(`
+          sale_price,
+          gap_insurance,
+          extended_warranty,
+          protection_package,
+          doc_fee,
+          stage,
+          date_of_sale,
+          vehicle_id,
+          inventory!deals_vehicle_id_fkey(purchase_price)
+        `)
         .eq('dealer_id', dealerId)
         .or('stage.eq.Sold,stage.eq.Delivered')
         .gte('date_of_sale', startDate)
@@ -91,7 +102,8 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       console.log('Found', (deals || []).length, 'sold/delivered deals in date range:', deals);
 
       const dealProfit = (deals || []).reduce((sum, deal) => {
-        const vehicleProfit = (deal.sale_price || 0) - (deal.purchase_price || 0);
+        const purchasePrice = deal.inventory?.purchase_price || 0;
+        const vehicleProfit = (deal.sale_price || 0) - purchasePrice;
         const fiProfit =
           (deal.gap_insurance || 0) * 0.75 +
           (deal.extended_warranty || 0) * 0.50 +
