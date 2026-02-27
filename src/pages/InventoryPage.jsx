@@ -557,6 +557,11 @@ export default function InventoryPage() {
         dealer_id: dealerId
       };
 
+      // Preserve photos when editing
+      if (selectedVehicle?.id && photos.length > 0) {
+        payload.photos = photos;
+      }
+
       console.log('Saving vehicle with payload:', payload);
 
       let result;
