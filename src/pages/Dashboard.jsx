@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import CashFlowWaterfall from '../components/CashFlowWaterfall';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -196,6 +197,11 @@ export default function Dashboard() {
               </div>
               <div style={{ fontSize: '13px', color: customersLooking.length > 0 ? '#f97316' : theme.textMuted }}>Looking</div>
             </div>
+          </div>
+
+          {/* Cash Flow Waterfall - Full Width */}
+          <div style={{ marginBottom: '24px' }}>
+            <CashFlowWaterfall dealerId={dealerId} period="current-month" />
           </div>
 
           {/* Main Content Grid */}
