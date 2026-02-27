@@ -161,40 +161,289 @@ export default function AIAssistant({ isOpen, onClose }) {
     setIsSpeaking(false);
   };
 
-  const buildContext = () => ({
-    dealer_name: dealer?.dealer_name || 'Unknown',
-    inventory_summary: {
-      total: inventory.length,
-      for_sale: inventory.filter(v => v.status === 'For Sale').length,
-      in_stock: inventory.filter(v => v.status === 'In Stock').length,
-      sold: inventory.filter(v => v.status === 'Sold').length,
-      bhph: inventory.filter(v => v.status === 'BHPH').length,
-    },
-    recent_inventory: inventory.slice(0, 10).map(v => ({
-      year: v.year, make: v.make, model: v.model, 
-      price: v.sale_price, status: v.status, miles: v.miles || v.mileage
-    })),
-    team: employees.filter(e => e.active).map(e => ({ name: e.name, roles: e.roles })),
-    bhph_loans: bhphLoans.map(l => ({
-      customer: l.customer_name, balance: l.current_balance, 
-      monthly: l.monthly_payment, status: l.status
-    })),
-    deals_count: deals.length,
-    recent_deals: deals.slice(0, 5).map(d => ({
-      customer: d.purchaser_name, price: d.price, date: d.date_of_sale
-    }))
-  });
+  const buildContext = async () => {
+    const dealerId = dealer?.id;
+    if (!dealerId) return { dealer_name: 'Unknown' };
 
-  // Local fallback - gangster grandpa Arnie responses
+    try {
+      // Fetch ALL major tables in parallel
+      const [
+        inventoryRes,
+        employeesRes,
+        bhphLoansRes,
+        bhphPaymentsRes,
+        dealsRes,
+        customersRes,
+        commissionsRes,
+        invCommissionsRes,
+        invExpensesRes,
+        manualExpensesRes,
+        assetsRes,
+        liabilitiesRes,
+        paystubsRes,
+        timeClockRes,
+        bankAccountsRes,
+        bankTransactionsRes,
+        documentPackagesRes,
+        formLibraryRes,
+        messageTemplatesRes
+      ] = await Promise.all([
+        supabase.from('inventory').select('*').eq('dealer_id', dealerId),
+        supabase.from('employees').select('*').eq('dealer_id', dealerId),
+        supabase.from('bhph_loans').select('*').eq('dealer_id', dealerId),
+        supabase.from('bhph_payments').select('*').eq('dealer_id', dealerId),
+        supabase.from('deals').select('*').eq('dealer_id', dealerId),
+        supabase.from('customers').select('*').eq('dealer_id', dealerId),
+        supabase.from('commissions').select('*').eq('dealer_id', dealerId),
+        supabase.from('inventory_commissions').select('*').eq('dealer_id', dealerId),
+        supabase.from('inventory_expenses').select('*').eq('dealer_id', dealerId),
+        supabase.from('manual_expenses').select('*').eq('dealer_id', dealerId),
+        supabase.from('assets').select('*').eq('dealer_id', dealerId),
+        supabase.from('liabilities').select('*').eq('dealer_id', dealerId),
+        supabase.from('paystubs').select('*').eq('dealer_id', dealerId),
+        supabase.from('time_clock').select('*').eq('dealer_id', dealerId),
+        supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId),
+        supabase.from('bank_transactions').select('*').eq('dealer_id', dealerId),
+        supabase.from('document_packages').select('*').eq('dealer_id', dealerId),
+        supabase.from('form_library').select('*').limit(100),
+        supabase.from('message_templates').select('*').eq('dealer_id', dealerId)
+      ]);
+
+      const inventory = inventoryRes.data || [];
+      const employees = employeesRes.data || [];
+      const bhphLoans = bhphLoansRes.data || [];
+      const bhphPayments = bhphPaymentsRes.data || [];
+      const deals = dealsRes.data || [];
+      const customers = customersRes.data || [];
+      const commissions = commissionsRes.data || [];
+      const invCommissions = invCommissionsRes.data || [];
+      const invExpenses = invExpensesRes.data || [];
+      const manualExpenses = manualExpensesRes.data || [];
+      const assets = assetsRes.data || [];
+      const liabilities = liabilitiesRes.data || [];
+      const paystubs = paystubsRes.data || [];
+      const timeClock = timeClockRes.data || [];
+      const bankAccounts = bankAccountsRes.data || [];
+      const bankTransactions = bankTransactionsRes.data || [];
+      const documentPackages = documentPackagesRes.data || [];
+      const formLibrary = formLibraryRes.data || [];
+      const messageTemplates = messageTemplatesRes.data || [];
+
+      return {
+        dealer: {
+          name: dealer?.dealer_name,
+          state: dealer?.state,
+          subscription_status: dealer?.subscription_status
+        },
+        inventory: {
+          total: inventory.length,
+          by_status: {
+            for_sale: inventory.filter(v => v.status === 'For Sale').length,
+            in_stock: inventory.filter(v => v.status === 'In Stock').length,
+            sold: inventory.filter(v => v.status === 'Sold').length,
+            bhph: inventory.filter(v => v.status === 'BHPH').length
+          },
+          total_value: inventory.reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0),
+          vehicles: inventory.map(v => ({
+            id: v.id,
+            year: v.year,
+            make: v.make,
+            model: v.model,
+            vin: v.vin,
+            price: v.sale_price,
+            purchase_price: v.purchase_price,
+            status: v.status,
+            miles: v.miles || v.mileage,
+            stock_number: v.stock_number
+          }))
+        },
+        employees: {
+          total: employees.length,
+          active: employees.filter(e => e.active).length,
+          list: employees.map(e => ({
+            id: e.id,
+            name: e.name,
+            active: e.active,
+            roles: e.roles,
+            job_title: e.job_title,
+            hourly_rate: e.hourly_rate,
+            hire_date: e.hire_date
+          }))
+        },
+        bhph: {
+          active_loans: bhphLoans.filter(l => l.status === 'Active').length,
+          total_owed: bhphLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0),
+          monthly_income: bhphLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0),
+          loans: bhphLoans.map(l => ({
+            id: l.id,
+            customer: l.client_name,
+            balance: l.balance,
+            monthly_payment: l.monthly_payment,
+            status: l.status,
+            payments_made: l.payments_made
+          })),
+          payments: bhphPayments.map(p => ({
+            loan_id: p.loan_id,
+            amount: p.amount,
+            principal: p.principal,
+            interest: p.interest,
+            payment_date: p.payment_date
+          }))
+        },
+        deals: {
+          total: deals.length,
+          by_status: {
+            completed: deals.filter(d => d.deal_status === 'Completed').length,
+            pending: deals.filter(d => d.deal_status === 'Pending').length
+          },
+          total_revenue: deals.filter(d => d.deal_status === 'Completed').reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0),
+          list: deals.map(d => ({
+            id: d.id,
+            customer: d.purchaser_name,
+            vehicle_id: d.vehicle_id,
+            price: d.price,
+            status: d.deal_status,
+            date: d.date_of_sale,
+            salesman: d.salesman,
+            deal_type: d.deal_type
+          }))
+        },
+        customers: {
+          total: customers.length,
+          list: customers.map(c => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone,
+            email: c.email,
+            city: c.city,
+            state: c.state
+          }))
+        },
+        commissions: {
+          pending: commissions.filter(c => c.status === 'pending').length,
+          paid: commissions.filter(c => c.status === 'paid').length,
+          total_pending: commissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0),
+          total_paid: commissions.filter(c => c.status === 'paid').reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0),
+          by_employee: commissions.reduce((acc, c) => {
+            if (!acc[c.employee_name]) acc[c.employee_name] = { pending: 0, paid: 0 };
+            if (c.status === 'pending') acc[c.employee_name].pending += parseFloat(c.amount) || 0;
+            if (c.status === 'paid') acc[c.employee_name].paid += parseFloat(c.amount) || 0;
+            return acc;
+          }, {}),
+          inventory_commissions: invCommissions.map(c => ({
+            inventory_id: c.inventory_id,
+            employee_name: c.employee_name,
+            role: c.role,
+            amount: c.amount
+          }))
+        },
+        expenses: {
+          inventory: invExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+          manual: manualExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+          total: invExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0) +
+                 manualExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+          inventory_expenses: invExpenses.map(e => ({
+            inventory_id: e.inventory_id,
+            description: e.description,
+            amount: e.amount,
+            category: e.category,
+            date: e.expense_date
+          })),
+          manual_expenses: manualExpenses.map(e => ({
+            description: e.description,
+            amount: e.amount,
+            vendor: e.vendor,
+            date: e.expense_date
+          }))
+        },
+        financials: {
+          assets: {
+            total: assets.length,
+            total_value: assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0),
+            list: assets.map(a => ({
+              name: a.name,
+              type: a.asset_type,
+              current_value: a.current_value,
+              purchase_price: a.purchase_price
+            }))
+          },
+          liabilities: {
+            total: liabilities.length,
+            total_owed: liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0),
+            monthly_payments: liabilities.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0),
+            list: liabilities.map(l => ({
+              name: l.name,
+              type: l.liability_type,
+              balance: l.current_balance,
+              monthly_payment: l.monthly_payment,
+              lender: l.lender
+            }))
+          },
+          bank_accounts: bankAccounts.map(b => ({
+            name: b.account_name,
+            type: b.account_type,
+            balance: b.current_balance,
+            institution: b.institution_name
+          })),
+          recent_transactions: bankTransactions.slice(0, 20).map(t => ({
+            date: t.transaction_date,
+            amount: t.amount,
+            merchant: t.merchant_name,
+            category: t.plaid_category
+          }))
+        },
+        payroll: {
+          recent_paystubs: paystubs.slice(0, 10).map(p => ({
+            employee_id: p.employee_id,
+            pay_date: p.pay_date,
+            gross_pay: p.gross_pay,
+            net_pay: p.net_pay
+          })),
+          total_payroll_ytd: paystubs.reduce((sum, p) => sum + (parseFloat(p.gross_pay) || 0), 0)
+        },
+        time_clock: {
+          recent_entries: timeClock.slice(0, 20).map(t => ({
+            employee_id: t.employee_id,
+            clock_in: t.clock_in,
+            clock_out: t.clock_out,
+            total_hours: t.total_hours
+          }))
+        },
+        documents: {
+          packages: documentPackages.map(p => ({
+            deal_type: p.deal_type,
+            state: p.state,
+            docs: p.docs
+          })),
+          forms_available: formLibrary.length
+        },
+        messaging: {
+          templates: messageTemplates.map(t => ({
+            name: t.name,
+            type: t.type,
+            subject: t.subject
+          }))
+        }
+      };
+    } catch (error) {
+      console.error('Error building context:', error);
+      return {
+        dealer_name: dealer?.dealer_name || 'Unknown',
+        error: 'Failed to load complete data'
+      };
+    }
+  };
+
+  // Local fallback - gangster grandpa Arnie responses (NOTE: Uses data from store, not comprehensive DB query)
   const generateLocalResponse = (query) => {
     const q = query.toLowerCase();
     const fmt = (n) => (n || 0).toLocaleString();
-    
+
     // Inventory
     if (q.includes('inventory') || q.includes('car') || q.includes('vehicle') || q.includes('stock') || q.includes('lot')) {
       const inStock = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale');
       const totalValue = inStock.reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0);
-      
+
       if (q.includes('how many') || q.includes('count')) {
         return `Listen, we got ${inStock.length} rides on the lot. That's $${fmt(totalValue)} in iron sittin' there. Capisce?`;
       }
@@ -212,25 +461,25 @@ export default function AIAssistant({ isOpen, onClose }) {
       return `${inStock.length} vehicles on the lot, about $${fmt(totalValue)} worth. What else you need, family?`;
     }
 
-    // Team
-    if (q.includes('team') || q.includes('employee') || q.includes('staff') || q.includes('who') || q.includes('crew')) {
+    // Team / Employees / Payroll
+    if (q.includes('team') || q.includes('employee') || q.includes('staff') || q.includes('who') || q.includes('crew') || q.includes('payroll')) {
       const active = (employees || []).filter(e => e.active);
       if (active.length === 0) return "Ain't got nobody in the system yet. We gotta fix that.";
       const names = active.map(e => e.name).join(', ');
       return `The crew? ${active.length} soldiers: ${names}. Good people, all of 'em.`;
     }
 
-    // BHPH
+    // BHPH / Loans / Financing
     if (q.includes('bhph') || q.includes('loan') || q.includes('owe') || q.includes('payment') || q.includes('financ')) {
       const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
       const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
       const monthly = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
-      
+
       if (activeLoans.length === 0) return "No BHPH deals active right now. Clean slate.";
       return `Got ${activeLoans.length} BHPH loans out there. People owe us $${fmt(totalOwed)}. That's $${fmt(monthly)} comin' in monthly. They better pay up.`;
     }
 
-    // Deals
+    // Deals / Sales
     if (q.includes('deal') || q.includes('sale') || q.includes('sold') || q.includes('sell')) {
       const allDeals = deals || [];
       const totalRevenue = allDeals.reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0);
@@ -244,6 +493,21 @@ export default function AIAssistant({ isOpen, onClose }) {
       return count > 0 ? `${count} customers in the book. That's ${count} relationships, family.` : "Customer list is empty. Gotta build that network.";
     }
 
+    // Commissions
+    if (q.includes('commission') || q.includes('owed to') || q.includes('pay out')) {
+      return "Yo, I got limited commission data in local mode. Try asking when the AI is online for the full breakdown.";
+    }
+
+    // Expenses
+    if (q.includes('expense') || q.includes('spending') || q.includes('cost')) {
+      return "I can see you're askin' about expenses. I got that data when the AI's online. Hang tight.";
+    }
+
+    // Assets / Liabilities / Books
+    if (q.includes('asset') || q.includes('liabilit') || q.includes('debt') || q.includes('owe') || q.includes('book')) {
+      return "Books and financials? I got all that when the AI's running. Let me fetch the full data for you.";
+    }
+
     // Greetings
     if (q.includes('hello') || q.includes('hey') || q.includes('hi') || q.includes('what\'s up') || q.includes('yo')) {
       return "Ay, what's good? O.G. Arnie here. What you need?";
@@ -251,19 +515,19 @@ export default function AIAssistant({ isOpen, onClose }) {
 
     // Help
     if (q.includes('help') || q.includes('what can you')) {
-      return "I know everything about the lot - inventory, BHPH loans, deals, the crew, customers. Just ask me straight up.";
+      return "I know EVERYTHING about your dealership - inventory, BHPH, deals, team, customers, commissions, expenses, assets, liabilities, payroll, time clock, bank accounts, documents, messaging. Just ask me straight up.";
     }
 
     // Summary
-    if (q.includes('summary') || q.includes('overview') || q.includes('status')) {
+    if (q.includes('summary') || q.includes('overview') || q.includes('status') || q.includes('dashboard')) {
       const inStock = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale');
       const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
       const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
-      return `Alright, here's the rundown: ${inStock.length} cars on the lot, ${activeLoans.length} BHPH loans worth $${fmt(totalOwed)}, ${(deals || []).length} deals closed, ${(employees || []).filter(e => e.active).length} on the team. We're movin'.`;
+      return `Alright, here's the rundown: ${inStock.length} cars on the lot, ${activeLoans.length} BHPH loans worth $${fmt(totalOwed)}, ${(deals || []).length} deals closed, ${(employees || []).filter(e => e.active).length} on the team. We're movin'. (For deeper numbers, I need the AI online)`;
     }
 
     // Default
-    return "I hear you, but I ain't sure what you're askin'. Try inventory, BHPH, deals, team, or customers. I got all the numbers.";
+    return "I hear you, but I ain't sure what you're askin'. Try inventory, BHPH, deals, team, customers, commissions, expenses, or books. I got all the data - just need the AI online for the deep dive.";
   };
 
   const handleSendWithText = async (textToSend) => {
@@ -301,9 +565,12 @@ export default function AIAssistant({ isOpen, onClose }) {
     let isLocal = false;
 
     try {
+      // Build comprehensive context
+      const context = await buildContext();
+
       // Try the API first
       const { data, error } = await supabase.functions.invoke('og-arnie-chat', {
-        body: { message: userMessage, context: buildContext() }
+        body: { message: userMessage, context }
       });
 
       console.log('API Response:', data, 'Error:', error);
