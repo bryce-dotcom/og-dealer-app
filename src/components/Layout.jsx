@@ -45,19 +45,46 @@ export default function Layout() {
 
       // Load dealer if not already in store
       if (!dealer) {
-        const { data: dealerData, error } = await supabase
+        // First check if user is a dealer owner
+        const { data: dealerData } = await supabase
           .from('dealer_settings')
           .select('*')
           .eq('owner_user_id', session.user.id)
-          .single();
+          .maybeSingle();
 
         if (dealerData) {
           setDealer(dealerData);
         } else {
-          // No dealer found, redirect to login
-          await supabase.auth.signOut();
-          navigate('/login');
-          return;
+          // Check if user is an employee
+          const { data: employeeData } = await supabase
+            .from('employees')
+            .select('dealer_id')
+            .eq('user_id', session.user.id)
+            .eq('active', true)
+            .maybeSingle();
+
+          if (employeeData) {
+            // Load dealer settings for this employee
+            const { data: empDealerData } = await supabase
+              .from('dealer_settings')
+              .select('*')
+              .eq('id', employeeData.dealer_id)
+              .single();
+
+            if (empDealerData) {
+              setDealer(empDealerData);
+            } else {
+              // Employee's dealer not found
+              await supabase.auth.signOut();
+              navigate('/login');
+              return;
+            }
+          } else {
+            // Not a dealer owner or employee
+            await supabase.auth.signOut();
+            navigate('/login');
+            return;
+          }
         }
       }
 
