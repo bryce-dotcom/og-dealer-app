@@ -26,7 +26,8 @@ export default function ReportsPage() {
   // Role check - if no currentEmployee, assume dealer owner (full access)
   const userRoles = currentEmployee?.roles || [];
   const hasNoEmployee = !currentEmployee;
-  const isAdmin = hasNoEmployee || userRoles.some(r => ['Owner', 'CEO', 'Admin', 'President', 'VP Operations'].includes(r));
+  const canViewFinancials = hasNoEmployee || userRoles.some(r => ['Owner', 'CEO', 'Admin', 'President', 'VP Operations', 'Finance'].includes(r));
+  const isAdmin = canViewFinancials; // Alias for backwards compatibility
   const isManager = isAdmin || userRoles.some(r => ['Manager', 'HR'].includes(r));
   const isHR = hasNoEmployee || userRoles.some(r => ['Owner', 'CEO', 'Admin', 'HR'].includes(r));
 
@@ -276,7 +277,35 @@ export default function ReportsPage() {
 
   return (
     <div style={{ padding: '24px', backgroundColor: theme.bg, minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+      {/* Access Control */}
+      {!canViewFinancials ? (
+        <div style={{ maxWidth: '600px', margin: '100px auto', textAlign: 'center' }}>
+          <div style={{ fontSize: '64px', marginBottom: '24px' }}>🔒</div>
+          <h1 style={{ fontSize: '32px', fontWeight: '700', color: theme.text, marginBottom: '16px' }}>Access Restricted</h1>
+          <p style={{ color: theme.textMuted, fontSize: '16px', lineHeight: '1.6', marginBottom: '24px' }}>
+            This page contains sensitive financial reports and is only accessible to authorized personnel.
+          </p>
+          <div style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: '12px',
+            padding: '20px',
+            marginBottom: '24px'
+          }}>
+            <div style={{ color: theme.textSecondary, fontSize: '14px', marginBottom: '12px' }}>
+              <strong style={{ color: theme.text }}>Authorized Roles:</strong>
+            </div>
+            <div style={{ color: theme.accent, fontSize: '13px', lineHeight: '1.8' }}>
+              CEO • President • VP Operations • Finance • Admin • Owner
+            </div>
+          </div>
+          <p style={{ color: theme.textMuted, fontSize: '14px' }}>
+            If you believe you should have access, please contact your administrator.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div><h1 style={{ fontSize: '28px', fontWeight: '700', color: theme.text, margin: 0 }}>Reports</h1><p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>Pick a report or build your own</p></div>
         {isManager && (
           <button onClick={() => { setActiveTab('custom'); setActiveReport(null); setReportData(null); setCustomResults(null); }} style={{ padding: '12px 24px', backgroundColor: '#8b5cf6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '15px' }}>🔧 Build Your Own</button>
@@ -508,6 +537,8 @@ export default function ReportsPage() {
             </>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );
