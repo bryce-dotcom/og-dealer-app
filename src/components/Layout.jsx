@@ -464,7 +464,7 @@ export default function Layout() {
           </>
         )}
 
-        <div style={{ position: 'fixed', bottom: '24px', left: '24px', zIndex: 35, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+        <div style={{ position: 'fixed', bottom: '24px', left: '24px', zIndex: 51, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', color: theme.text, boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span style={{ color: theme.accent }}>✨</span>Ask Arnie
           </div>
@@ -478,9 +478,7 @@ export default function Layout() {
             <div className="sparkle s3" style={{ position: 'absolute', top: '10px', left: '-8px', fontSize: '10px', animation: 'float 2s ease-in-out infinite 1s' }}>✨</div>
           </button>
         </div>
-<FeedbackButton />
-        <AIAssistant isOpen={showAI} onClose={() => setShowAI(false)} />
-
+        <FeedbackButton />
         <AIAssistant isOpen={showAI} onClose={() => setShowAI(false)} />
 
         <style>{`

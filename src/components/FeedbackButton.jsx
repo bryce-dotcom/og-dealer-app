@@ -52,7 +52,7 @@ export default function FeedbackButton() {
           position: 'fixed',
           bottom: '160px',
           left: '24px',
-          zIndex: 30,
+          zIndex: 51,
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
