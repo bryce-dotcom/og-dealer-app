@@ -95,12 +95,11 @@ export default function BillingPage() {
 
       if (funcError) throw funcError;
 
-      if (data?.client_secret) {
-        // For now, redirect to a simple payment page
-        // In production, you'd use Stripe Elements here
-        setError(`Credit purchase of $${dollarAmount} (${credits} credits) - Payment integration coming soon!`);
+      if (data?.url) {
+        // Redirect to Stripe Checkout
+        window.location.href = data.url;
       } else {
-        throw new Error('No payment intent returned');
+        throw new Error('No checkout URL returned');
       }
     } catch (err) {
       console.error('Purchase error:', err);
@@ -133,6 +132,11 @@ export default function BillingPage() {
       {new URLSearchParams(window.location.search).get('payment') === 'success' && (
         <div className="mb-6 p-4 bg-green-900/20 border border-green-500/30 rounded-lg text-green-400">
           ✓ Payment successful! Your plan has been upgraded.
+        </div>
+      )}
+      {new URLSearchParams(window.location.search).get('payment') === 'credits_success' && (
+        <div className="mb-6 p-4 bg-green-900/20 border border-green-500/30 rounded-lg text-green-400">
+          ✓ Credits purchased successfully! They've been added to your account.
         </div>
       )}
       {error && (

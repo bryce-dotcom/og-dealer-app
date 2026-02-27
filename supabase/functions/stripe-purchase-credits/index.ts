@@ -49,23 +49,35 @@ serve(async (req) => {
       throw new Error('No Stripe customer found. Please set up billing first.');
     }
 
-    // Create payment intent
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: price_cents,
-      currency: 'usd',
+    // Create Stripe Checkout session for one-time payment
+    const session = await stripe.checkout.sessions.create({
       customer: subscription.stripe_customer_id,
+      mode: 'payment',
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `${credits} Credit Pack`,
+            description: `Add ${credits} credits to your account`,
+          },
+          unit_amount: price_cents,
+        },
+        quantity: 1,
+      }],
+      success_url: `${req.headers.get('origin') || 'http://localhost:5173'}/settings?tab=billing&payment=credits_success`,
+      cancel_url: `${req.headers.get('origin') || 'http://localhost:5173'}/settings?tab=billing&payment=canceled`,
       metadata: {
         dealer_id: dealer_id.toString(),
         credits: credits.toString(),
         type: 'credit_pack'
-      },
-      description: `${credits} Credit Pack Purchase ($${amount_dollars})`
+      }
     });
 
-    // Record purchase
+    // Record purchase (will be updated by webhook when payment completes)
     await supabase.from('credit_packs').insert({
       dealer_id,
-      stripe_payment_intent_id: paymentIntent.id,
+      stripe_payment_intent_id: session.payment_intent as string,
       credits_purchased: credits,
       price_cents: price_cents,
       status: 'pending'
@@ -73,7 +85,8 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        client_secret: paymentIntent.client_secret,
+        session_id: session.id,
+        url: session.url,
         amount: amount_dollars,
         credits: credits
       }),
