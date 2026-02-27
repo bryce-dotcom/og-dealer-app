@@ -28,15 +28,39 @@ export default function Login() {
 
   // Load dealer for authenticated user
   const loadDealerForUser = async (userId) => {
-    const { data: dealer, error } = await supabase
+    // Check if user is a dealer owner
+    const { data: dealer } = await supabase
       .from('dealer_settings')
       .select('*')
       .eq('owner_user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (dealer) {
       setDealer(dealer);
       navigate('/dashboard');
+      return;
+    }
+
+    // Check if user is an employee
+    const { data: employeeData } = await supabase
+      .from('employees')
+      .select('dealer_id')
+      .eq('user_id', userId)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (employeeData) {
+      // Load dealer settings for this employee
+      const { data: empDealerData } = await supabase
+        .from('dealer_settings')
+        .select('*')
+        .eq('id', employeeData.dealer_id)
+        .single();
+
+      if (empDealerData) {
+        setDealer(empDealerData);
+        navigate('/dashboard');
+      }
     }
   };
 
@@ -57,22 +81,48 @@ export default function Login() {
       return;
     }
 
-    // Load dealer for this user
-    const { data: dealer, error: dealerError } = await supabase
+    // Check if user is a dealer owner
+    const { data: dealer } = await supabase
       .from('dealer_settings')
       .select('*')
       .eq('owner_user_id', data.user.id)
-      .single();
+      .maybeSingle();
 
-    if (dealerError || !dealer) {
-      setError('No dealership found for this account. Please sign up.');
-      await supabase.auth.signOut();
+    if (dealer) {
+      setDealer(dealer);
+      navigate('/dashboard');
       setLoading(false);
       return;
     }
 
-    setDealer(dealer);
-    navigate('/dashboard');
+    // Check if user is an employee
+    const { data: employeeData } = await supabase
+      .from('employees')
+      .select('dealer_id')
+      .eq('user_id', data.user.id)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (employeeData) {
+      // Load dealer settings for this employee
+      const { data: empDealerData } = await supabase
+        .from('dealer_settings')
+        .select('*')
+        .eq('id', employeeData.dealer_id)
+        .single();
+
+      if (empDealerData) {
+        setDealer(empDealerData);
+        navigate('/dashboard');
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Not a dealer owner or employee
+    setError('No dealership found for this account. Please sign up.');
+    await supabase.auth.signOut();
+    setLoading(false);
   };
 
   // Handle Password Reset
