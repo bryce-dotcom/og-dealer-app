@@ -73,7 +73,7 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
         .from('deals')
         .select('sale_price, purchase_price, gap_insurance, extended_warranty, protection_package, doc_fee, stage, date_of_sale')
         .eq('dealer_id', dealerId)
-        .in('stage', ['Sold', 'Delivered'])
+        .or('stage.eq.Sold,stage.eq.Delivered')
         .gte('date_of_sale', startDate)
         .lte('date_of_sale', endDate);
 
