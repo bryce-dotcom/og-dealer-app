@@ -7,13 +7,20 @@ import CashFlowWaterfall from '../components/CashFlowWaterfall';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, loading, fetchAllData } = useStore();
+  const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, loading, fetchAllData, currentEmployee } = useStore();
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
     bg: '#09090b', bgCard: '#18181b', border: '#27272a',
     text: '#ffffff', textSecondary: '#a1a1aa', textMuted: '#71717a',
     accent: '#f97316', accentBg: 'rgba(249,115,22,0.15)'
   };
+
+  // Role-based access control for sensitive financial data
+  const userRoles = currentEmployee?.roles || [];
+  const hasNoEmployee = !currentEmployee;
+  const canViewFinancials = hasNoEmployee || userRoles.some(r =>
+    ['Owner', 'CEO', 'Admin', 'President', 'VP Operations', 'Finance'].includes(r)
+  );
 
   const [customersLooking, setCustomersLooking] = useState([]);
   const [loadingLooking, setLoadingLooking] = useState(true);
@@ -154,14 +161,24 @@ export default function Dashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '24px' }}>
             <div style={cardStyle}>
               <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Fleet Value</div>
-              <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>${fleetValue.toLocaleString()}</div>
-              <div style={{ fontSize: '14px', color: theme.textSecondary, marginTop: '4px' }}>{forSale.length} units available</div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>
+                {canViewFinancials ? `$${fleetValue.toLocaleString()}` : '•••••'}
+              </div>
+              <div style={{ fontSize: '14px', color: theme.textSecondary, marginTop: '4px' }}>
+                {forSale.length} units available
+                {!canViewFinancials && <span style={{ color: theme.textMuted, marginLeft: '8px' }}>(Finance Only)</span>}
+              </div>
             </div>
 
             <div style={cardStyle}>
               <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>BHPH Portfolio</div>
-              <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>${bhphBalance.toLocaleString()}</div>
-              <div style={{ fontSize: '14px', color: theme.textSecondary, marginTop: '4px' }}>${monthlyIncome.toFixed(2)}/mo income • {activeLoans.length} active</div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>
+                {canViewFinancials ? `$${bhphBalance.toLocaleString()}` : '•••••'}
+              </div>
+              <div style={{ fontSize: '14px', color: theme.textSecondary, marginTop: '4px' }}>
+                {canViewFinancials ? `$${monthlyIncome.toFixed(2)}/mo income • ` : ''}{activeLoans.length} active
+                {!canViewFinancials && <span style={{ color: theme.textMuted, marginLeft: '8px' }}>(Finance Only)</span>}
+              </div>
             </div>
           </div>
 
@@ -199,10 +216,12 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Cash Flow Waterfall - Full Width */}
-          <div style={{ marginBottom: '24px' }}>
-            <CashFlowWaterfall dealerId={dealerId} period="current-month" />
-          </div>
+          {/* Cash Flow Waterfall - Full Width (Admin/Finance Only) */}
+          {canViewFinancials && (
+            <div style={{ marginBottom: '24px' }}>
+              <CashFlowWaterfall dealerId={dealerId} period="current-month" />
+            </div>
+          )}
 
           {/* Main Content Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
