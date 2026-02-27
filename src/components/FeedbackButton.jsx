@@ -50,8 +50,8 @@ export default function FeedbackButton() {
         onClick={() => setIsOpen(true)}
         style={{
           position: 'fixed',
-          bottom: '160px',
-          left: '24px',
+          bottom: '24px',
+          right: '24px',
           zIndex: 51,
           display: 'flex',
           alignItems: 'center',
