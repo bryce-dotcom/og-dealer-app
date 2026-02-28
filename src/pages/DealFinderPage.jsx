@@ -11,6 +11,8 @@ export default function DealFinderPage() {
   const [filter, setFilter] = useState('new'); // new, all, interested, passed
   const [selectedSearch, setSelectedSearch] = useState(null);
   const [runningSearch, setRunningSearch] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -89,40 +91,74 @@ export default function DealFinderPage() {
 
   const handleSaveSearch = async (e) => {
     e.preventDefault();
+    setSaveError(null);
+    setSaving(true);
 
-    const payload = {
-      ...formData,
-      dealer_id: dealer.id,
-      year_min: formData.year_min ? parseInt(formData.year_min) : null,
-      year_max: formData.year_max ? parseInt(formData.year_max) : null,
-      max_price: formData.max_price ? parseInt(formData.max_price) : null,
-      max_miles: formData.max_miles ? parseInt(formData.max_miles) : null,
-    };
+    try {
+      // Validate required fields
+      if (!formData.name || !formData.name.trim()) {
+        setSaveError('Search name is required');
+        setSaving(false);
+        return;
+      }
 
-    if (selectedSearch) {
-      // Update
-      const { error } = await supabase
-        .from('saved_vehicle_searches')
-        .update(payload)
-        .eq('id', selectedSearch.id);
+      if (!formData.make || !formData.make.trim()) {
+        setSaveError('Make is required');
+        setSaving(false);
+        return;
+      }
 
-      if (!error) {
+      const payload = {
+        ...formData,
+        dealer_id: dealer.id,
+        year_min: formData.year_min ? parseInt(formData.year_min) : null,
+        year_max: formData.year_max ? parseInt(formData.year_max) : null,
+        max_price: formData.max_price ? parseInt(formData.max_price) : null,
+        max_miles: formData.max_miles ? parseInt(formData.max_miles) : null,
+      };
+
+      if (selectedSearch) {
+        // Update
+        const { error } = await supabase
+          .from('saved_vehicle_searches')
+          .update(payload)
+          .eq('id', selectedSearch.id);
+
+        if (error) {
+          console.error('Update error:', error);
+          setSaveError(error.message || 'Failed to update search');
+          setSaving(false);
+          return;
+        }
+
         loadSearches();
         setShowAddSearch(false);
         setSelectedSearch(null);
         resetForm();
-      }
-    } else {
-      // Insert
-      const { error } = await supabase
-        .from('saved_vehicle_searches')
-        .insert(payload);
+        setSaveError(null);
+      } else {
+        // Insert
+        const { error } = await supabase
+          .from('saved_vehicle_searches')
+          .insert(payload);
 
-      if (!error) {
+        if (error) {
+          console.error('Insert error:', error);
+          setSaveError(error.message || 'Failed to create search');
+          setSaving(false);
+          return;
+        }
+
         loadSearches();
         setShowAddSearch(false);
         resetForm();
+        setSaveError(null);
       }
+    } catch (err) {
+      console.error('Save search error:', err);
+      setSaveError(err.message || 'An unexpected error occurred');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -172,6 +208,7 @@ export default function DealFinderPage() {
       active: search.active,
     });
     setShowAddSearch(true);
+    setSaveError(null);
   };
 
   const handleDeleteSearch = async (id) => {
@@ -313,7 +350,7 @@ export default function DealFinderPage() {
             >
               {runningSearch ? '🔄 Searching...' : '⚡ Run All Searches Now'}
             </button>
-            <button onClick={() => { setShowAddSearch(true); setSelectedSearch(null); resetForm(); }} style={buttonStyle(true)}>
+            <button onClick={() => { setShowAddSearch(true); setSelectedSearch(null); resetForm(); setSaveError(null); }} style={buttonStyle(true)}>
               + New Search
             </button>
           </div>
@@ -848,14 +885,38 @@ export default function DealFinderPage() {
                 </label>
               </div>
 
+              {saveError && (
+                <div style={{
+                  padding: '12px',
+                  backgroundColor: 'rgba(239,68,68,0.1)',
+                  border: '1px solid #ef4444',
+                  borderRadius: '8px',
+                  color: '#ef4444',
+                  fontSize: '14px',
+                  marginBottom: '16px'
+                }}>
+                  {saveError}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-                <button type="submit" style={{ ...buttonStyle(true), flex: 1 }}>
-                  {selectedSearch ? 'Update Search' : 'Create Search'}
+                <button
+                  type="submit"
+                  disabled={saving}
+                  style={{ ...buttonStyle(true), flex: 1, opacity: saving ? 0.6 : 1 }}
+                >
+                  {saving ? 'Saving...' : (selectedSearch ? 'Update Search' : 'Create Search')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowAddSearch(false); setSelectedSearch(null); resetForm(); }}
+                  onClick={() => {
+                    setShowAddSearch(false);
+                    setSelectedSearch(null);
+                    resetForm();
+                    setSaveError(null);
+                  }}
                   style={{ ...buttonStyle(false) }}
+                  disabled={saving}
                 >
                   Cancel
                 </button>
