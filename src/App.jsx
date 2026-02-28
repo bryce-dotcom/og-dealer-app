@@ -6,6 +6,7 @@ import InventoryPage from './pages/InventoryPage';
 import DealsPage from './pages/DealsPage';
 import BHPHPage from './pages/BHPHPage';
 import ResearchPage from './pages/ResearchPage';
+import DealFinderPage from './pages/DealFinderPage';
 import SettingsPage from './pages/SettingsPage';
 import EmbedInventory from './pages/EmbedInventory';
 import EmbedFindRig from './pages/EmbedFindRig';
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/document-rules" element={<DocumentRulesPage />} />
           <Route path="/research" element={<ResearchPage />} />
+          <Route path="/deal-finder" element={<DealFinderPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/timeclock" element={<TimeClockPage />} />
           <Route path="/payroll" element={<PayrollPage />} />

@@ -59,7 +59,8 @@
       "Bash(npm install:*)",
       "Bash(choco install:*)",
       "Bash(vercel env:*)",
-      "Bash(npx vercel env ls:*)"
+      "Bash(npx vercel env ls:*)",
+      "Bash(powershell -Command:*)"
     ]
   }
 }
