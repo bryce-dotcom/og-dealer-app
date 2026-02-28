@@ -20,6 +20,12 @@ export default function DealFinderPage() {
     make: '',
     model: '',
     trim: '',
+    engine_type: '',
+    drivetrain: '',
+    transmission: '',
+    body_type: '',
+    cab_type: '',
+    bed_length: '',
     max_price: '',
     max_miles: '',
     zip_code: dealer?.zip || '84065',
@@ -128,6 +134,12 @@ export default function DealFinderPage() {
       make: '',
       model: '',
       trim: '',
+      engine_type: '',
+      drivetrain: '',
+      transmission: '',
+      body_type: '',
+      cab_type: '',
+      bed_length: '',
       max_price: '',
       max_miles: '',
       zip_code: dealer?.zip || '84065',
@@ -146,6 +158,12 @@ export default function DealFinderPage() {
       make: search.make,
       model: search.model || '',
       trim: search.trim || '',
+      engine_type: search.engine_type || '',
+      drivetrain: search.drivetrain || '',
+      transmission: search.transmission || '',
+      body_type: search.body_type || '',
+      cab_type: search.cab_type || '',
+      bed_length: search.bed_length || '',
       max_price: search.max_price || '',
       max_miles: search.max_miles || '',
       zip_code: search.zip_code,
@@ -318,6 +336,15 @@ export default function DealFinderPage() {
                     <div style={{ fontSize: '13px', color: '#71717a' }}>
                       {search.year_min && search.year_max ? `${search.year_min}-${search.year_max}` : search.year_min || search.year_max || 'Any year'} {search.make} {search.model || ''}
                     </div>
+                    {(search.engine_type || search.drivetrain || search.transmission) && (
+                      <div style={{ fontSize: '12px', color: '#a1a1aa', marginTop: '2px' }}>
+                        {[
+                          search.engine_type && search.engine_type.charAt(0).toUpperCase() + search.engine_type.slice(1),
+                          search.drivetrain,
+                          search.transmission && search.transmission.charAt(0).toUpperCase() + search.transmission.slice(1)
+                        ].filter(Boolean).join(' • ')}
+                      </div>
+                    )}
                     {search.max_price && (
                       <div style={{ fontSize: '13px', color: '#71717a' }}>
                         Under ${search.max_price.toLocaleString()}
@@ -671,6 +698,114 @@ export default function DealFinderPage() {
                     placeholder="Lariat"
                     style={inputStyle}
                   />
+                </div>
+              </div>
+
+              {/* Specific filters */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                    Engine Type
+                  </label>
+                  <select
+                    value={formData.engine_type}
+                    onChange={(e) => setFormData({ ...formData, engine_type: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">Any</option>
+                    <option value="gas">Gas</option>
+                    <option value="diesel">Diesel</option>
+                    <option value="electric">Electric</option>
+                    <option value="hybrid">Hybrid</option>
+                    <option value="flex-fuel">Flex Fuel</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                    Drivetrain
+                  </label>
+                  <select
+                    value={formData.drivetrain}
+                    onChange={(e) => setFormData({ ...formData, drivetrain: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">Any</option>
+                    <option value="2WD">2WD</option>
+                    <option value="4WD">4WD</option>
+                    <option value="AWD">AWD</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                    Transmission
+                  </label>
+                  <select
+                    value={formData.transmission}
+                    onChange={(e) => setFormData({ ...formData, transmission: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">Any</option>
+                    <option value="automatic">Automatic</option>
+                    <option value="manual">Manual</option>
+                    <option value="CVT">CVT</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                    Body Type
+                  </label>
+                  <select
+                    value={formData.body_type}
+                    onChange={(e) => setFormData({ ...formData, body_type: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">Any</option>
+                    <option value="sedan">Sedan</option>
+                    <option value="coupe">Coupe</option>
+                    <option value="SUV">SUV</option>
+                    <option value="truck">Truck</option>
+                    <option value="van">Van</option>
+                    <option value="wagon">Wagon</option>
+                    <option value="hatchback">Hatchback</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Truck-specific filters */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                    Cab Type (trucks)
+                  </label>
+                  <select
+                    value={formData.cab_type}
+                    onChange={(e) => setFormData({ ...formData, cab_type: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">Any</option>
+                    <option value="crew cab">Crew Cab</option>
+                    <option value="extended cab">Extended Cab</option>
+                    <option value="regular cab">Regular Cab</option>
+                    <option value="mega cab">Mega Cab</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                    Bed Length (trucks)
+                  </label>
+                  <select
+                    value={formData.bed_length}
+                    onChange={(e) => setFormData({ ...formData, bed_length: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">Any</option>
+                    <option value="short">Short Bed (5-6ft)</option>
+                    <option value="standard">Standard Bed (6-7ft)</option>
+                    <option value="long">Long Bed (8ft+)</option>
+                  </select>
                 </div>
               </div>
 

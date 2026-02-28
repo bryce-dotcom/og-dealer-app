@@ -229,6 +229,138 @@ function getDealScorePriority(score: string): number {
   return priorities[score] || 99;
 }
 
+// Filter vehicles by specific criteria (engine type, drivetrain, etc.)
+// These aren't in MarketCheck API filters, so we do text matching on trim/model
+function matchesSpecificFilters(vehicle: any, filters: {
+  engine_type?: string;
+  drivetrain?: string;
+  transmission?: string;
+  body_type?: string;
+  cab_type?: string;
+  bed_length?: string;
+}): boolean {
+  const searchText = `${vehicle.model || ''} ${vehicle.trim || ''}`.toLowerCase();
+
+  // Engine Type filtering
+  if (filters.engine_type) {
+    const engineType = filters.engine_type.toLowerCase();
+    if (engineType === 'diesel') {
+      if (!searchText.includes('diesel') && !searchText.includes('turbodiesel') && !searchText.includes('powerstroke') && !searchText.includes('duramax') && !searchText.includes('cummins')) {
+        return false;
+      }
+    } else if (engineType === 'gas') {
+      // Gas is default, but exclude if it explicitly says diesel/electric/hybrid
+      if (searchText.includes('diesel') || searchText.includes('electric') || searchText.includes('hybrid') || searchText.includes('plug-in') || searchText.includes('ev') || searchText.includes('phev')) {
+        return false;
+      }
+    } else if (engineType === 'electric') {
+      if (!searchText.includes('electric') && !searchText.includes(' ev ') && !searchText.includes('tesla') && !searchText.includes('e-tron')) {
+        return false;
+      }
+    } else if (engineType === 'hybrid') {
+      if (!searchText.includes('hybrid') && !searchText.includes('phev') && !searchText.includes('plug-in')) {
+        return false;
+      }
+    }
+  }
+
+  // Drivetrain filtering
+  if (filters.drivetrain) {
+    const drivetrain = filters.drivetrain.toUpperCase();
+    if (drivetrain === '4WD') {
+      if (!searchText.includes('4wd') && !searchText.includes('4x4') && !searchText.includes('four wheel') && !searchText.includes('fourwheel')) {
+        return false;
+      }
+    } else if (drivetrain === 'AWD') {
+      if (!searchText.includes('awd') && !searchText.includes('all wheel') && !searchText.includes('allwheel') && !searchText.includes('quattro') && !searchText.includes('xdrive')) {
+        return false;
+      }
+    } else if (drivetrain === '2WD') {
+      // 2WD is tricky - it's often the default and NOT mentioned
+      // Only exclude if it explicitly says 4WD/AWD
+      if (searchText.includes('4wd') || searchText.includes('4x4') || searchText.includes('awd') || searchText.includes('all wheel') || searchText.includes('quattro') || searchText.includes('xdrive')) {
+        return false;
+      }
+    }
+  }
+
+  // Transmission filtering
+  if (filters.transmission) {
+    const trans = filters.transmission.toLowerCase();
+    if (trans === 'manual') {
+      if (!searchText.includes('manual') && !searchText.includes('stick') && !searchText.includes('mt') && !searchText.includes('6-speed manual')) {
+        return false;
+      }
+    } else if (trans === 'automatic') {
+      // Automatic is default, exclude manual/CVT
+      if (searchText.includes('manual') || searchText.includes('stick') || searchText.includes('cvt')) {
+        return false;
+      }
+    } else if (trans === 'CVT') {
+      if (!searchText.includes('cvt')) {
+        return false;
+      }
+    }
+  }
+
+  // Body Type filtering
+  if (filters.body_type) {
+    const bodyType = filters.body_type.toLowerCase();
+    if (bodyType === 'truck') {
+      if (!searchText.includes('pickup') && !searchText.includes('truck') && !vehicle.make?.toLowerCase().includes('ram') && !searchText.includes('f-150') && !searchText.includes('f-250') && !searchText.includes('f-350') && !searchText.includes('silverado') && !searchText.includes('sierra') && !searchText.includes('tundra') && !searchText.includes('tacoma') && !searchText.includes('ranger') && !searchText.includes('colorado') && !searchText.includes('frontier')) {
+        return false;
+      }
+    } else if (bodyType === 'suv') {
+      if (!searchText.includes('suv') && !searchText.includes('sport utility') && !searchText.includes('explorer') && !searchText.includes('tahoe') && !searchText.includes('suburban') && !searchText.includes('expedition') && !searchText.includes('yukon') && !searchText.includes('durango') && !searchText.includes('highlander') && !searchText.includes('pilot')) {
+        return false;
+      }
+    }
+    // Other body types can be added as needed
+  }
+
+  // Cab Type filtering (for trucks)
+  if (filters.cab_type) {
+    const cabType = filters.cab_type.toLowerCase();
+    if (cabType === 'crew cab') {
+      if (!searchText.includes('crew') && !searchText.includes('crewmax')) {
+        return false;
+      }
+    } else if (cabType === 'extended cab') {
+      if (!searchText.includes('extended') && !searchText.includes('supercab') && !searchText.includes('double cab')) {
+        return false;
+      }
+    } else if (cabType === 'regular cab') {
+      if (!searchText.includes('regular') && searchText.includes('crew') && searchText.includes('extended')) {
+        return false;
+      }
+    } else if (cabType === 'mega cab') {
+      if (!searchText.includes('mega')) {
+        return false;
+      }
+    }
+  }
+
+  // Bed Length filtering (for trucks)
+  if (filters.bed_length) {
+    const bedLength = filters.bed_length.toLowerCase();
+    if (bedLength === 'short') {
+      if (!searchText.includes('short') && !searchText.includes('5.5') && !searchText.includes('5.7') && !searchText.includes("5'")) {
+        // Allow if no bed info specified (assume varies)
+        if (searchText.includes('long') || searchText.includes('8') || searchText.includes("8'")) {
+          return false;
+        }
+      }
+    } else if (bedLength === 'long') {
+      if (!searchText.includes('long') && !searchText.includes('8') && !searchText.includes("8'")) {
+        return false;
+      }
+    }
+    // Standard bed is tricky as it's often not specified
+  }
+
+  return true;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -247,6 +379,12 @@ serve(async (req) => {
       make,
       model,
       trim,
+      engine_type,
+      drivetrain,
+      transmission,
+      body_type,
+      cab_type,
+      bed_length,
       max_price,
       max_miles,
       color,
@@ -255,7 +393,7 @@ serve(async (req) => {
     } = await req.json();
 
     log(`=== FIND VEHICLES REQUEST ===`);
-    log(`Input: ${JSON.stringify({ year_min, year_max, make, model, trim, max_price, max_miles, color, zip_code, radius_miles })}`);
+    log(`Input: ${JSON.stringify({ year_min, year_max, make, model, trim, engine_type, drivetrain, transmission, body_type, cab_type, bed_length, max_price, max_miles, color, zip_code, radius_miles })}`);
 
     const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
     const SERPAPI_API_KEY = Deno.env.get("SERP_API_KEY"); // Note: secret is SERP_API_KEY
@@ -916,6 +1054,24 @@ Keep it concise and practical for a car buyer.`;
       } catch (aiError) {
         log(`Anthropic Error: ${aiError.message}`);
       }
+    }
+
+    // ===== APPLY SPECIFIC FILTERS =====
+    const filters = { engine_type, drivetrain, transmission, body_type, cab_type, bed_length };
+    const hasSpecificFilters = engine_type || drivetrain || transmission || body_type || cab_type || bed_length;
+
+    if (hasSpecificFilters) {
+      log(`\n=== APPLYING SPECIFIC FILTERS ===`);
+      log(`Filters: ${JSON.stringify(filters)}`);
+
+      const originalDealerCount = dealerListings.length;
+      const originalPrivateCount = privateListings.length;
+
+      dealerListings = dealerListings.filter(v => matchesSpecificFilters(v, filters));
+      privateListings = privateListings.filter(v => matchesSpecificFilters(v, filters));
+
+      log(`Dealer listings: ${originalDealerCount} -> ${dealerListings.length}`);
+      log(`Private listings: ${originalPrivateCount} -> ${privateListings.length}`);
     }
 
     // ===== FINAL RESPONSE =====
