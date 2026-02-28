@@ -1,6 +1,6 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-02-06 (generated from live Supabase OpenAPI spec)
+> **Last Updated:** 2026-02-27 (updated with AI Research tables)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
@@ -110,6 +110,10 @@
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
 - [`ai_research_log`](#ai_research_log)
+- [`dealer_vehicle_preferences`](#dealer_vehicle_preferences) *
+- [`vehicle_ai_analysis`](#vehicle_ai_analysis) *
+- [`market_intelligence_cache`](#market_intelligence_cache) *
+- [`seasonal_vehicle_patterns`](#seasonal_vehicle_patterns) *
 
 ### System
 - [`audit_log`](#audit_log) *
@@ -1693,6 +1697,100 @@
 | `started_at` | timestamp with time zone | YES | now() |
 | `completed_at` | timestamp with time zone | YES |  |
 | `triggered_by` | text | YES |  |
+
+## dealer_vehicle_preferences (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO |  |
+| `make` | text | NO |  |
+| `model` | text | YES |  |
+| `avg_profit` | numeric | YES |  |
+| `avg_days_on_lot` | integer | YES |  |
+| `total_sold` | integer | YES |  |
+| `success_rate` | numeric | YES |  |
+| `avg_purchase_price` | numeric | YES |  |
+| `avg_sale_price` | numeric | YES |  |
+| `last_calculated_at` | timestamp with time zone | YES | now() |
+
+**Purpose:** Stores dealer's historical performance data for make/model combinations to inform AI analysis.
+
+**Unique Constraint:** (dealer_id, make, model)
+
+## vehicle_ai_analysis (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO |  |
+| `vin` | text | YES |  |
+| `year` | integer | YES |  |
+| `make` | text | NO |  |
+| `model` | text | NO |  |
+| `price` | numeric | YES |  |
+| `miles` | integer | YES |  |
+| `estimated_profit` | numeric | YES |  |
+| `estimated_recon_cost` | numeric | YES |  |
+| `estimated_days_to_sell` | integer | YES |  |
+| `bhph_score` | integer | YES |  |
+| `recommendation` | text | YES |  |
+| `confidence_score` | integer | YES |  |
+| `key_reasons` | text[] | YES |  |
+| `risks` | text[] | YES |  |
+| `target_purchase_price` | numeric | YES |  |
+| `target_sale_price` | numeric | YES |  |
+| `analyzed_at` | timestamp with time zone | YES | now() |
+
+**Purpose:** Stores AI analysis results for vehicles (cached for 24 hours to save API credits).
+
+**Recommendation Values:** STRONG_BUY, BUY, MAYBE, PASS
+
+**BHPH Score:** 1-10 (suitability for BHPH financing)
+
+**Confidence Score:** 0-100
+
+## market_intelligence_cache (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO |  |
+| `cache_key` | text | NO |  |
+| `make` | text | NO |  |
+| `model` | text | YES |  |
+| `insights` | jsonb | NO |  |
+| `expires_at` | timestamp with time zone | NO |  |
+
+**Purpose:** Caches market intelligence data with 24-hour TTL to reduce API costs.
+
+**Unique Constraint:** (dealer_id, cache_key)
+
+## seasonal_vehicle_patterns (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO |  |
+| `make` | text | NO |  |
+| `model` | text | YES |  |
+| `best_buy_months` | integer[] | YES |  |
+| `best_sell_months` | integer[] | YES |  |
+| `avg_price_by_month` | jsonb | YES |  |
+| `demand_score_by_month` | jsonb | YES |  |
+| `sales_by_month` | jsonb | YES |  |
+| `profit_by_month` | jsonb | YES |  |
+| `last_calculated_at` | timestamp with time zone | YES | now() |
+
+**Purpose:** Tracks seasonal buying/selling patterns for each make/model to optimize timing.
+
+**Best Buy Months:** Array of month numbers (1-12) when prices are historically lowest
+
+**Best Sell Months:** Array of month numbers when sales velocity is highest
+
+**Demand Score:** 1-10 scale for each month based on sales velocity
+
+**Unique Constraint:** (dealer_id, make, model)
 
 # System
 

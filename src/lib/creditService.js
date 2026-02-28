@@ -9,7 +9,10 @@ const DEFAULT_CREDIT_COSTS = {
   VIN_DECODE: 1,
   FORM_GENERATION: 5,
   PLAID_SYNC: 5,
-  PAYROLL_RUN: 10
+  PAYROLL_RUN: 10,
+  AI_VEHICLE_ANALYSIS: 5,     // Per vehicle AI analysis
+  BUYING_RECOMMENDATIONS: 15, // "What to buy" report
+  PROFIT_CALCULATOR: 0        // Free (client-side math)
 };
 
 // Cache for credit costs (loaded from database)
@@ -60,7 +63,9 @@ export const RATE_LIMITS = {
   vin_decode: 10,
   form_generation: 5,
   plaid_sync: 1,
-  payroll_run: 1
+  payroll_run: 1,
+  ai_vehicle_analysis: 3,      // 3 AI analyses per hour without credits
+  buying_recommendations: 1     // 1 recommendation report per hour
 };
 
 /**

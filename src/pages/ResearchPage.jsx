@@ -172,6 +172,25 @@ export default function ResearchPage() {
   const html5QrCodeRef = useRef(null);
   const ymmSectionRef = useRef(null);
 
+  // AI Analysis state
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+
+  // Profit Calculator state
+  const [buyPrice, setBuyPrice] = useState('');
+  const [reconCost, setReconCost] = useState('');
+  const [targetSalePrice, setTargetSalePrice] = useState('');
+
+  // What to Buy Recommendations state
+  const [recommendations, setRecommendations] = useState(null);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [recsError, setRecsError] = useState(null);
+  const [showRecommendations, setShowRecommendations] = useState(false);
+
+  // Seasonal patterns state
+  const [seasonalPattern, setSeasonalPattern] = useState(null);
+
   // Generate years
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: currentYear - 1999 + 1 }, (_, i) => currentYear + 1 - i);
@@ -488,6 +507,239 @@ export default function ResearchPage() {
     }
   };
 
+  // AI Analysis function
+  const runAiAnalysis = async () => {
+    if (!results || !results.vehicle) {
+      setAiError('No vehicle data to analyze');
+      return;
+    }
+
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'AI_VEHICLE_ANALYSIS');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        setAiError(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      setAiError(creditCheck.message || 'Unable to run AI analysis');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+
+    try {
+      const vehicle = {
+        vin: results.vehicle?.vin || null,
+        year: results.vehicle?.year,
+        make: results.vehicle?.make,
+        model: results.vehicle?.model,
+        trim: results.vehicle?.trim || null,
+        price: null, // Will be filled from user input or estimated
+        miles: results.vehicle?.miles || parseInt(miles) || 60000,
+        mmr: results.values?.mmr || null,
+        savings_percentage: null, // Calculated if price is available
+        exterior_color: results.vehicle?.exterior_color || null,
+        location: null
+      };
+
+      const { data, error: fnError } = await supabase.functions.invoke('analyze-vehicle-opportunity', {
+        body: {
+          dealer_id: dealer.id,
+          vehicle
+        }
+      });
+
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      // Consume credits AFTER successful operation
+      await CreditService.consumeCredits(
+        dealer.id,
+        'AI_VEHICLE_ANALYSIS',
+        vehicle.vin || `${vehicle.year}-${vehicle.make}-${vehicle.model}`,
+        {
+          year: vehicle.year,
+          make: vehicle.make,
+          model: vehicle.model,
+          recommendation: data.recommendation
+        }
+      );
+
+      setAiAnalysis(data);
+
+      // Pre-populate profit calculator with AI estimates
+      if (data.target_purchase_price) setBuyPrice(data.target_purchase_price.toString());
+      if (data.estimated_recon_cost) setReconCost(data.estimated_recon_cost.toString());
+      if (data.target_sale_price) setTargetSalePrice(data.target_sale_price.toString());
+
+    } catch (err) {
+      setAiError(err.message || 'AI analysis failed');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // Calculate profit from calculator inputs
+  const calculateProfit = () => {
+    const buy = parseFloat(buyPrice) || 0;
+    const recon = parseFloat(reconCost) || 0;
+    const sale = parseFloat(targetSalePrice) || 0;
+
+    const grossProfit = sale - buy - recon;
+    const roi = buy > 0 ? ((grossProfit / buy) * 100) : 0;
+    const margin = sale > 0 ? ((grossProfit / sale) * 100) : 0;
+
+    return { grossProfit, roi, margin };
+  };
+
+  // Load buying recommendations
+  const loadBuyingRecommendations = async () => {
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'BUYING_RECOMMENDATIONS');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        setRecsError(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      setRecsError(creditCheck.message || 'Unable to generate recommendations');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
+    setRecsLoading(true);
+    setRecsError(null);
+
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('generate-buying-recommendations', {
+        body: {
+          dealer_id: dealer.id,
+          budget_max: null,
+          quantity: 5
+        }
+      });
+
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      // Consume credits AFTER successful operation
+      await CreditService.consumeCredits(
+        dealer.id,
+        'BUYING_RECOMMENDATIONS',
+        `recommendations-${new Date().toISOString()}`,
+        {
+          recommendations_count: data.recommendations?.length || 0
+        }
+      );
+
+      setRecommendations(data);
+      setShowRecommendations(true);
+
+    } catch (err) {
+      setRecsError(err.message || 'Failed to generate recommendations');
+    } finally {
+      setRecsLoading(false);
+    }
+  };
+
+  // Auto-populate search from recommendation
+  const searchFromRecommendation = (rec) => {
+    // Parse year range (e.g., "2018-2022")
+    const yearMatch = rec.year_range?.match(/(\d{4})-(\d{4})/);
+
+    setCompYearMin(yearMatch ? yearMatch[1] : '');
+    setCompYearMax(yearMatch ? yearMatch[2] : '');
+    setCompMake(rec.make);
+    setCompModel(rec.model);
+    setCompMaxPrice(rec.target_price_max?.toString() || '');
+    setCompRadius('250');
+
+    // Scroll to Find Comparables section
+    setTimeout(() => {
+      const element = document.querySelector('[data-section="comparables"]');
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+  };
+
+  // Fetch seasonal pattern for current vehicle
+  const fetchSeasonalPattern = async (make, model) => {
+    try {
+      const { data, error } = await supabase
+        .from('seasonal_vehicle_patterns')
+        .select('*')
+        .eq('dealer_id', dealer.id)
+        .eq('make', make)
+        .eq('model', model || null)
+        .single();
+
+      if (!error && data) {
+        setSeasonalPattern(data);
+      } else {
+        setSeasonalPattern(null);
+      }
+    } catch (err) {
+      console.error('Error fetching seasonal pattern:', err);
+      setSeasonalPattern(null);
+    }
+  };
+
+  // Helper: Get month names from numbers
+  const getMonthNames = (monthNumbers) => {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return monthNumbers?.map(m => monthNames[m - 1]).join(', ') || 'N/A';
+  };
+
+  // Helper: Get current month demand score
+  const getCurrentDemandScore = (pattern) => {
+    if (!pattern?.demand_score_by_month) return null;
+    const currentMonth = new Date().getMonth() + 1; // 1-12
+    return pattern.demand_score_by_month[currentMonth] || null;
+  };
+
+  // Helper: Calculate composite deal score
+  const calculateCompositeScore = (vehicle, dealerPrefs, seasonalData) => {
+    let score = 0;
+
+    // 1. Price vs market (30%)
+    const savingsPercentage = vehicle.savings_percentage || 0;
+    const priceScore = Math.min(30, (savingsPercentage / 20) * 30);
+    score += priceScore;
+
+    // 2. Dealer's historical profit (25%)
+    if (dealerPrefs?.avg_profit) {
+      const profitScore = Math.min(25, (dealerPrefs.avg_profit / 5000) * 25);
+      score += profitScore;
+    }
+
+    // 3. Expected turn time (20%)
+    const estimatedDays = vehicle.estimated_days_to_sell || dealerPrefs?.avg_days_on_lot || 30;
+    const turnScore = Math.min(20, (30 / estimatedDays) * 20);
+    score += turnScore;
+
+    // 4. Seasonal demand (15%)
+    const demandScore = getCurrentDemandScore(seasonalData) || 5;
+    const seasonScore = (demandScore / 10) * 15;
+    score += seasonScore;
+
+    // 5. BHPH suitability (10%)
+    const bhphScore = vehicle.bhph_score || 5;
+    const bhphPoints = (bhphScore / 10) * 10;
+    score += bhphPoints;
+
+    return Math.min(100, Math.round(score));
+  };
+
   // Get deal score color
   const getDealScoreStyle = (score) => {
     const styles = {
@@ -562,6 +814,11 @@ export default function ResearchPage() {
 
       setResults(data);
       setActiveTab('values');
+
+      // Fetch seasonal pattern for this vehicle
+      if (data?.vehicle?.make && data?.vehicle?.model) {
+        fetchSeasonalPattern(data.vehicle.make, data.vehicle.model);
+      }
     } catch (err) {
       setError(err.message || 'Research failed');
     } finally {
@@ -630,7 +887,8 @@ export default function ResearchPage() {
     { id: 'values', label: 'Valuations' },
     { id: 'market', label: 'Market Analysis' },
     { id: 'comparables', label: 'Comparables' },
-    { id: 'specs', label: 'Specs' }
+    { id: 'specs', label: 'Specs' },
+    { id: 'ai-analysis', label: '🤖 AI Analysis' }
   ];
 
   return (
@@ -641,6 +899,202 @@ export default function ResearchPage() {
         <div style={{ marginBottom: '24px' }}>
           <h1 style={{ fontSize: '28px', fontWeight: '700', margin: 0, color: theme.text }}>Vehicle Research</h1>
           <p style={{ color: theme.textMuted, margin: '8px 0 0', fontSize: '14px' }}>Get instant valuations and market analysis</p>
+        </div>
+
+        {/* WHAT TO BUY SECTION - AI RECOMMENDATIONS */}
+        <div style={{ ...cardStyle, marginBottom: '24px', border: '2px solid #22c55e', background: isDark ? 'linear-gradient(135deg, rgba(34,197,94,0.05) 0%, rgba(34,197,94,0.02) 100%)' : 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.02) 100%)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+              </svg>
+              <h3 style={{ margin: 0, color: '#22c55e', fontSize: '18px', fontWeight: '700' }}>💡 What to Buy</h3>
+            </div>
+            <button
+              onClick={() => setShowRecommendations(!showRecommendations)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#22c55e',
+                fontSize: '24px',
+                cursor: 'pointer',
+                padding: '4px',
+                lineHeight: 1
+              }}
+            >
+              {showRecommendations ? '−' : '+'}
+            </button>
+          </div>
+
+          {showRecommendations && (
+            <>
+              <p style={{ color: theme.textMuted, margin: '0 0 16px', fontSize: '14px' }}>
+                AI-powered vehicle recommendations based on your sales history and market trends
+              </p>
+
+              {!recommendations && !recsLoading && (
+                <button
+                  onClick={loadBuyingRecommendations}
+                  disabled={recsLoading}
+                  style={{
+                    ...btnStyle(true),
+                    backgroundColor: '#22c55e',
+                    padding: '14px 32px',
+                    fontSize: '15px',
+                    opacity: recsLoading ? 0.6 : 1,
+                    width: '100%'
+                  }}
+                >
+                  {recsLoading ? 'Generating Recommendations...' : '✨ Get Smart Recommendations (15 credits)'}
+                </button>
+              )}
+
+              {recsError && (
+                <div style={{ padding: '12px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontSize: '14px' }}>
+                  {recsError}
+                </div>
+              )}
+
+              {recommendations && (
+                <div>
+                  {/* Market Insights */}
+                  {recommendations.market_insights && (
+                    <div style={{ padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', marginBottom: '20px', border: `1px solid ${theme.border}` }}>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: theme.textMuted, marginBottom: '8px' }}>📊 MARKET INSIGHTS</div>
+                      <div style={{ color: theme.text, fontSize: '14px', lineHeight: '1.6' }}>
+                        {recommendations.market_insights}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recommendations Grid */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {recommendations.recommendations?.map((rec, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          padding: '16px',
+                          backgroundColor: isDark ? theme.bg : '#ffffff',
+                          borderRadius: '10px',
+                          border: `2px solid ${i === 0 ? '#22c55e' : theme.border}`,
+                          position: 'relative'
+                        }}
+                      >
+                        {/* Rank Badge */}
+                        <div style={{
+                          position: 'absolute',
+                          top: '-10px',
+                          left: '12px',
+                          backgroundColor: i === 0 ? '#22c55e' : '#6b7280',
+                          color: '#ffffff',
+                          padding: '4px 12px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: '700'
+                        }}>
+                          #{rec.rank} {i === 0 ? 'TOP PICK' : 'RECOMMENDED'}
+                        </div>
+
+                        {/* Vehicle Info */}
+                        <div style={{ marginTop: '8px' }}>
+                          <h4 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: '700', color: theme.text }}>
+                            {rec.year_range} {rec.make} {rec.model}
+                          </h4>
+
+                          {/* Metrics */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+                            <div style={{ padding: '8px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderRadius: '6px', textAlign: 'center' }}>
+                              <div style={{ fontSize: '10px', color: theme.textMuted, marginBottom: '4px' }}>TARGET PRICE</div>
+                              <div style={{ fontSize: '16px', fontWeight: '700', color: theme.text }}>
+                                {formatCurrency(rec.target_price_max)}
+                              </div>
+                            </div>
+                            <div style={{ padding: '8px', backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: '6px', textAlign: 'center' }}>
+                              <div style={{ fontSize: '10px', color: theme.textMuted, marginBottom: '4px' }}>PROFIT</div>
+                              <div style={{ fontSize: '16px', fontWeight: '700', color: '#22c55e' }}>
+                                {formatCurrency(rec.expected_profit)}
+                              </div>
+                            </div>
+                            <div style={{ padding: '8px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderRadius: '6px', textAlign: 'center' }}>
+                              <div style={{ fontSize: '10px', color: theme.textMuted, marginBottom: '4px' }}>DAYS TO SELL</div>
+                              <div style={{ fontSize: '16px', fontWeight: '700', color: theme.text }}>
+                                {rec.expected_days_to_sell}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Reasoning */}
+                          <div style={{ marginBottom: '12px' }}>
+                            <div style={{ fontSize: '11px', fontWeight: '600', color: theme.textMuted, marginBottom: '4px' }}>WHY THIS VEHICLE:</div>
+                            <div style={{ color: theme.text, fontSize: '13px', lineHeight: '1.5' }}>
+                              {rec.reasoning}
+                            </div>
+                            {rec.seasonal_note && (
+                              <div style={{ marginTop: '6px', padding: '6px 10px', backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', fontSize: '12px', color: '#eab308' }}>
+                                🌤️ {rec.seasonal_note}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Where to Find */}
+                          {rec.where_to_find && rec.where_to_find.length > 0 && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <div style={{ fontSize: '11px', fontWeight: '600', color: theme.textMuted, marginBottom: '4px' }}>WHERE TO FIND:</div>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {rec.where_to_find.map((source, idx) => (
+                                  <span
+                                    key={idx}
+                                    style={{
+                                      padding: '4px 10px',
+                                      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      color: theme.textSecondary
+                                    }}
+                                  >
+                                    {source}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Search Button */}
+                          <button
+                            onClick={() => searchFromRecommendation(rec)}
+                            style={{
+                              ...btnStyle(true),
+                              backgroundColor: '#22c55e',
+                              padding: '10px 20px',
+                              fontSize: '13px',
+                              width: '100%'
+                            }}
+                          >
+                            🔍 Search for {rec.make} {rec.model}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Refresh Button */}
+                  <button
+                    onClick={loadBuyingRecommendations}
+                    disabled={recsLoading}
+                    style={{
+                      ...btnStyle(false),
+                      marginTop: '16px',
+                      padding: '10px 20px',
+                      fontSize: '13px',
+                      opacity: recsLoading ? 0.6 : 1
+                    }}
+                  >
+                    🔄 Refresh Recommendations (15 credits)
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* GENERAL SEARCH SECTION - NEW */}
@@ -1075,6 +1529,32 @@ export default function ResearchPage() {
                   ))}
                 </div>
               )}
+
+              {/* Seasonal Indicator */}
+              {seasonalPattern && (
+                <div style={{ marginTop: '12px', padding: '12px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: theme.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>📅 Best Time to Buy</div>
+                      <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: '600' }}>
+                        {getMonthNames(seasonalPattern.best_buy_months)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '10px', color: theme.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>💰 Best Time to Sell</div>
+                      <div style={{ color: '#3b82f6', fontSize: '14px', fontWeight: '600' }}>
+                        {getMonthNames(seasonalPattern.best_sell_months)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '10px', color: theme.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>🔥 Current Demand</div>
+                      <div style={{ fontSize: '20px', fontWeight: '700', color: getCurrentDemandScore(seasonalPattern) >= 7 ? '#22c55e' : getCurrentDemandScore(seasonalPattern) >= 5 ? '#eab308' : '#ef4444' }}>
+                        {getCurrentDemandScore(seasonalPattern) || 'N/A'}/10
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Tabs */}
@@ -1490,12 +1970,262 @@ export default function ResearchPage() {
                   )}
                 </div>
               )}
+
+              {/* AI Analysis Tab */}
+              {activeTab === 'ai-analysis' && (
+                <div>
+                  <h3 style={{ color: theme.text, margin: '0 0 20px', fontSize: '18px' }}>
+                    🤖 AI-Powered Vehicle Analysis
+                  </h3>
+
+                  {!aiAnalysis && !aiLoading && (
+                    <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🤖</div>
+                      <p style={{ color: theme.textMuted, marginBottom: '24px' }}>
+                        Get AI-powered insights including profit predictions, turn time estimates, risk assessment, and pricing recommendations
+                      </p>
+                      <button
+                        onClick={runAiAnalysis}
+                        disabled={aiLoading}
+                        style={{
+                          ...btnStyle(true),
+                          backgroundColor: theme.accent,
+                          padding: '12px 32px',
+                          fontSize: '14px',
+                          opacity: aiLoading ? 0.6 : 1
+                        }}
+                      >
+                        {aiLoading ? 'Analyzing...' : 'Run AI Analysis (5 credits)'}
+                      </button>
+                    </div>
+                  )}
+
+                  {aiError && (
+                    <div style={{ padding: '12px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontSize: '14px', marginBottom: '20px' }}>
+                      {aiError}
+                    </div>
+                  )}
+
+                  {aiAnalysis && (
+                    <div>
+                      {/* Recommendation Badge */}
+                      <div style={{ marginBottom: '24px', textAlign: 'center' }}>
+                        <div style={{
+                          display: 'inline-block',
+                          padding: '16px 32px',
+                          borderRadius: '12px',
+                          fontSize: '24px',
+                          fontWeight: '700',
+                          backgroundColor:
+                            aiAnalysis.recommendation === 'STRONG_BUY' ? 'rgba(34,197,94,0.2)' :
+                            aiAnalysis.recommendation === 'BUY' ? 'rgba(34,197,94,0.15)' :
+                            aiAnalysis.recommendation === 'MAYBE' ? 'rgba(234,179,8,0.15)' : 'rgba(239,68,68,0.15)',
+                          color:
+                            aiAnalysis.recommendation === 'STRONG_BUY' ? '#22c55e' :
+                            aiAnalysis.recommendation === 'BUY' ? '#4ade80' :
+                            aiAnalysis.recommendation === 'MAYBE' ? '#eab308' : '#ef4444',
+                          border: `2px solid ${
+                            aiAnalysis.recommendation === 'STRONG_BUY' ? '#22c55e' :
+                            aiAnalysis.recommendation === 'BUY' ? '#4ade80' :
+                            aiAnalysis.recommendation === 'MAYBE' ? '#eab308' : '#ef4444'
+                          }`
+                        }}>
+                          {aiAnalysis.recommendation.replace(/_/g, ' ')}
+                        </div>
+                        <div style={{ marginTop: '12px', fontSize: '14px', color: theme.textMuted }}>
+                          Confidence: {aiAnalysis.confidence_score}%
+                        </div>
+                      </div>
+
+                      {/* Key Metrics */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '24px' }}>
+                        <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center', border: '2px solid #22c55e' }}>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>ESTIMATED PROFIT</div>
+                          <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>
+                            ${aiAnalysis.estimated_profit?.toLocaleString() || 'N/A'}
+                          </div>
+                        </div>
+                        <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>RECON COST</div>
+                          <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>
+                            ${aiAnalysis.estimated_recon_cost?.toLocaleString() || 'N/A'}
+                          </div>
+                        </div>
+                        <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>DAYS TO SELL</div>
+                          <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>
+                            {aiAnalysis.estimated_days_to_sell || 'N/A'}
+                          </div>
+                        </div>
+                        <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>BHPH SCORE</div>
+                          <div style={{ fontSize: '28px', fontWeight: '700', color: aiAnalysis.bhph_score >= 7 ? '#22c55e' : aiAnalysis.bhph_score >= 5 ? '#eab308' : '#ef4444' }}>
+                            {aiAnalysis.bhph_score || 'N/A'}/10
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Target Prices */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
+                        <div style={{ padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', border: '1px solid #22c55e' }}>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>TARGET PURCHASE PRICE</div>
+                          <div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>
+                            ${aiAnalysis.target_purchase_price?.toLocaleString() || 'N/A'}
+                          </div>
+                        </div>
+                        <div style={{ padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', border: '1px solid #3b82f6' }}>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>TARGET SALE PRICE</div>
+                          <div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>
+                            ${aiAnalysis.target_sale_price?.toLocaleString() || 'N/A'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Key Reasons */}
+                      {aiAnalysis.key_reasons && aiAnalysis.key_reasons.length > 0 && (
+                        <div style={{ marginBottom: '20px' }}>
+                          <h4 style={{ color: theme.text, marginBottom: '12px', fontSize: '14px', fontWeight: '600' }}>✅ Key Reasons to Buy</h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {aiAnalysis.key_reasons.map((reason, i) => (
+                              <div key={i} style={{ padding: '12px', backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: '8px', color: '#22c55e', fontSize: '13px', display: 'flex', gap: '8px' }}>
+                                <span>•</span>
+                                <span>{reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Risks */}
+                      {aiAnalysis.risks && aiAnalysis.risks.length > 0 && (
+                        <div style={{ marginBottom: '20px' }}>
+                          <h4 style={{ color: theme.text, marginBottom: '12px', fontSize: '14px', fontWeight: '600' }}>⚠️ Potential Risks</h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {aiAnalysis.risks.map((risk, i) => (
+                              <div key={i} style={{ padding: '12px', backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '8px', color: '#eab308', fontSize: '13px', display: 'flex', gap: '8px' }}>
+                                <span>•</span>
+                                <span>{risk}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Profit Calculator */}
+                      <div style={{ marginTop: '32px', padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '12px', border: '2px solid #3b82f6' }}>
+                        <h4 style={{ color: theme.text, marginBottom: '16px', fontSize: '16px', fontWeight: '600' }}>
+                          💰 Profit Calculator
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                          <div>
+                            <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Buy Price</label>
+                            <input
+                              type="number"
+                              value={buyPrice}
+                              onChange={(e) => setBuyPrice(e.target.value)}
+                              placeholder="0"
+                              style={{
+                                width: '100%',
+                                padding: '10px',
+                                borderRadius: '6px',
+                                border: `1px solid ${theme.border}`,
+                                backgroundColor: theme.bgCard,
+                                color: theme.text,
+                                fontSize: '14px'
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Recon Cost</label>
+                            <input
+                              type="number"
+                              value={reconCost}
+                              onChange={(e) => setReconCost(e.target.value)}
+                              placeholder="0"
+                              style={{
+                                width: '100%',
+                                padding: '10px',
+                                borderRadius: '6px',
+                                border: `1px solid ${theme.border}`,
+                                backgroundColor: theme.bgCard,
+                                color: theme.text,
+                                fontSize: '14px'
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '11px', color: theme.textMuted, display: 'block', marginBottom: '4px' }}>Target Sale Price</label>
+                            <input
+                              type="number"
+                              value={targetSalePrice}
+                              onChange={(e) => setTargetSalePrice(e.target.value)}
+                              placeholder="0"
+                              style={{
+                                width: '100%',
+                                padding: '10px',
+                                borderRadius: '6px',
+                                border: `1px solid ${theme.border}`,
+                                backgroundColor: theme.bgCard,
+                                color: theme.text,
+                                fontSize: '14px'
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Calculated Results */}
+                        {(buyPrice || reconCost || targetSalePrice) && (() => {
+                          const { grossProfit, roi, margin } = calculateProfit();
+                          return (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginTop: '16px' }}>
+                              <div style={{ padding: '16px', backgroundColor: grossProfit >= 0 ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', borderRadius: '8px', textAlign: 'center' }}>
+                                <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '4px' }}>GROSS PROFIT</div>
+                                <div style={{ fontSize: '24px', fontWeight: '700', color: grossProfit >= 0 ? '#22c55e' : '#ef4444' }}>
+                                  ${grossProfit.toLocaleString()}
+                                </div>
+                              </div>
+                              <div style={{ padding: '16px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)', borderRadius: '8px', textAlign: 'center' }}>
+                                <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '4px' }}>ROI</div>
+                                <div style={{ fontSize: '24px', fontWeight: '700', color: theme.text }}>
+                                  {roi.toFixed(1)}%
+                                </div>
+                              </div>
+                              <div style={{ padding: '16px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)', borderRadius: '8px', textAlign: 'center' }}>
+                                <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '4px' }}>MARGIN</div>
+                                <div style={{ fontSize: '24px', fontWeight: '700', color: theme.text }}>
+                                  {margin.toFixed(1)}%
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Re-run Button */}
+                      <div style={{ marginTop: '24px', textAlign: 'center' }}>
+                        <button
+                          onClick={runAiAnalysis}
+                          disabled={aiLoading}
+                          style={{
+                            ...btnStyle(false),
+                            padding: '8px 20px',
+                            fontSize: '12px',
+                            opacity: aiLoading ? 0.6 : 1
+                          }}
+                        >
+                          Re-run Analysis (5 credits)
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}
 
         {/* FIND COMPARABLES SECTION - NEW */}
-        <div style={{ ...cardStyle, marginTop: '24px', border: '2px solid #22c55e' }}>
+        <div data-section="comparables" style={{ ...cardStyle, marginTop: '24px', border: '2px solid #22c55e' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2">
               <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
