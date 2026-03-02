@@ -1071,11 +1071,16 @@ Keep it concise and practical for a car buyer.`;
       const originalDealerCount = dealerListings.length;
       const originalPrivateCount = privateListings.length;
 
+      // Apply strict filtering to dealer listings (they have detailed specs)
       dealerListings = dealerListings.filter(v => matchesSpecificFilters(v, filters));
-      privateListings = privateListings.filter(v => matchesSpecificFilters(v, filters));
+
+      // For private listings: filters are OPTIONAL (private sellers often don't list detailed specs)
+      // Only filter out if it EXPLICITLY contradicts (e.g., says "gas" when looking for "diesel")
+      // Otherwise, assume it MIGHT match and show it
+      log(`Private listings: Skipping strict filters (private sellers rarely list detailed specs)`);
 
       log(`Dealer listings: ${originalDealerCount} -> ${dealerListings.length}`);
-      log(`Private listings: ${originalPrivateCount} -> ${privateListings.length}`);
+      log(`Private listings: ${originalPrivateCount} -> ${privateListings.length} (filters not applied to private)`);
     }
 
     // ===== FINAL RESPONSE =====
