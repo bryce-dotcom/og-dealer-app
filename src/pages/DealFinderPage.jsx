@@ -138,9 +138,13 @@ export default function DealFinderPage() {
         setSaveError(null);
       } else {
         // Insert
-        const { error } = await supabase
+        console.log('Inserting search with payload:', payload);
+        const { data, error } = await supabase
           .from('saved_vehicle_searches')
-          .insert(payload);
+          .insert(payload)
+          .select();
+
+        console.log('Insert result:', { data, error });
 
         if (error) {
           console.error('Insert error:', error);
@@ -149,6 +153,7 @@ export default function DealFinderPage() {
           return;
         }
 
+        console.log('Search saved successfully!', data);
         loadSearches();
         setShowAddSearch(false);
         resetForm();

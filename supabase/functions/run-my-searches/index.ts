@@ -57,7 +57,9 @@ serve(async (req) => {
     let totalDealsFound = 0;
 
     for (const search of searches) {
-      console.log(`\n--- Processing: ${search.name} ---`);
+      console.log(`\n=== PROCESSING SEARCH: ${search.name} ===`);
+      console.log(`Criteria: ${search.year_min}-${search.year_max} ${search.make} ${search.model || 'any model'}`);
+      console.log(`Max Price: $${search.max_price}, Max Miles: ${search.max_miles}`);
 
       try {
         // Split model by commas to support multiple models (e.g., "2500, 3500")
@@ -65,11 +67,13 @@ serve(async (req) => {
           ? search.model.split(',').map((m: string) => m.trim()).filter((m: string) => m)
           : [null];
 
+        console.log(`Models to search: ${models.join(', ')}`);
+
         const allVehicles = [];
 
         // STEP 1: Find vehicles for each model
         for (const model of models) {
-          console.log(`  Searching for model: ${model || 'any'}`);
+          console.log(`\n  → Calling find-vehicles for model: ${model || 'any'}`);
 
           const { data: vehiclesData, error: findError } = await supabase.functions.invoke(
             "find-vehicles",
@@ -95,9 +99,11 @@ serve(async (req) => {
           );
 
           if (findError) {
-            console.error(`find-vehicles error for model ${model}:`, findError);
+            console.error(`  ✗ find-vehicles ERROR for model ${model}:`, JSON.stringify(findError));
             continue;
           }
+
+          console.log(`  ✓ find-vehicles returned: ${vehiclesData?.dealer_listings?.length || 0} dealer + ${vehiclesData?.private_listings?.length || 0} private listings`);
 
           allVehicles.push(
             ...(vehiclesData.dealer_listings || []),

@@ -60,7 +60,8 @@
       "Bash(choco install:*)",
       "Bash(vercel env:*)",
       "Bash(npx vercel env ls:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(check_db.mjs << 'EOF'\nimport { createClient } from '@supabase/supabase-js';\n\nconst supabase = createClient\\(\n  'https://rlzudfinlxonpbwacxpt.supabase.co',\n  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsenVkZmlubHhvbnBid2FjeHB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1OTk5MzksImV4cCI6MjA4NDE3NTkzOX0.93JAEAoYad2WStPpaZZbFAUR3cIKWF1PG5xEVmMkj4U'\n\\);\n\n// Check saved searches\nconst { data: searches, error } = await supabase\n  .from\\('saved_vehicle_searches'\\)\n  .select\\('*'\\);\n\nconsole.log\\('\\\\n=== SAVED SEARCHES ==='\\);\nconsole.log\\('Count:', searches?.length || 0\\);\nif \\(searches && searches.length > 0\\) {\n  searches.forEach\\(s => {\n    console.log\\(`\\\\n- \"${s.name}\" \\(ID: ${s.id}\\)`\\);\n    console.log\\(`  Active: ${s.active}`\\);\n    console.log\\(`  Dealer: ${s.dealer_id}`\\);\n    console.log\\(`  Criteria: ${s.year_min}-${s.year_max} ${s.make} ${s.model}`\\);\n  }\\);\n} else {\n  console.log\\('NO SEARCHES FOUND!'\\);\n}\nif \\(error\\) console.error\\('Error:', error\\);\nEOF)"
     ]
   }
 }
