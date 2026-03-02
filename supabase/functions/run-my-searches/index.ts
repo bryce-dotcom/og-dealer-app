@@ -7,11 +7,15 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
+  console.log("🚀 run-my-searches INVOKED - Method:", req.method);
+
   if (req.method === "OPTIONS") {
+    console.log("OPTIONS request - returning CORS headers");
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    console.log("Starting search process...");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -20,7 +24,12 @@ serve(async (req) => {
     const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
 
     // Get dealer_id from request body
-    const { dealer_id } = await req.json();
+    console.log("Parsing request body...");
+    const bodyText = await req.text();
+    console.log("Request body:", bodyText);
+    const body = JSON.parse(bodyText);
+    const { dealer_id } = body;
+    console.log("dealer_id from request:", dealer_id);
 
     if (!dealer_id) {
       return new Response(
