@@ -74,8 +74,7 @@ serve(async (req) => {
           make: vehicle.make,
           model: vehicle.model,
           year: "2015-2022",
-          latitude: "40.3766",
-          longitude: "-111.7947",
+          zip: dealerZip,
           radius: "100",
           price_min: "8000",
           price_max: budget_max ? budget_max.toString() : "35000",
@@ -83,12 +82,19 @@ serve(async (req) => {
           start: "0"
         });
 
-        const marketRes = await fetch(
-          `https://marketcheck-prod.apigee.net/v1/search?${params.toString()}`
-        );
+        const apiUrl = `https://marketcheck-prod.apigee.net/v1/search?${params.toString()}`;
+        console.log(`Fetching: ${vehicle.make} ${vehicle.model} from ${dealerZip}`);
+
+        const marketRes = await fetch(apiUrl);
 
         if (!marketRes.ok) {
-          console.error(`MarketCheck error for ${vehicle.make} ${vehicle.model}:`, marketRes.status);
+          const errorText = await marketRes.text();
+          console.error(`MarketCheck error for ${vehicle.make} ${vehicle.model}:`, {
+            status: marketRes.status,
+            statusText: marketRes.statusText,
+            error: errorText,
+            url: apiUrl.replace(MARKETCHECK_API_KEY, 'REDACTED')
+          });
           continue;
         }
 
@@ -152,7 +158,22 @@ serve(async (req) => {
     console.log(`Analyzed ${marketData.length} vehicle types in market`);
 
     if (marketData.length === 0) {
-      throw new Error("Unable to analyze market data. Please try again.");
+      return new Response(JSON.stringify({
+        success: false,
+        error: "No market data available",
+        message: `Unable to find inventory data for ${dealerLocation} (${dealerZip}). This could be: (1) No inventory in 100-mile radius, (2) MarketCheck API issue, or (3) Rate limit. Check Edge Function logs for details.`,
+        debug: {
+          dealer_zip: dealerZip,
+          dealer_location: dealerLocation,
+          models_searched: popularModels.length,
+          marketcheck_api_configured: !!MARKETCHECK_API_KEY
+        },
+        recommendations: [],
+        market_insights: ""
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // STEP 2: Build AI prompt with REAL market intelligence
@@ -284,8 +305,15 @@ Return ONLY the JSON. Make this dealer money.`;
     });
   } catch (error) {
     console.error("Error in generate-buying-recommendations:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
+
+    // Return detailed error for debugging
+    return new Response(JSON.stringify({
+      success: false,
+      error: error.message,
+      error_details: error.stack || String(error),
+      timestamp: new Date().toISOString()
+    }), {
+      status: 200, // Return 200 so frontend can see the error details
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

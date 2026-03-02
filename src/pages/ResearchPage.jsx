@@ -629,7 +629,19 @@ export default function ResearchPage() {
       });
 
       if (fnError) throw fnError;
-      if (data?.error) throw new Error(data.error);
+
+      // Check for error response with debug info
+      if (data?.error || data?.success === false) {
+        console.error('Recommendations error:', data);
+        const errorMsg = data?.message || data?.error || 'Failed to generate recommendations';
+        if (data?.debug) {
+          console.log('Debug info:', data.debug);
+          setRecsError(`${errorMsg}\n\nDebug: ${JSON.stringify(data.debug, null, 2)}`);
+        } else {
+          setRecsError(errorMsg);
+        }
+        return;
+      }
 
       // Consume credits AFTER successful operation
       await CreditService.consumeCredits(
@@ -645,6 +657,7 @@ export default function ResearchPage() {
       setShowRecommendations(true);
 
     } catch (err) {
+      console.error('Recommendations exception:', err);
       setRecsError(err.message || 'Failed to generate recommendations');
     } finally {
       setRecsLoading(false);
