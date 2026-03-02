@@ -17,97 +17,208 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
 
     const { dealer_id, budget_max, quantity } = await req.json();
 
-    console.log("=== GENERATE BUYING RECOMMENDATIONS ===");
+    console.log("=== MARKET INTELLIGENCE ANALYSIS ===");
     console.log(`Dealer ID: ${dealer_id}`);
-    console.log(`Budget: ${budget_max ? "$" + budget_max : "No limit"}`);
-    console.log(`Quantity: ${quantity || 5}`);
 
-    if (!ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY not configured");
-    }
+    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
+    if (!MARKETCHECK_API_KEY) throw new Error("MARKETCHECK_API_KEY not configured");
 
-    // STEP 1: Get dealer's historical preferences
-    const { data: preferences, error: prefError } = await supabase
+    // Get dealer info for location
+    const { data: dealer } = await supabase
+      .from("dealer_settings")
+      .select("zip, city, state")
+      .eq("id", dealer_id)
+      .single();
+
+    const dealerZip = dealer?.zip || "84065";
+    const dealerLocation = `${dealer?.city || "American Fork"}, ${dealer?.state || "UT"}`;
+
+    console.log(`Dealer location: ${dealerLocation} (${dealerZip})`);
+
+    // Get dealer's historical preferences (optional context, not required)
+    const { data: preferences } = await supabase
       .from("dealer_vehicle_preferences")
       .select("*")
       .eq("dealer_id", dealer_id)
-      .gte("total_sold", 3) // Only include vehicles with meaningful sales history
-      .order("avg_profit", { ascending: false });
+      .gte("total_sold", 2)
+      .order("avg_profit", { ascending: false })
+      .limit(5);
 
-    if (prefError) throw prefError;
+    // STEP 1: Analyze REAL market data - popular BHPH models
+    const popularModels = [
+      { make: "Ford", model: "F-150" },
+      { make: "Chevrolet", model: "Silverado 1500" },
+      { make: "Ram", model: "1500" },
+      { make: "Honda", model: "Civic" },
+      { make: "Toyota", model: "Camry" },
+      { make: "Honda", model: "Accord" },
+      { make: "Toyota", model: "Corolla" },
+      { make: "Chevrolet", model: "Equinox" },
+      { make: "Ford", model: "Escape" },
+      { make: "Nissan", model: "Altima" }
+    ];
 
-    console.log(`Found ${preferences?.length || 0} vehicle preferences`);
+    console.log("Analyzing market data for popular BHPH models...");
 
-    if (!preferences || preferences.length === 0) {
-      return new Response(
-        JSON.stringify({
-          error: "No sales history available. Sell at least 3 vehicles of a make/model to get recommendations.",
-          recommendations: [],
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const marketData = [];
+
+    for (const vehicle of popularModels) {
+      try {
+        // Search MarketCheck for this make/model in dealer's area
+        const params = new URLSearchParams({
+          api_key: MARKETCHECK_API_KEY,
+          make: vehicle.make,
+          model: vehicle.model,
+          year: "2015-2022",
+          latitude: "40.3766",
+          longitude: "-111.7947",
+          radius: "100",
+          price_min: "8000",
+          price_max: budget_max ? budget_max.toString() : "35000",
+          rows: "50",
+          start: "0"
+        });
+
+        const marketRes = await fetch(
+          `https://marketcheck-prod.apigee.net/v1/search?${params.toString()}`
+        );
+
+        if (!marketRes.ok) {
+          console.error(`MarketCheck error for ${vehicle.make} ${vehicle.model}:`, marketRes.status);
+          continue;
         }
-      );
+
+        const marketJson = await marketRes.json();
+        const listings = marketJson.listings || [];
+
+        if (listings.length === 0) continue;
+
+        // Calculate market intelligence
+        const prices = listings.map((l: any) => l.price).filter((p: number) => p > 0);
+        const domValues = listings.map((l: any) => l.dom).filter((d: number) => d >= 0);
+
+        const avgPrice = prices.length > 0 ? prices.reduce((a: number, b: number) => a + b, 0) / prices.length : 0;
+        const medianPrice = prices.length > 0 ? prices.sort((a: number, b: number) => a - b)[Math.floor(prices.length / 2)] : 0;
+        const avgDom = domValues.length > 0 ? domValues.reduce((a: number, b: number) => a + b, 0) / domValues.length : 0;
+
+        // Find deals (priced significantly below average)
+        const dealsAvailable = listings.filter((l: any) =>
+          l.price > 0 && l.price < avgPrice * 0.90
+        ).length;
+
+        // Get price predictions for accurate MMR
+        const sampleVin = listings.find((l: any) => l.vin)?.vin;
+        let avgMmr = null;
+
+        if (sampleVin) {
+          try {
+            const predRes = await fetch(
+              `https://marketcheck-prod.apigee.net/v2/predict/car/${sampleVin}?api_key=${MARKETCHECK_API_KEY}`
+            );
+
+            if (predRes.ok) {
+              const predData = await predRes.json();
+              avgMmr = predData.average_mmr || predData.market_price;
+            }
+          } catch (e) {
+            console.error("Price prediction error:", e);
+          }
+        }
+
+        marketData.push({
+          make: vehicle.make,
+          model: vehicle.model,
+          inventory_count: listings.length,
+          avg_price: Math.round(avgPrice),
+          median_price: Math.round(medianPrice),
+          avg_mmr: avgMmr ? Math.round(avgMmr) : null,
+          avg_days_on_market: Math.round(avgDom),
+          deals_available: dealsAvailable,
+          market_temperature: avgDom < 30 ? "HOT" : avgDom < 45 ? "WARM" : "COOL",
+          supply_level: listings.length > 40 ? "HIGH" : listings.length > 20 ? "MEDIUM" : "LOW"
+        });
+
+        console.log(`✓ ${vehicle.make} ${vehicle.model}: ${listings.length} units, avg $${Math.round(avgPrice)}, ${Math.round(avgDom)} DOM`);
+
+      } catch (err) {
+        console.error(`Error analyzing ${vehicle.make} ${vehicle.model}:`, err);
+      }
     }
 
-    // STEP 2: Get current month for seasonal context
-    const currentMonth = new Date().toLocaleString("default", { month: "long" });
-    const currentSeason = getSeason(new Date().getMonth() + 1);
+    console.log(`Analyzed ${marketData.length} vehicle types in market`);
 
-    // STEP 3: Build AI prompt with dealer's history
-    const topVehicles = preferences.slice(0, 10); // Top 10 by profit
+    if (marketData.length === 0) {
+      throw new Error("Unable to analyze market data. Please try again.");
+    }
 
-    const historyText = topVehicles
-      .map(
-        (p) =>
-          `- ${p.make} ${p.model || ""}: ${p.total_sold} sold, $${Math.round(p.avg_profit || 0)} avg profit, ${p.avg_days_on_lot || "?"} days avg, ${Math.round((p.success_rate || 0) * 100)}% success rate`
+    // STEP 2: Build AI prompt with REAL market intelligence
+    const marketDataText = marketData
+      .map(m =>
+        `- ${m.make} ${m.model}: ${m.inventory_count} available, $${m.avg_price.toLocaleString()} avg, ${m.avg_days_on_market} DOM, ${m.deals_available} deals under market, Market: ${m.market_temperature}, Supply: ${m.supply_level}${m.avg_mmr ? `, MMR: $${m.avg_mmr.toLocaleString()}` : ""}`
       )
       .join("\n");
 
-    const prompt = `You are a vehicle acquisition expert helping a used car dealer decide what to buy next.
+    const dealerHistoryText = preferences && preferences.length > 0
+      ? preferences
+          .map(p => `- ${p.make} ${p.model || ""}: ${p.total_sold} sold, $${Math.round(p.avg_profit || 0)} profit, ${p.avg_days_on_lot || "?"} days`)
+          .join("\n")
+      : "No sales history available";
 
-Based on their sales history and current market conditions, recommend the TOP ${quantity || 5} vehicles they should actively look for:
+    const currentMonth = new Date().toLocaleString("default", { month: "long" });
+    const currentYear = new Date().getFullYear();
 
-DEALER SUCCESS HISTORY (last 2 years):
-${historyText}
+    const prompt = `You are an expert vehicle acquisition analyst. A BHPH dealer in ${dealerLocation} needs to know EXACTLY what to buy RIGHT NOW to make maximum profit.
 
-CURRENT CONTEXT:
-- Current month: ${currentMonth} (${currentSeason} season)
-- Budget: ${budget_max ? "Up to $" + budget_max.toLocaleString() : "No limit"}
-- Market: Used vehicle market
+REAL-TIME MARKET DATA (${dealerLocation} area, 100 mile radius):
+${marketDataText}
 
-INSTRUCTIONS:
-1. Prioritize vehicles with proven profit history for this dealer
-2. Consider seasonal demand (e.g., trucks in summer, SUVs before winter)
-3. Suggest realistic year ranges (avoid vehicles that are too old or too new)
-4. Stay within budget if specified
-5. Include WHERE to find these vehicles (auctions, private party, trade-ins, etc.)
+DEALER'S PAST SUCCESS (context only):
+${dealerHistoryText}
 
-Provide recommendations in JSON format:
+MARKET CONTEXT:
+- Current: ${currentMonth} ${currentYear}
+- Budget: ${budget_max ? "$" + budget_max.toLocaleString() : "$8k-$35k BHPH sweet spot"}
+- DOM = Days on Market (lower = faster selling)
+- "Deals" = vehicles priced 10%+ below average
+
+YOUR MISSION:
+Recommend the TOP ${quantity || 5} vehicles this dealer should ACTIVELY BUY based on REAL market opportunities:
+
+1. **PRIORITIZE HOT MARKETS** - Low DOM means high demand
+2. **FIND THE DEALS** - Models with deals available = profit opportunity
+3. **BALANCE SUPPLY** - Medium/Low supply + Hot market = pricing power
+4. **CONSIDER MMR SPREADS** - If avg price << MMR, there's margin
+5. **BE SPECIFIC** - Exact year ranges, max price to pay, WHERE to find them
+6. **ACTIONABLE INTEL** - This dealer should be able to act TODAY
+
+Return ONLY valid JSON:
 {
   "recommendations": [
     {
       "rank": 1,
       "make": "Ford",
       "model": "F-150",
-      "year_range": "2018-2022",
-      "target_price_max": 35000,
+      "year_range": "2018-2020",
+      "target_price_max": 32000,
       "expected_profit": 4500,
-      "expected_days_to_sell": 21,
-      "reasoning": "Strong profit history ($4,200 avg), fast seller (23 days), high demand in your market",
-      "where_to_find": ["Dealer auctions (Manheim, ADESA)", "Private party listings", "Trade-ins"],
-      "seasonal_note": "High demand right now"
+      "expected_days_to_sell": 25,
+      "reasoning": "HOT MARKET: Only 28 DOM, 12 deals available under $30k, low supply (22 units) = pricing power. Market avg $31,500 vs MMR $34,200 = $2,700 built-in margin.",
+      "where_to_find": ["Manheim/ADESA auctions", "Private party (Facebook, Craigslist)", "Wholesale groups"],
+      "action_item": "Target 2018-2020 XLT trim, 4WD, under 80k miles. Pay up to $32k for clean title."
     }
   ],
-  "market_insights": "Brief overall market analysis and buying strategy for this dealer"
+  "market_insights": "2-3 sentence summary of BIGGEST opportunities in this market right now. Be specific and actionable."
 }
 
-Return ONLY valid JSON, no other text.`;
+Return ONLY the JSON. Make this dealer money.`;
 
-    // STEP 4: Call Anthropic API
+    console.log("Calling AI for market analysis...");
+
+    // STEP 3: Get AI analysis
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -116,15 +227,14 @@ Return ONLY valid JSON, no other text.`;
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-3-haiku-20240307",
-        max_tokens: 2000,
+        model: "claude-haiku-4-20250514",
+        max_tokens: 3000,
         messages: [{ role: "user", content: prompt }],
       }),
     });
 
     if (!anthropicRes.ok) {
-      const errorText = await anthropicRes.text();
-      throw new Error(`Anthropic API error: ${errorText}`);
+      throw new Error(`Anthropic API error: ${anthropicRes.status}`);
     }
 
     const anthropicData = await anthropicRes.json();
@@ -132,32 +242,42 @@ Return ONLY valid JSON, no other text.`;
 
     console.log("AI Response:", aiText);
 
-    // STEP 5: Parse JSON response with fallback
+    // Parse response
     let recommendations;
     try {
       recommendations = JSON.parse(aiText);
     } catch (parseError) {
-      console.error("Failed to parse AI response as JSON:", parseError);
+      console.error("Failed to parse AI response:", parseError);
 
-      // Create fallback recommendations from top preferences
+      // Fallback: Use top 5 hottest markets
+      const topMarkets = marketData
+        .filter(m => m.deals_available > 0)
+        .sort((a, b) => {
+          // Score: lower DOM + more deals = better
+          const scoreA = (50 - a.avg_days_on_market) + (a.deals_available * 2);
+          const scoreB = (50 - b.avg_days_on_market) + (b.deals_available * 2);
+          return scoreB - scoreA;
+        })
+        .slice(0, quantity || 5);
+
       recommendations = {
-        recommendations: topVehicles.slice(0, quantity || 5).map((p, i) => ({
+        recommendations: topMarkets.map((m, i) => ({
           rank: i + 1,
-          make: p.make,
-          model: p.model || "",
-          year_range: getCurrentYearRange(),
-          target_price_max: Math.round((p.avg_purchase_price || 20000) * 1.1),
-          expected_profit: Math.round(p.avg_profit || 0),
-          expected_days_to_sell: p.avg_days_on_lot || 30,
-          reasoning: `Proven performer: ${p.total_sold} sold with $${Math.round(p.avg_profit || 0)} avg profit`,
-          where_to_find: ["Dealer auctions", "Private party", "Trade-ins"],
-          seasonal_note: "",
+          make: m.make,
+          model: m.model,
+          year_range: "2016-2021",
+          target_price_max: m.avg_price,
+          expected_profit: m.avg_mmr ? m.avg_mmr - m.avg_price : 3000,
+          expected_days_to_sell: m.avg_days_on_market,
+          reasoning: `${m.market_temperature} market (${m.avg_days_on_market} DOM), ${m.deals_available} deals available, ${m.supply_level} supply`,
+          where_to_find: ["Auctions", "Private party", "Trade-ins"],
+          action_item: `Look for ${m.make} ${m.model} under $${m.avg_price.toLocaleString()}`
         })),
-        market_insights: "AI analysis failed, showing recommendations based on your historical data.",
+        market_insights: `Top opportunities: ${topMarkets[0].make} ${topMarkets[0].model} moving fast (${topMarkets[0].avg_days_on_market} DOM) with ${topMarkets[0].deals_available} deals available.`
       };
     }
 
-    console.log(`Generated ${recommendations.recommendations?.length || 0} recommendations`);
+    console.log(`Generated ${recommendations.recommendations?.length || 0} market-based recommendations`);
 
     return new Response(JSON.stringify(recommendations), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -170,16 +290,3 @@ Return ONLY valid JSON, no other text.`;
     });
   }
 });
-
-// Helper functions
-function getSeason(month: number): string {
-  if (month >= 3 && month <= 5) return "Spring";
-  if (month >= 6 && month <= 8) return "Summer";
-  if (month >= 9 && month <= 11) return "Fall";
-  return "Winter";
-}
-
-function getCurrentYearRange(): string {
-  const currentYear = new Date().getFullYear();
-  return `${currentYear - 6}-${currentYear - 2}`;
-}
