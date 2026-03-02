@@ -112,10 +112,27 @@ serve(async (req) => {
 
           if (findError) {
             console.error(`  ✗ find-vehicles ERROR for model ${model}:`, JSON.stringify(findError));
+            searchDetails.push({
+              name: search.name,
+              model: model,
+              error: "find-vehicles failed",
+              error_details: JSON.stringify(findError)
+            });
             continue;
           }
 
           console.log(`  ✓ find-vehicles returned: ${vehiclesData?.dealer_listings?.length || 0} dealer + ${vehiclesData?.private_listings?.length || 0} private listings`);
+
+          // DIAGNOSTIC: Track what find-vehicles returned INCLUDING LOGS
+          if (!searchDetails.find(sd => sd.name === search.name)) {
+            searchDetails.push({
+              name: search.name,
+              model: model,
+              dealer_count: vehiclesData?.dealer_listings?.length || 0,
+              private_count: vehiclesData?.private_listings?.length || 0,
+              find_vehicles_logs: vehiclesData?.logs || []
+            });
+          }
 
           allVehicles.push(
             ...(vehiclesData.dealer_listings || []),
@@ -132,11 +149,24 @@ serve(async (req) => {
         let skippedNotGoodDeal = 0;
 
         for (const vehicle of allVehicles.slice(0, 50)) {
-          if (!vehicle.mmr || !vehicle.price) {
+          // Skip if no price at all
+          if (!vehicle.price) {
             skippedNoPrice++;
             continue;
           }
 
+          // If we have price but no MMR, show it anyway (can't score it as a deal though)
+          if (!vehicle.mmr) {
+            goodDeals.push({
+              ...vehicle,
+              savings: null,
+              savings_percentage: null,
+              deal_score: "Unknown - No MMR",
+            });
+            continue;
+          }
+
+          // We have both price and MMR - score it
           const savings = vehicle.mmr - vehicle.price;
           const savingsPercent = (savings / vehicle.mmr) * 100;
 
@@ -162,7 +192,16 @@ serve(async (req) => {
           vehicles_found: allVehicles.length,
           deals_passed_filter: goodDeals.length,
           skipped_no_price: skippedNoPrice,
-          skipped_not_deal: skippedNotGoodDeal
+          skipped_not_deal: skippedNotGoodDeal,
+          sample_vehicles: allVehicles.slice(0, 3).map(v => ({
+            year: v.year,
+            make: v.make,
+            model: v.model,
+            price: v.price,
+            mmr: v.mmr,
+            miles: v.miles,
+            source: v.source
+          }))
         });
 
         // STEP 3: AI analysis for top deals
