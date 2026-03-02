@@ -105,28 +105,36 @@ serve(async (req) => {
           );
         }
 
-        console.log(`Found ${allVehicles.length} vehicles`);
+        console.log(`Found ${allVehicles.length} total vehicles`);
 
-        // STEP 2: Filter good deals (>8% below market)
+        // STEP 2: Filter good deals (>5% below market - lowered from 8% to catch more)
         const goodDeals = [];
+        let skippedNoPrice = 0;
+        let skippedNotGoodDeal = 0;
 
         for (const vehicle of allVehicles.slice(0, 50)) {
-          if (!vehicle.mmr || !vehicle.price) continue;
+          if (!vehicle.mmr || !vehicle.price) {
+            skippedNoPrice++;
+            continue;
+          }
 
           const savings = vehicle.mmr - vehicle.price;
           const savingsPercent = (savings / vehicle.mmr) * 100;
 
-          if (savingsPercent >= 8) {
+          if (savingsPercent >= 5) {
             goodDeals.push({
               ...vehicle,
               savings,
               savings_percentage: Math.round(savingsPercent * 100) / 100,
-              deal_score: savingsPercent >= 15 ? "Excellent" : savingsPercent >= 12 ? "Great" : "Good",
+              deal_score: savingsPercent >= 15 ? "Excellent" : savingsPercent >= 12 ? "Great" : savingsPercent >= 8 ? "Good" : "Fair",
             });
+          } else {
+            skippedNotGoodDeal++;
           }
         }
 
-        console.log(`${goodDeals.length} good deals (>8% below market)`);
+        console.log(`${goodDeals.length} deals passed filter (>5% below market)`);
+        console.log(`Skipped: ${skippedNoPrice} no price, ${skippedNotGoodDeal} not good deals`);
 
         // STEP 3: AI analysis for top deals
         for (const deal of goodDeals.slice(0, 10)) {
