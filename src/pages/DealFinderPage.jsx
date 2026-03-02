@@ -739,9 +739,12 @@ export default function DealFinderPage() {
                     type="text"
                     value={formData.model}
                     onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                    placeholder="2500, 3500 (comma-separated for multiple)"
+                    placeholder="F-150"
                     style={inputStyle}
                   />
+                  <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
+                    💡 Tip: Use commas for multiple (e.g., "2500, 3500")
+                  </div>
                 </div>
                 <div>
                   <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
