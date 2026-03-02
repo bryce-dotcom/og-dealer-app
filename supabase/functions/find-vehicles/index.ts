@@ -530,12 +530,14 @@ serve(async (req) => {
     }
 
     // ===== PART 2: MARKETCHECK PRICE PREDICTION (Deal Scoring) =====
-    if (MARKETCHECK_API_KEY && dealerListings.length > 0) {
-      log(`\n=== MARKETCHECK PRICE PREDICTIONS ===`);
+    // Get MMR for both dealer AND private listings
+    const allListings = [...dealerListings, ...privateListings];
+    if (MARKETCHECK_API_KEY && allListings.length > 0) {
+      log(`\n=== MARKETCHECK PRICE PREDICTIONS (for ${dealerListings.length} dealer + ${privateListings.length} private listings) ===`);
 
       // Group by year/make/model/trim to reduce API calls
       const uniqueVehicles = new Map<string, any>();
-      for (const listing of dealerListings) {
+      for (const listing of allListings) {
         const key = `${listing.year}-${listing.make}-${listing.model}-${listing.trim || 'base'}-${Math.round((listing.miles || 60000) / 10000) * 10000}`;
         if (!uniqueVehicles.has(key)) {
           uniqueVehicles.set(key, listing);
@@ -587,8 +589,8 @@ serve(async (req) => {
         }
       }
 
-      // Apply deal scores to all listings
-      for (const listing of dealerListings) {
+      // Apply MMR and deal scores to ALL listings (dealer + private)
+      for (const listing of allListings) {
         const key = `${listing.year}-${listing.make}-${listing.model}-${listing.trim || 'base'}-${Math.round((listing.miles || 60000) / 10000) * 10000}`;
         let marketValue = priceCache.get(key);
 
@@ -598,12 +600,14 @@ serve(async (req) => {
         }
 
         if (marketValue && listing.price) {
+          listing.mmr = marketValue;  // Add MMR field
           listing.market_value = marketValue;
           const { score, savings, percentage } = calculateDealScore(listing.price, marketValue);
           listing.deal_score = score;
           listing.savings = savings;
           listing.savings_percentage = percentage;
         } else {
+          listing.mmr = null;  // Add MMR field even if null
           listing.market_value = null;
           listing.deal_score = 'UNKNOWN';
           listing.savings = 0;
