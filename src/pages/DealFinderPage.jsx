@@ -739,7 +739,7 @@ export default function DealFinderPage() {
                     type="text"
                     value={formData.model}
                     onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                    placeholder="F-150"
+                    placeholder="2500, 3500 (comma-separated for multiple)"
                     style={inputStyle}
                   />
                 </div>

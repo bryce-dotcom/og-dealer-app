@@ -60,39 +60,50 @@ serve(async (req) => {
       console.log(`\n--- Processing: ${search.name} ---`);
 
       try {
-        // STEP 1: Find vehicles
-        const { data: vehiclesData, error: findError } = await supabase.functions.invoke(
-          "find-vehicles",
-          {
-            body: {
-              year_min: search.year_min,
-              year_max: search.year_max,
-              make: search.make,
-              model: search.model,
-              trim: search.trim,
-              engine_type: search.engine_type,
-              drivetrain: search.drivetrain,
-              transmission: search.transmission,
-              body_type: search.body_type,
-              cab_type: search.cab_type,
-              bed_length: search.bed_length,
-              max_price: search.max_price,
-              max_miles: search.max_miles,
-              zip_code: search.zip_code || "84065",
-              radius_miles: search.radius_miles || 250,
-            },
+        // Split model by commas to support multiple models (e.g., "2500, 3500")
+        const models = search.model
+          ? search.model.split(',').map((m: string) => m.trim()).filter((m: string) => m)
+          : [null];
+
+        const allVehicles = [];
+
+        // STEP 1: Find vehicles for each model
+        for (const model of models) {
+          console.log(`  Searching for model: ${model || 'any'}`);
+
+          const { data: vehiclesData, error: findError } = await supabase.functions.invoke(
+            "find-vehicles",
+            {
+              body: {
+                year_min: search.year_min,
+                year_max: search.year_max,
+                make: search.make,
+                model: model,
+                trim: search.trim,
+                engine_type: search.engine_type,
+                drivetrain: search.drivetrain,
+                transmission: search.transmission,
+                body_type: search.body_type,
+                cab_type: search.cab_type,
+                bed_length: search.bed_length,
+                max_price: search.max_price,
+                max_miles: search.max_miles,
+                zip_code: search.zip_code || "84065",
+                radius_miles: search.radius_miles || 250,
+              },
+            }
+          );
+
+          if (findError) {
+            console.error(`find-vehicles error for model ${model}:`, findError);
+            continue;
           }
-        );
 
-        if (findError) {
-          console.error(`find-vehicles error:`, findError);
-          continue;
+          allVehicles.push(
+            ...(vehiclesData.dealer_listings || []),
+            ...(vehiclesData.private_listings || [])
+          );
         }
-
-        const allVehicles = [
-          ...(vehiclesData.dealer_listings || []),
-          ...(vehiclesData.private_listings || []),
-        ];
 
         console.log(`Found ${allVehicles.length} vehicles`);
 
