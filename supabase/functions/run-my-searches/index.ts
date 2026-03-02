@@ -83,72 +83,93 @@ serve(async (req) => {
 
         const allVehicles = [];
 
-        // STEP 1: Find vehicles for each model
+        // Build list of markets to search: primary zip + additional markets
+        const markets = [search.zip_code || "84065"];
+        if (search.additional_markets && Array.isArray(search.additional_markets)) {
+          markets.push(...search.additional_markets);
+        }
+        console.log(`Markets to search: ${markets.join(', ')}`);
+
+        // STEP 1: Find vehicles for each model in each market
         for (const model of models) {
-          console.log(`\n  → Calling find-vehicles for model: ${model || 'any'}`);
+          for (const zip_code of markets) {
+            console.log(`\n  → Calling find-vehicles for model: ${model || 'any'} in zip: ${zip_code}`);
 
-          const { data: vehiclesData, error: findError } = await supabase.functions.invoke(
-            "find-vehicles",
-            {
-              body: {
-                year_min: search.year_min,
-                year_max: search.year_max,
-                make: search.make,
+            const { data: vehiclesData, error: findError } = await supabase.functions.invoke(
+              "find-vehicles",
+              {
+                body: {
+                  year_min: search.year_min,
+                  year_max: search.year_max,
+                  make: search.make,
+                  model: model,
+                  trim: search.trim,
+                  engine_type: search.engine_type,
+                  drivetrain: search.drivetrain,
+                  transmission: search.transmission,
+                  body_type: search.body_type,
+                  cab_type: search.cab_type,
+                  bed_length: search.bed_length,
+                  max_price: search.max_price,
+                  max_miles: search.max_miles,
+                  zip_code: zip_code,
+                  radius_miles: search.radius_miles || 100,
+                },
+              }
+            );
+
+            if (findError) {
+              console.error(`  ✗ find-vehicles ERROR for model ${model} in ${zip_code}:`, JSON.stringify(findError));
+              searchDetails.push({
+                name: search.name,
                 model: model,
-                trim: search.trim,
-                engine_type: search.engine_type,
-                drivetrain: search.drivetrain,
-                transmission: search.transmission,
-                body_type: search.body_type,
-                cab_type: search.cab_type,
-                bed_length: search.bed_length,
-                max_price: search.max_price,
-                max_miles: search.max_miles,
-                zip_code: search.zip_code || "84065",
-                radius_miles: search.radius_miles || 250,
-              },
+                zip_code: zip_code,
+                error: "find-vehicles failed",
+                error_details: JSON.stringify(findError)
+              });
+              continue;
             }
-          );
 
-          if (findError) {
-            console.error(`  ✗ find-vehicles ERROR for model ${model}:`, JSON.stringify(findError));
+            console.log(`  ✓ find-vehicles returned: ${vehiclesData?.dealer_listings?.length || 0} dealer + ${vehiclesData?.private_listings?.length || 0} private listings from ${zip_code}`);
+
+            // DIAGNOSTIC: Track what find-vehicles returned INCLUDING LOGS
             searchDetails.push({
               name: search.name,
               model: model,
-              error: "find-vehicles failed",
-              error_details: JSON.stringify(findError)
-            });
-            continue;
-          }
-
-          console.log(`  ✓ find-vehicles returned: ${vehiclesData?.dealer_listings?.length || 0} dealer + ${vehiclesData?.private_listings?.length || 0} private listings`);
-
-          // DIAGNOSTIC: Track what find-vehicles returned INCLUDING LOGS
-          if (!searchDetails.find(sd => sd.name === search.name)) {
-            searchDetails.push({
-              name: search.name,
-              model: model,
+              zip_code: zip_code,
               dealer_count: vehiclesData?.dealer_listings?.length || 0,
               private_count: vehiclesData?.private_listings?.length || 0,
               find_vehicles_logs: vehiclesData?.logs || []
             });
-          }
 
-          allVehicles.push(
-            ...(vehiclesData.dealer_listings || []),
-            ...(vehiclesData.private_listings || [])
-          );
+            allVehicles.push(
+              ...(vehiclesData.dealer_listings || []),
+              ...(vehiclesData.private_listings || [])
+            );
+          }
         }
 
-        console.log(`Found ${allVehicles.length} total vehicles`);
-        totalVehiclesFound += allVehicles.length;
+        // Deduplicate vehicles by VIN (if available) or by URL
+        const uniqueVehicles = [];
+        const seenIdentifiers = new Set();
+
+        for (const vehicle of allVehicles) {
+          const identifier = vehicle.vin || vehicle.url || JSON.stringify(vehicle);
+          if (!seenIdentifiers.has(identifier)) {
+            seenIdentifiers.add(identifier);
+            uniqueVehicles.push(vehicle);
+          }
+        }
+
+        console.log(`Found ${allVehicles.length} total vehicles, ${uniqueVehicles.length} unique after deduplication`);
+        totalVehiclesFound += uniqueVehicles.length;
 
         // STEP 2: Filter good deals (>1% below market - very permissive to catch any deals)
         const goodDeals = [];
         let skippedNoPrice = 0;
         let skippedNotGoodDeal = 0;
 
-        for (const vehicle of allVehicles.slice(0, 50)) {
+        for (const vehicle of uniqueVehicles.slice(0, 50)) {
           // Skip if no price at all
           if (!vehicle.price) {
             skippedNoPrice++;
@@ -189,11 +210,12 @@ serve(async (req) => {
 
         searchDetails.push({
           name: search.name,
-          vehicles_found: allVehicles.length,
+          vehicles_found: uniqueVehicles.length,
           deals_passed_filter: goodDeals.length,
           skipped_no_price: skippedNoPrice,
           skipped_not_deal: skippedNotGoodDeal,
-          sample_vehicles: allVehicles.slice(0, 3).map(v => ({
+          markets_searched: markets.length,
+          sample_vehicles: uniqueVehicles.slice(0, 3).map(v => ({
             year: v.year,
             make: v.make,
             model: v.model,

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { VEHICLE_MAKES, VEHICLE_MODELS, VEHICLE_TRIMS } from '../data/vehicleData';
+import { MARKETS, MARKET_GROUPS } from '../data/marketData';
 
 export default function DealFinderPage() {
   const { dealer } = useStore();
@@ -32,7 +33,8 @@ export default function DealFinderPage() {
     max_price: '',
     max_miles: '',
     zip_code: dealer?.zip || '84065',
-    radius_miles: 250,
+    radius_miles: 100, // MarketCheck API limit
+    additional_markets: [],
     bhph_preferred: false,
     active: true,
   });
@@ -185,7 +187,8 @@ export default function DealFinderPage() {
       max_price: '',
       max_miles: '',
       zip_code: dealer?.zip || '84065',
-      radius_miles: 250,
+      radius_miles: 100,
+      additional_markets: [],
       bhph_preferred: false,
       active: true,
     });
@@ -210,6 +213,7 @@ export default function DealFinderPage() {
       max_miles: search.max_miles || '',
       zip_code: search.zip_code,
       radius_miles: search.radius_miles,
+      additional_markets: search.additional_markets || [],
       bhph_preferred: search.bhph_preferred,
       active: search.active,
     });
@@ -919,6 +923,28 @@ export default function DealFinderPage() {
                     placeholder="80000"
                     style={inputStyle}
                   />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
+                  Additional Markets (expand beyond 100 mile radius)
+                </label>
+                <select
+                  multiple
+                  value={formData.additional_markets}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    additional_markets: Array.from(e.target.selectedOptions, option => option.value)
+                  })}
+                  style={{ ...inputStyle, height: '120px' }}
+                >
+                  {Object.entries(MARKETS).map(([city, zip]) => (
+                    <option key={zip} value={zip}>{city}</option>
+                  ))}
+                </select>
+                <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
+                  💡 Each market searches 100 miles. Select multiple (Ctrl/Cmd+Click) to cover larger area.
                 </div>
               </div>
 
