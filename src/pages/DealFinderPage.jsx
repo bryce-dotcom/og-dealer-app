@@ -254,6 +254,9 @@ export default function DealFinderPage() {
       console.log('Edge Function response:', { data, error });
       console.log('FULL DATA:', JSON.stringify(data, null, 2));
 
+      // DEBUG: Show raw response
+      alert('RAW RESPONSE:\n' + JSON.stringify(data, null, 2));
+
       if (error) {
         console.error('Edge Function error details:', JSON.stringify(error, null, 2));
         throw error;
