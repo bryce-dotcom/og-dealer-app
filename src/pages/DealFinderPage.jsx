@@ -242,17 +242,36 @@ export default function DealFinderPage() {
 
     setRunningSearch(true);
     try {
-      const { data, error } = await supabase.functions.invoke('run-saved-searches', {
-        body: {}
+      const { data, error } = await supabase.functions.invoke('run-my-searches', {
+        body: { dealer_id: dealer.id }
       });
 
-      if (error) throw error;
+      console.log('Edge Function response:', { data, error });
 
-      alert(`Search complete! Found ${data.deals_found || 0} new deals. Refresh to see them.`);
+      if (error) {
+        console.error('Edge Function error details:', JSON.stringify(error, null, 2));
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error('No data returned from Edge Function');
+      }
+
+      if (!data.success) {
+        throw new Error(data.error || 'Edge Function returned success=false');
+      }
+
+      if (data.deals_found === 0) {
+        alert(data.message || `Search complete! No new deals found. Try adjusting your search criteria.`);
+      } else {
+        alert(`Search complete! Found ${data.deals_found} new deals!`);
+      }
+
       await loadDealAlerts();
     } catch (error) {
       console.error('Error running searches:', error);
-      alert('Error running searches: ' + error.message);
+      console.error('Error details:', JSON.stringify(error, null, 2));
+      alert('Error running searches: ' + (error.message || JSON.stringify(error)));
     } finally {
       setRunningSearch(false);
     }
