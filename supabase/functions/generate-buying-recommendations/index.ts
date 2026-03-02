@@ -258,7 +258,7 @@ Return ONLY the JSON. Make this dealer money.`;
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-20250514",
+        model: "claude-3-haiku-20240307",
         max_tokens: 3000,
         messages: [{ role: "user", content: prompt }],
       }),
