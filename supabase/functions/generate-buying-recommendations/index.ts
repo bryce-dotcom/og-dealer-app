@@ -71,18 +71,21 @@ serve(async (req) => {
         // Search MarketCheck for this make/model in dealer's area
         const params = new URLSearchParams({
           api_key: MARKETCHECK_API_KEY,
-          make: vehicle.make,
+          make: vehicle.make.toLowerCase(),
           model: vehicle.model,
           year: "2015-2022",
           zip: dealerZip,
           radius: "100",
+          car_type: "used",
           price_min: "8000",
           price_max: budget_max ? budget_max.toString() : "35000",
           rows: "50",
-          start: "0"
+          sort_by: "price",
+          sort_order: "asc",
+          stats: "price,miles,dom"
         });
 
-        const apiUrl = `https://marketcheck-prod.apigee.net/v1/search?${params.toString()}`;
+        const apiUrl = `https://mc-api.marketcheck.com/v2/search/car/active?${params.toString()}`;
         console.log(`Fetching: ${vehicle.make} ${vehicle.model} from ${dealerZip}`);
 
         const marketRes = await fetch(apiUrl);
@@ -122,13 +125,20 @@ serve(async (req) => {
 
         if (sampleVin) {
           try {
+            const predParams = new URLSearchParams({
+              api_key: MARKETCHECK_API_KEY,
+              vin: sampleVin,
+              miles: String(listings[0]?.miles || 60000),
+              car_type: "used"
+            });
+
             const predRes = await fetch(
-              `https://marketcheck-prod.apigee.net/v2/predict/car/${sampleVin}?api_key=${MARKETCHECK_API_KEY}`
+              `https://mc-api.marketcheck.com/v2/predict/car/price?${predParams.toString()}`
             );
 
             if (predRes.ok) {
               const predData = await predRes.json();
-              avgMmr = predData.average_mmr || predData.market_price;
+              avgMmr = predData.predicted_price || predData.price || predData.adjusted_price || predData.retail_price;
             }
           } catch (e) {
             console.error("Price prediction error:", e);
