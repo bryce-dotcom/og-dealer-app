@@ -455,8 +455,9 @@ serve(async (req) => {
 
         if (zip_code) {
           params.set('zip', zip_code);
-          // MarketCheck has 100 mile limit on some plans
-          params.set('radius', String(Math.min(radius_miles, 100)));
+          // Allow up to 500 miles for rare vehicles (diesel trucks, etc.)
+          // If API rejects, it will just return what it can
+          params.set('radius', String(Math.min(radius_miles, 500)));
         }
 
         if (trim) {

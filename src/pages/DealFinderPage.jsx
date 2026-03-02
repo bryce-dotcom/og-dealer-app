@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import { VEHICLE_MAKES, VEHICLE_MODELS, VEHICLE_TRIMS } from '../data/vehicleData';
 
 export default function DealFinderPage() {
   const { dealer } = useStore();
@@ -729,14 +730,17 @@ export default function DealFinderPage() {
                 <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
                   Make *
                 </label>
-                <input
-                  type="text"
+                <select
                   value={formData.make}
-                  onChange={(e) => setFormData({ ...formData, make: e.target.value })}
-                  placeholder="Ford"
+                  onChange={(e) => setFormData({ ...formData, make: e.target.value, model: '', trim: '' })}
                   style={inputStyle}
                   required
-                />
+                >
+                  <option value="">Select Make</option>
+                  {VEHICLE_MAKES.map(make => (
+                    <option key={make} value={make}>{make}</option>
+                  ))}
+                </select>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
@@ -744,28 +748,42 @@ export default function DealFinderPage() {
                   <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
                     Model
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.model}
-                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                    placeholder="F-150"
+                    onChange={(e) => setFormData({ ...formData, model: e.target.value, trim: '' })}
                     style={inputStyle}
-                  />
+                    disabled={!formData.make}
+                  >
+                    <option value="">Select Model</option>
+                    {formData.make && VEHICLE_MODELS[formData.make]?.map(model => (
+                      <option key={model} value={model}>{model}</option>
+                    ))}
+                  </select>
                   <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
-                    💡 Tip: Use commas for multiple (e.g., "2500, 3500")
+                    {!formData.make && '💡 Select a make first'}
+                    {formData.make && '💡 Tip: Use commas for multiple (e.g., "2500, 3500")'}
                   </div>
                 </div>
                 <div>
                   <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
                     Trim
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.trim}
                     onChange={(e) => setFormData({ ...formData, trim: e.target.value })}
-                    placeholder="Lariat"
                     style={inputStyle}
-                  />
+                    disabled={!formData.model || !VEHICLE_TRIMS[formData.model]}
+                  >
+                    <option value="">Any Trim</option>
+                    {formData.model && VEHICLE_TRIMS[formData.model]?.map(trim => (
+                      <option key={trim} value={trim}>{trim}</option>
+                    ))}
+                  </select>
+                  {formData.model && !VEHICLE_TRIMS[formData.model] && (
+                    <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
+                      💡 Trims not available for this model
+                    </div>
+                  )}
                 </div>
               </div>
 
