@@ -64,6 +64,9 @@ serve(async (req) => {
     }
 
     let totalDealsFound = 0;
+    let totalVehiclesFound = 0;
+    let totalFiltered = 0;
+    const searchDetails: any[] = [];
 
     for (const search of searches) {
       console.log(`\n=== PROCESSING SEARCH: ${search.name} ===`);
@@ -121,8 +124,9 @@ serve(async (req) => {
         }
 
         console.log(`Found ${allVehicles.length} total vehicles`);
+        totalVehiclesFound += allVehicles.length;
 
-        // STEP 2: Filter good deals (>5% below market - lowered from 8% to catch more)
+        // STEP 2: Filter good deals (>1% below market - very permissive to catch any deals)
         const goodDeals = [];
         let skippedNoPrice = 0;
         let skippedNotGoodDeal = 0;
@@ -136,7 +140,7 @@ serve(async (req) => {
           const savings = vehicle.mmr - vehicle.price;
           const savingsPercent = (savings / vehicle.mmr) * 100;
 
-          if (savingsPercent >= 5) {
+          if (savingsPercent >= 1) {
             goodDeals.push({
               ...vehicle,
               savings,
@@ -150,6 +154,16 @@ serve(async (req) => {
 
         console.log(`${goodDeals.length} deals passed filter (>5% below market)`);
         console.log(`Skipped: ${skippedNoPrice} no price, ${skippedNotGoodDeal} not good deals`);
+
+        totalFiltered += skippedNotGoodDeal;
+
+        searchDetails.push({
+          name: search.name,
+          vehicles_found: allVehicles.length,
+          deals_passed_filter: goodDeals.length,
+          skipped_no_price: skippedNoPrice,
+          skipped_not_deal: skippedNotGoodDeal
+        });
 
         // STEP 3: AI analysis for top deals
         for (const deal of goodDeals.slice(0, 10)) {
@@ -275,6 +289,9 @@ Provide JSON with:
         success: true,
         searches_processed: searches?.length || 0,
         deals_found: totalDealsFound,
+        total_vehicles_found: totalVehiclesFound,
+        total_filtered_out: totalFiltered,
+        search_details: searchDetails,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
