@@ -19,7 +19,7 @@ serve(async (req) => {
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
 
-    const { dealer_id, budget_max, quantity } = await req.json();
+    const { dealer_id, budget_max, quantity = 10 } = await req.json();
 
     console.log("=== MARKET INTELLIGENCE ANALYSIS ===");
     console.log(`Dealer ID: ${dealer_id}`);
@@ -50,18 +50,34 @@ serve(async (req) => {
 
     // STEP 1: Analyze REAL market data - popular used car models
     const popularModels = [
+      // Trucks
       { make: "Ford", model: "F-150" },
       { make: "Chevrolet", model: "Silverado 1500" },
       { make: "Ram", model: "1500" },
       { make: "GMC", model: "Sierra 1500" },
+      { make: "Toyota", model: "Tacoma" },
+      { make: "Toyota", model: "Tundra" },
+      { make: "Ford", model: "Ranger" },
+      { make: "Chevrolet", model: "Colorado" },
+      // SUVs
+      { make: "Chevrolet", model: "Tahoe" },
+      { make: "Chevrolet", model: "Suburban" },
+      { make: "Ford", model: "Explorer" },
+      { make: "Ford", model: "Expedition" },
+      { make: "Jeep", model: "Wrangler" },
+      { make: "Jeep", model: "Grand Cherokee" },
+      { make: "Toyota", model: "4Runner" },
+      { make: "Honda", model: "CR-V" },
+      { make: "Toyota", model: "RAV4" },
+      { make: "Chevrolet", model: "Equinox" },
+      { make: "Ford", model: "Escape" },
+      { make: "Nissan", model: "Rogue" },
+      // Sedans
       { make: "Honda", model: "Civic" },
       { make: "Toyota", model: "Camry" },
       { make: "Honda", model: "Accord" },
       { make: "Toyota", model: "Corolla" },
-      { make: "Chevrolet", model: "Equinox" },
-      { make: "Ford", model: "Escape" },
-      { make: "Jeep", model: "Wrangler" },
-      { make: "Toyota", model: "Tacoma" }
+      { make: "Nissan", model: "Altima" }
     ];
 
     console.log("Analyzing market data for popular models...");
@@ -224,7 +240,7 @@ MARKET CONTEXT:
 - "Deals" = vehicles priced 10%+ below average
 
 YOUR MISSION:
-Recommend the TOP ${quantity || 5} vehicles this dealer should ACTIVELY BUY based on REAL market opportunities.
+Recommend the TOP ${quantity} vehicles this dealer should ACTIVELY BUY based on REAL market opportunities.
 
 CRITICAL UNDERSTANDING:
 - avg_price = RETAIL (what dealers are selling for)
@@ -308,14 +324,13 @@ CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no code blocks. J
       console.error("Failed to parse AI response:", parseError);
       console.error("AI text (first 500 chars):", aiText.substring(0, 500));
 
-      // Fallback: Use top 5 profitable markets (ONLY if AI fails - uses REAL data only)
+      // Fallback: Use top profitable markets (ONLY if AI fails - uses REAL data only)
       const topMarkets = marketData
         .filter(m =>
-          m.deals_available > 0 &&
           m.avg_mmr &&
           m.estimated_profit &&
-          m.estimated_profit > 500 && // At least $500 profit
-          m.avg_days_on_market < 60    // Moves in under 60 days (reasonable turn time)
+          m.estimated_profit > 300 && // At least $300 profit
+          m.avg_days_on_market < 90    // Moves in under 90 days
         )
         .sort((a, b) => {
           // Score: higher profit + lower DOM + more deals = better

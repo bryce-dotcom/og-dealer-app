@@ -624,7 +624,7 @@ export default function ResearchPage() {
         body: {
           dealer_id: dealer.id,
           budget_max: null,
-          quantity: 5
+          quantity: 10
         }
       });
 
