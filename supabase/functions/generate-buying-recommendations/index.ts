@@ -48,21 +48,23 @@ serve(async (req) => {
       .order("avg_profit", { ascending: false })
       .limit(5);
 
-    // STEP 1: Analyze REAL market data - popular BHPH models
+    // STEP 1: Analyze REAL market data - popular used car models
     const popularModels = [
       { make: "Ford", model: "F-150" },
       { make: "Chevrolet", model: "Silverado 1500" },
       { make: "Ram", model: "1500" },
+      { make: "GMC", model: "Sierra 1500" },
       { make: "Honda", model: "Civic" },
       { make: "Toyota", model: "Camry" },
       { make: "Honda", model: "Accord" },
       { make: "Toyota", model: "Corolla" },
       { make: "Chevrolet", model: "Equinox" },
       { make: "Ford", model: "Escape" },
-      { make: "Nissan", model: "Altima" }
+      { make: "Jeep", model: "Wrangler" },
+      { make: "Toyota", model: "Tacoma" }
     ];
 
-    console.log("Analyzing market data for popular BHPH models...");
+    console.log("Analyzing market data for popular models...");
 
     const marketData = [];
 
@@ -207,7 +209,7 @@ serve(async (req) => {
     const currentMonth = new Date().toLocaleString("default", { month: "long" });
     const currentYear = new Date().getFullYear();
 
-    const prompt = `You are an expert vehicle acquisition analyst. A BHPH dealer in ${dealerLocation} needs to know EXACTLY what to buy RIGHT NOW to make maximum profit.
+    const prompt = `You are an expert vehicle acquisition analyst. A used car dealer in ${dealerLocation} needs to know EXACTLY what to buy RIGHT NOW to make maximum profit.
 
 REAL-TIME MARKET DATA (${dealerLocation} area, 100 mile radius):
 ${marketDataText}
@@ -217,7 +219,7 @@ ${dealerHistoryText}
 
 MARKET CONTEXT:
 - Current: ${currentMonth} ${currentYear}
-- Budget: ${budget_max ? "$" + budget_max.toLocaleString() : "$8k-$35k BHPH sweet spot"}
+- Budget: ${budget_max ? "Up to $" + budget_max.toLocaleString() : "Focus on $8k-$40k range"}
 - DOM = Days on Market (lower = faster selling)
 - "Deals" = vehicles priced 10%+ below average
 
