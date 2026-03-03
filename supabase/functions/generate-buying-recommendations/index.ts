@@ -207,26 +207,110 @@ serve(async (req) => {
       }
     }
 
-    console.log(`✅ Found ${marketData.length} PROFITABLE vehicles (after quality filters)`);
-    console.log(`Quality filters: Profit ≥ $1,500, DOM < 60 days, Wholesale < Retail`);
+    console.log(`✅ Found ${marketData.length} EXCELLENT vehicles (Profit ≥ $1,500, DOM < 60)`);
 
+    // If no excellent opportunities, try ACCEPTABLE tier ($1,000+ profit, <90 DOM)
+    let tierLevel = "EXCELLENT";
     if (marketData.length === 0) {
-      return new Response(JSON.stringify({
-        success: false,
-        error: "No profitable opportunities found",
-        message: `No vehicles in ${dealerLocation} meet minimum standards: $1,500+ profit, <60 days turn time, wholesale < retail. Market may be overpriced or inventory is stale.`,
-        debug: {
-          dealer_zip: dealerZip,
-          dealer_location: dealerLocation,
-          models_searched: popularModels.length,
-          marketcheck_api_configured: !!MARKETCHECK_API_KEY
-        },
-        recommendations: [],
-        market_insights: ""
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      console.log(`⚠️ No EXCELLENT vehicles found, searching ACCEPTABLE tier...`);
+
+      // Re-scan with relaxed filters
+      const acceptableData = [];
+      for (const vehicle of popularModels) {
+        try {
+          const params = new URLSearchParams({
+            api_key: MARKETCHECK_API_KEY,
+            make: vehicle.make.toLowerCase(),
+            model: vehicle.model,
+            year: "2015-2022",
+            zip: dealerZip,
+            radius: "100",
+            car_type: "used",
+            price_min: "8000",
+            price_max: budget_max ? budget_max.toString() : "35000",
+            rows: "50",
+            sort_by: "price",
+            sort_order: "asc",
+            stats: "price,miles,dom"
+          });
+
+          const apiUrl = `https://mc-api.marketcheck.com/v2/search/car/active?${params.toString()}`;
+          const marketRes = await fetch(apiUrl);
+          if (!marketRes.ok) continue;
+
+          const marketJson = await marketRes.json();
+          const listings = marketJson.listings || [];
+          if (listings.length === 0) continue;
+
+          const prices = listings.map((l: any) => l.price).filter((p: number) => p > 0);
+          const domValues = listings.map((l: any) => l.dom).filter((d: number) => d >= 0);
+          const avgPrice = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
+          const avgDom = domValues.reduce((a: number, b: number) => a + b, 0) / domValues.length;
+
+          // Get MMR
+          const sampleVin = listings.find((l: any) => l.vin)?.vin;
+          let avgMmr = null;
+          if (sampleVin) {
+            const predParams = new URLSearchParams({
+              api_key: MARKETCHECK_API_KEY,
+              vin: sampleVin,
+              miles: String(listings[0]?.miles || 60000),
+              car_type: "used"
+            });
+            const predRes = await fetch(`https://mc-api.marketcheck.com/v2/predict/car/price?${predParams.toString()}`);
+            if (predRes.ok) {
+              const predData = await predRes.json();
+              avgMmr = predData.predicted_price || predData.price || predData.adjusted_price || predData.retail_price;
+            }
+          }
+
+          if (!avgMmr || avgMmr >= avgPrice) continue;
+
+          const estimatedRecon = avgMmr <= 10000 ? 800 : avgMmr <= 20000 ? 1200 : avgMmr <= 30000 ? 1500 : 2000;
+          const grossMargin = Math.round(avgPrice - avgMmr - estimatedRecon);
+
+          // ACCEPTABLE tier: $1,000+ profit, <90 DOM
+          if (grossMargin >= 1000 && avgDom < 90) {
+            acceptableData.push({
+              make: vehicle.make,
+              model: vehicle.model,
+              inventory_count: listings.length,
+              avg_price: Math.round(avgPrice),
+              avg_mmr: Math.round(avgMmr),
+              avg_days_on_market: Math.round(avgDom),
+              estimated_recon: estimatedRecon,
+              estimated_profit: grossMargin,
+              market_temperature: avgDom < 30 ? "HOT" : avgDom < 45 ? "WARM" : avgDom < 60 ? "COOL" : "SLOW",
+              supply_level: listings.length > 40 ? "HIGH" : listings.length > 20 ? "MEDIUM" : "LOW"
+            });
+            console.log(`✓ ACCEPTABLE: ${vehicle.make} ${vehicle.model}: $${grossMargin} profit, ${Math.round(avgDom)} DOM`);
+          }
+        } catch (err) {
+          console.error(`Error in acceptable tier for ${vehicle.make} ${vehicle.model}:`, err);
+        }
+      }
+
+      if (acceptableData.length === 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "No opportunities found",
+          message: `No vehicles in ${dealerLocation} meet even ACCEPTABLE standards ($1,000+ profit, <90 DOM). Market is overpriced or inventory is very stale.`,
+          debug: {
+            dealer_zip: dealerZip,
+            dealer_location: dealerLocation,
+            models_searched: popularModels.length
+          },
+          recommendations: [],
+          market_insights: ""
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      marketData = acceptableData;
+      tierLevel = "ACCEPTABLE";
+      console.log(`⚠️ Found ${marketData.length} ACCEPTABLE vehicles (Profit ≥ $1,000, DOM < 90)`);
     }
 
     // STEP 2: Build AI prompt with REAL market intelligence
@@ -247,11 +331,15 @@ serve(async (req) => {
 
     const prompt = `You are an expert vehicle acquisition analyst. A used car dealer in ${dealerLocation} needs to know EXACTLY what to buy RIGHT NOW to make maximum profit.
 
-IMPORTANT: All vehicles below have ALREADY been filtered for quality:
-- Profit ≥ $1,500 (dealers can survive on this)
-- DOM < 60 days (fast turn time)
-- Wholesale < Retail (actually profitable)
-- Real MMR and pricing data
+${tierLevel === "EXCELLENT" ?
+  `QUALITY TIER: EXCELLENT - All vehicles meet premium standards:
+- Profit ≥ $1,500 (strong margins)
+- DOM < 60 days (fast turn)
+- Wholesale < Retail (actually profitable)` :
+  `⚠️ QUALITY TIER: ACCEPTABLE - No premium opportunities found. These meet minimum standards:
+- Profit ≥ $1,000 (thin but viable margins - be cautious)
+- DOM < 90 days (slower turn)
+- Wholesale < Retail (profitable but margins are tight)`}
 
 REAL-TIME MARKET DATA (${dealerLocation} area, 100 mile radius):
 ${marketDataText}
@@ -411,6 +499,11 @@ CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no code blocks. J
     }
 
     console.log(`Generated ${recommendations.recommendations?.length || 0} market-based recommendations`);
+
+    // Add tier warning to market insights if ACCEPTABLE
+    if (tierLevel === "ACCEPTABLE" && recommendations.market_insights) {
+      recommendations.market_insights = `⚠️ ACCEPTABLE TIER: No premium opportunities ($1,500+ profit, <60 DOM) found in your market. These are the best available but margins are thin. ${recommendations.market_insights}`;
+    }
 
     return new Response(JSON.stringify(recommendations), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
