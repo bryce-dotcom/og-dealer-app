@@ -145,15 +145,20 @@ serve(async (req) => {
           }
         }
 
+        // Calculate profit margin (only if we have MMR)
+        const estimatedRecon = 1500; // Typical BHPH recon cost
+        const grossMargin = avgMmr ? Math.round(avgPrice - avgMmr - estimatedRecon) : null;
+
         marketData.push({
           make: vehicle.make,
           model: vehicle.model,
           inventory_count: listings.length,
-          avg_price: Math.round(avgPrice),
+          avg_price: Math.round(avgPrice), // RETAIL (what dealers are selling for)
           median_price: Math.round(medianPrice),
-          avg_mmr: avgMmr ? Math.round(avgMmr) : null,
+          avg_mmr: avgMmr ? Math.round(avgMmr) : null, // WHOLESALE (what you should pay)
           avg_days_on_market: Math.round(avgDom),
           deals_available: dealsAvailable,
+          estimated_profit: grossMargin, // CORRECT: Retail - Wholesale - Recon
           market_temperature: avgDom < 30 ? "HOT" : avgDom < 45 ? "WARM" : "COOL",
           supply_level: listings.length > 40 ? "HIGH" : listings.length > 20 ? "MEDIUM" : "LOW"
         });
@@ -189,7 +194,7 @@ serve(async (req) => {
     // STEP 2: Build AI prompt with REAL market intelligence
     const marketDataText = marketData
       .map(m =>
-        `- ${m.make} ${m.model}: ${m.inventory_count} available, $${m.avg_price.toLocaleString()} avg, ${m.avg_days_on_market} DOM, ${m.deals_available} deals under market, Market: ${m.market_temperature}, Supply: ${m.supply_level}${m.avg_mmr ? `, MMR: $${m.avg_mmr.toLocaleString()}` : ""}`
+        `- ${m.make} ${m.model}: ${m.inventory_count} available, Retail avg: $${m.avg_price.toLocaleString()}, DOM: ${m.avg_days_on_market}, Deals available: ${m.deals_available}, Market: ${m.market_temperature}, Supply: ${m.supply_level}${m.avg_mmr ? `, Wholesale (MMR): $${m.avg_mmr.toLocaleString()}, Est. Profit: $${m.estimated_profit?.toLocaleString() || 'N/A'} (Retail - Wholesale - $1500 recon)` : ""}`
       )
       .join("\n");
 
@@ -219,18 +224,24 @@ MARKET CONTEXT:
 YOUR MISSION:
 Recommend the TOP ${quantity || 5} vehicles this dealer should ACTIVELY BUY based on REAL market opportunities.
 
-CRITICAL: Use ONLY the REAL data provided above. NO GUESSING.
-- expected_profit = avg_mmr - avg_price (if no MMR, skip that vehicle)
-- expected_days_to_sell = avg_days_on_market from data
-- target_price_max = avg_price or median_price from data
-- reasoning MUST cite actual numbers (DOM, deals available, supply level, MMR spread)
+CRITICAL UNDERSTANDING:
+- avg_price = RETAIL (what dealers are selling for)
+- avg_mmr (MMR) = WHOLESALE book value (what you should pay at auction)
+- Est. Profit = Retail - Wholesale - Recon ($1500)
+- ONLY RECOMMEND vehicles with POSITIVE profit margins
 
-1. **PRIORITIZE HOT MARKETS** - Low DOM means high demand (use actual DOM numbers)
-2. **FIND THE DEALS** - Models with deals_available > 0
-3. **BALANCE SUPPLY** - LOW supply + HOT market = pricing power
-4. **CALCULATE REAL MARGINS** - Only recommend if avg_mmr > avg_price (real profit)
-5. **BE SPECIFIC** - Use year range 2015-2022 (what we searched), cite actual prices
-6. **ACTIONABLE INTEL** - Must be backed by real market data
+RULES - Use ONLY REAL data, NO GUESSING:
+- expected_profit = Use the "Est. Profit" provided in data (already calculated)
+- expected_days_to_sell = avg_days_on_market from data
+- target_price_max = avg_mmr (wholesale value - what you should pay)
+- reasoning MUST cite actual numbers and explain the margin
+
+1. **ONLY PROFITABLE VEHICLES** - Must have positive Est. Profit (Retail > Wholesale + Recon)
+2. **PRIORITIZE HOT MARKETS** - Low DOM = fast turn (use actual DOM numbers)
+3. **FIND THE DEALS** - Models with deals_available > 0 (inventory priced below retail avg)
+4. **BALANCE SUPPLY** - LOW supply + HOT market = pricing power
+5. **BE SPECIFIC** - Target price = MMR (wholesale), expected sale = retail avg
+6. **ACTIONABLE INTEL** - Must be backed by real profit margins from data
 
 Return ONLY valid JSON:
 {
@@ -239,13 +250,13 @@ Return ONLY valid JSON:
       "rank": 1,
       "make": "Ford",
       "model": "F-150",
-      "year_range": "2018-2020",
-      "target_price_max": 32000,
-      "expected_profit": 4500,
-      "expected_days_to_sell": 25,
-      "reasoning": "HOT MARKET: Only 28 DOM, 12 deals available under $30k, low supply (22 units) = pricing power. Market avg $31,500 vs MMR $34,200 = $2,700 built-in margin.",
-      "where_to_find": ["Manheim/ADESA auctions", "Private party (Facebook, Craigslist)", "Wholesale groups"],
-      "action_item": "Target 2018-2020 XLT trim, 4WD, under 80k miles. Pay up to $32k for clean title."
+      "year_range": "2015-2022",
+      "target_price_max": 28000,
+      "expected_profit": 3500,
+      "expected_days_to_sell": 28,
+      "reasoning": "PROFITABLE: Retail avg $33,000, Wholesale (MMR) $28,000 = $3,500 profit after $1,500 recon. HOT market (28 DOM), 15 deals available, LOW supply (24 units) = pricing power.",
+      "where_to_find": ["Dealer auctions (pay ~MMR $28k)", "Wholesale groups", "Private party deals"],
+      "action_item": "Buy at $28,000 (MMR wholesale), sell at $33,000 (market retail), net $3,500 after recon. Target clean title, under 100k miles."
     }
   ],
   "market_insights": "2-3 sentence summary of BIGGEST opportunities in this market right now. Be specific and actionable."
@@ -286,13 +297,13 @@ Return ONLY the JSON. Make this dealer money.`;
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
 
-      // Fallback: Use top 5 hottest markets (ONLY if AI fails - uses REAL data only)
+      // Fallback: Use top 5 profitable markets (ONLY if AI fails - uses REAL data only)
       const topMarkets = marketData
-        .filter(m => m.deals_available > 0 && m.avg_mmr) // Only include if we have MMR (real profit data)
+        .filter(m => m.deals_available > 0 && m.avg_mmr && m.estimated_profit && m.estimated_profit > 0) // Only PROFITABLE vehicles
         .sort((a, b) => {
-          // Score: lower DOM + more deals = better
-          const scoreA = (50 - a.avg_days_on_market) + (a.deals_available * 2);
-          const scoreB = (50 - b.avg_days_on_market) + (b.deals_available * 2);
+          // Score: higher profit + lower DOM + more deals = better
+          const scoreA = (a.estimated_profit || 0) + (50 - a.avg_days_on_market) + (a.deals_available * 100);
+          const scoreB = (b.estimated_profit || 0) + (50 - b.avg_days_on_market) + (b.deals_available * 100);
           return scoreB - scoreA;
         })
         .slice(0, quantity || 5);
@@ -302,15 +313,15 @@ Return ONLY the JSON. Make this dealer money.`;
           rank: i + 1,
           make: m.make,
           model: m.model,
-          year_range: "2015-2022", // Match the data we actually searched
-          target_price_max: m.avg_price,
-          expected_profit: m.avg_mmr - m.avg_price, // REAL: MMR - Avg Price (no guessing)
-          expected_days_to_sell: m.avg_days_on_market, // REAL: Actual DOM from market
-          reasoning: `REAL DATA: ${m.market_temperature} market (${m.avg_days_on_market} DOM actual), ${m.deals_available} deals available under market avg, ${m.supply_level} supply (${m.inventory_count} units). Avg $${m.avg_price.toLocaleString()} vs MMR $${m.avg_mmr.toLocaleString()} = $${(m.avg_mmr - m.avg_price).toLocaleString()} margin.`,
-          where_to_find: ["Dealer auctions (Manheim, ADESA)", "Private party (Facebook Marketplace, Craigslist)", "Wholesale/trade-ins"],
-          action_item: `Target ${m.make} ${m.model} 2015-2022, pay up to $${m.avg_price.toLocaleString()} for clean title with ${m.avg_mmr > 0 ? `$${(m.avg_mmr - m.avg_price).toLocaleString()} margin` : 'verified MMR'}`
+          year_range: "2015-2022",
+          target_price_max: m.avg_mmr, // Pay wholesale (MMR)
+          expected_profit: m.estimated_profit, // CORRECT: Retail - Wholesale - Recon
+          expected_days_to_sell: m.avg_days_on_market,
+          reasoning: `PROFITABLE: Retail avg $${m.avg_price.toLocaleString()}, Wholesale (MMR) $${m.avg_mmr.toLocaleString()} = $${m.estimated_profit.toLocaleString()} profit after $1,500 recon. ${m.market_temperature} market (${m.avg_days_on_market} DOM), ${m.deals_available} deals available, ${m.supply_level} supply (${m.inventory_count} units).`,
+          where_to_find: ["Dealer auctions (target MMR $" + m.avg_mmr.toLocaleString() + ")", "Wholesale groups", "Private party deals under retail"],
+          action_item: `Buy at $${m.avg_mmr.toLocaleString()} (wholesale), sell at $${m.avg_price.toLocaleString()} (market retail), net $${m.estimated_profit.toLocaleString()} profit after recon.`
         })),
-        market_insights: `AI parsing failed - showing raw market data. Top opportunity: ${topMarkets[0].make} ${topMarkets[0].model} moving in ${topMarkets[0].avg_days_on_market} days with ${topMarkets[0].deals_available} deals priced below $${topMarkets[0].avg_price.toLocaleString()}. Market avg $${topMarkets[0].avg_price.toLocaleString()} vs MMR $${topMarkets[0].avg_mmr.toLocaleString()}.`
+        market_insights: `AI parsing failed - showing calculated data. Top profit: ${topMarkets[0].make} ${topMarkets[0].model} with $${topMarkets[0].estimated_profit.toLocaleString()} margin (Buy $${topMarkets[0].avg_mmr.toLocaleString()} wholesale, Sell $${topMarkets[0].avg_price.toLocaleString()} retail). Moves in ${topMarkets[0].avg_days_on_market} days.`
       };
     }
 
