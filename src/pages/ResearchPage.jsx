@@ -945,6 +945,27 @@ export default function ResearchPage() {
                 AI-powered vehicle recommendations based on your sales history and market trends
               </p>
 
+              {recsLoading && (
+                <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                  <div style={{
+                    fontSize: '48px',
+                    marginBottom: '16px',
+                    animation: 'spin 2s linear infinite',
+                    display: 'inline-block'
+                  }}>🔄</div>
+                  <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+                  <div style={{ fontSize: '18px', fontWeight: '600', color: theme.text, marginBottom: '8px' }}>
+                    Analyzing Market Data...
+                  </div>
+                  <div style={{ fontSize: '14px', color: theme.textMuted }}>
+                    Searching 25 models across 100-mile radius
+                  </div>
+                  <div style={{ fontSize: '14px', color: theme.textMuted }}>
+                    Getting MMR values and calculating profit margins
+                  </div>
+                </div>
+              )}
+
               {!recommendations && !recsLoading && (
                 <button
                   onClick={loadBuyingRecommendations}
@@ -958,7 +979,7 @@ export default function ResearchPage() {
                     width: '100%'
                   }}
                 >
-                  {recsLoading ? 'Generating Recommendations...' : '✨ Get Smart Recommendations (15 credits)'}
+                  ✨ Get Smart Recommendations (15 credits)
                 </button>
               )}
 
