@@ -264,7 +264,7 @@ Return ONLY valid JSON:
   "market_insights": "2-3 sentence summary of BIGGEST opportunities in this market right now. Be specific and actionable."
 }
 
-Return ONLY the JSON. Make this dealer money.`;
+CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no code blocks. Just pure JSON starting with { and ending with }.`;
 
     console.log("Calling AI for market analysis...");
 
@@ -290,22 +290,37 @@ Return ONLY the JSON. Make this dealer money.`;
     const anthropicData = await anthropicRes.json();
     const aiText = anthropicData.content?.[0]?.text || "{}";
 
-    console.log("AI Response:", aiText);
+    console.log("AI Response (first 200 chars):", aiText.substring(0, 200));
 
     // Parse response
     let recommendations;
     try {
-      recommendations = JSON.parse(aiText);
+      // Try to extract JSON if AI wrapped it in markdown code blocks
+      let jsonText = aiText.trim();
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?$/g, '').trim();
+      } else if (jsonText.startsWith('```')) {
+        jsonText = jsonText.replace(/```\n?/g, '').trim();
+      }
+
+      recommendations = JSON.parse(jsonText);
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
+      console.error("AI text (first 500 chars):", aiText.substring(0, 500));
 
       // Fallback: Use top 5 profitable markets (ONLY if AI fails - uses REAL data only)
       const topMarkets = marketData
-        .filter(m => m.deals_available > 0 && m.avg_mmr && m.estimated_profit && m.estimated_profit > 0) // Only PROFITABLE vehicles
+        .filter(m =>
+          m.deals_available > 0 &&
+          m.avg_mmr &&
+          m.estimated_profit &&
+          m.estimated_profit > 500 && // At least $500 profit
+          m.avg_days_on_market < 60    // Moves in under 60 days (reasonable turn time)
+        )
         .sort((a, b) => {
           // Score: higher profit + lower DOM + more deals = better
-          const scoreA = (a.estimated_profit || 0) + (50 - a.avg_days_on_market) + (a.deals_available * 100);
-          const scoreB = (b.estimated_profit || 0) + (50 - b.avg_days_on_market) + (b.deals_available * 100);
+          const scoreA = (a.estimated_profit || 0) * 2 + (60 - a.avg_days_on_market) * 10 + (a.deals_available * 50);
+          const scoreB = (b.estimated_profit || 0) * 2 + (60 - b.avg_days_on_market) * 10 + (b.deals_available * 50);
           return scoreB - scoreA;
         })
         .slice(0, quantity || 5);
