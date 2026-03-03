@@ -167,6 +167,24 @@ serve(async (req) => {
         const estimatedRecon = avgMmr <= 10000 ? 800 : avgMmr <= 20000 ? 1200 : avgMmr <= 30000 ? 1500 : 2000;
         const grossMargin = avgMmr ? Math.round(avgPrice - avgMmr - estimatedRecon) : null;
 
+        // DATA QUALITY CHECK: Reject if wholesale >= retail (impossible to profit)
+        if (avgMmr && avgMmr >= avgPrice) {
+          console.log(`❌ REJECTED ${vehicle.make} ${vehicle.model}: MMR $${avgMmr} >= Retail $${Math.round(avgPrice)} (impossible)`);
+          continue;
+        }
+
+        // PROFITABILITY CHECK: Must have at least $1,500 profit
+        if (grossMargin && grossMargin < 1500) {
+          console.log(`❌ REJECTED ${vehicle.make} ${vehicle.model}: Only $${grossMargin} profit (need $1,500+)`);
+          continue;
+        }
+
+        // TURN TIME CHECK: Must sell in under 60 days
+        if (avgDom >= 60) {
+          console.log(`❌ REJECTED ${vehicle.make} ${vehicle.model}: ${Math.round(avgDom)} DOM (too slow, need <60)`);
+          continue;
+        }
+
         marketData.push({
           make: vehicle.make,
           model: vehicle.model,
@@ -189,13 +207,14 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Analyzed ${marketData.length} vehicle types in market`);
+    console.log(`✅ Found ${marketData.length} PROFITABLE vehicles (after quality filters)`);
+    console.log(`Quality filters: Profit ≥ $1,500, DOM < 60 days, Wholesale < Retail`);
 
     if (marketData.length === 0) {
       return new Response(JSON.stringify({
         success: false,
-        error: "No market data available",
-        message: `Unable to find inventory data for ${dealerLocation} (${dealerZip}). This could be: (1) No inventory in 100-mile radius, (2) MarketCheck API issue, or (3) Rate limit. Check Edge Function logs for details.`,
+        error: "No profitable opportunities found",
+        message: `No vehicles in ${dealerLocation} meet minimum standards: $1,500+ profit, <60 days turn time, wholesale < retail. Market may be overpriced or inventory is stale.`,
         debug: {
           dealer_zip: dealerZip,
           dealer_location: dealerLocation,
@@ -227,6 +246,12 @@ serve(async (req) => {
     const currentYear = new Date().getFullYear();
 
     const prompt = `You are an expert vehicle acquisition analyst. A used car dealer in ${dealerLocation} needs to know EXACTLY what to buy RIGHT NOW to make maximum profit.
+
+IMPORTANT: All vehicles below have ALREADY been filtered for quality:
+- Profit ≥ $1,500 (dealers can survive on this)
+- DOM < 60 days (fast turn time)
+- Wholesale < Retail (actually profitable)
+- Real MMR and pricing data
 
 REAL-TIME MARKET DATA (${dealerLocation} area, 100 mile radius):
 ${marketDataText}
@@ -323,8 +348,33 @@ CRITICAL: Return ONLY valid JSON. No markdown, no explanation, no code blocks. J
       }
 
       recommendations = JSON.parse(jsonText);
+
+      // VALIDATE AI OUTPUT - reject garbage recommendations
+      if (recommendations.recommendations && Array.isArray(recommendations.recommendations)) {
+        const validRecs = recommendations.recommendations.filter((rec: any) => {
+          // Must have minimum profit
+          if (!rec.expected_profit || rec.expected_profit < 1500) {
+            console.error(`❌ AI returned bad rec: ${rec.make} ${rec.model} only $${rec.expected_profit} profit`);
+            return false;
+          }
+          // Must have reasonable turn time
+          if (!rec.expected_days_to_sell || rec.expected_days_to_sell >= 60) {
+            console.error(`❌ AI returned bad rec: ${rec.make} ${rec.model} ${rec.expected_days_to_sell} DOM (too slow)`);
+            return false;
+          }
+          return true;
+        });
+
+        if (validRecs.length === 0) {
+          console.error("❌ AI returned 0 valid recommendations - using fallback");
+          throw new Error("No valid recommendations from AI");
+        }
+
+        recommendations.recommendations = validRecs;
+        console.log(`✅ AI returned ${validRecs.length} valid recommendations`);
+      }
     } catch (parseError) {
-      console.error("Failed to parse AI response:", parseError);
+      console.error("Failed to parse AI response or validation failed:", parseError);
       console.error("AI text (first 500 chars):", aiText.substring(0, 500));
 
       // Fallback: Use top profitable markets (ONLY if AI fails - uses REAL data only)
