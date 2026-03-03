@@ -217,14 +217,20 @@ MARKET CONTEXT:
 - "Deals" = vehicles priced 10%+ below average
 
 YOUR MISSION:
-Recommend the TOP ${quantity || 5} vehicles this dealer should ACTIVELY BUY based on REAL market opportunities:
+Recommend the TOP ${quantity || 5} vehicles this dealer should ACTIVELY BUY based on REAL market opportunities.
 
-1. **PRIORITIZE HOT MARKETS** - Low DOM means high demand
-2. **FIND THE DEALS** - Models with deals available = profit opportunity
-3. **BALANCE SUPPLY** - Medium/Low supply + Hot market = pricing power
-4. **CONSIDER MMR SPREADS** - If avg price << MMR, there's margin
-5. **BE SPECIFIC** - Exact year ranges, max price to pay, WHERE to find them
-6. **ACTIONABLE INTEL** - This dealer should be able to act TODAY
+CRITICAL: Use ONLY the REAL data provided above. NO GUESSING.
+- expected_profit = avg_mmr - avg_price (if no MMR, skip that vehicle)
+- expected_days_to_sell = avg_days_on_market from data
+- target_price_max = avg_price or median_price from data
+- reasoning MUST cite actual numbers (DOM, deals available, supply level, MMR spread)
+
+1. **PRIORITIZE HOT MARKETS** - Low DOM means high demand (use actual DOM numbers)
+2. **FIND THE DEALS** - Models with deals_available > 0
+3. **BALANCE SUPPLY** - LOW supply + HOT market = pricing power
+4. **CALCULATE REAL MARGINS** - Only recommend if avg_mmr > avg_price (real profit)
+5. **BE SPECIFIC** - Use year range 2015-2022 (what we searched), cite actual prices
+6. **ACTIONABLE INTEL** - Must be backed by real market data
 
 Return ONLY valid JSON:
 {
@@ -280,9 +286,9 @@ Return ONLY the JSON. Make this dealer money.`;
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
 
-      // Fallback: Use top 5 hottest markets
+      // Fallback: Use top 5 hottest markets (ONLY if AI fails - uses REAL data only)
       const topMarkets = marketData
-        .filter(m => m.deals_available > 0)
+        .filter(m => m.deals_available > 0 && m.avg_mmr) // Only include if we have MMR (real profit data)
         .sort((a, b) => {
           // Score: lower DOM + more deals = better
           const scoreA = (50 - a.avg_days_on_market) + (a.deals_available * 2);
@@ -296,15 +302,15 @@ Return ONLY the JSON. Make this dealer money.`;
           rank: i + 1,
           make: m.make,
           model: m.model,
-          year_range: "2016-2021",
+          year_range: "2015-2022", // Match the data we actually searched
           target_price_max: m.avg_price,
-          expected_profit: m.avg_mmr ? m.avg_mmr - m.avg_price : 3000,
-          expected_days_to_sell: m.avg_days_on_market,
-          reasoning: `${m.market_temperature} market (${m.avg_days_on_market} DOM), ${m.deals_available} deals available, ${m.supply_level} supply`,
-          where_to_find: ["Auctions", "Private party", "Trade-ins"],
-          action_item: `Look for ${m.make} ${m.model} under $${m.avg_price.toLocaleString()}`
+          expected_profit: m.avg_mmr - m.avg_price, // REAL: MMR - Avg Price (no guessing)
+          expected_days_to_sell: m.avg_days_on_market, // REAL: Actual DOM from market
+          reasoning: `REAL DATA: ${m.market_temperature} market (${m.avg_days_on_market} DOM actual), ${m.deals_available} deals available under market avg, ${m.supply_level} supply (${m.inventory_count} units). Avg $${m.avg_price.toLocaleString()} vs MMR $${m.avg_mmr.toLocaleString()} = $${(m.avg_mmr - m.avg_price).toLocaleString()} margin.`,
+          where_to_find: ["Dealer auctions (Manheim, ADESA)", "Private party (Facebook Marketplace, Craigslist)", "Wholesale/trade-ins"],
+          action_item: `Target ${m.make} ${m.model} 2015-2022, pay up to $${m.avg_price.toLocaleString()} for clean title with ${m.avg_mmr > 0 ? `$${(m.avg_mmr - m.avg_price).toLocaleString()} margin` : 'verified MMR'}`
         })),
-        market_insights: `Top opportunities: ${topMarkets[0].make} ${topMarkets[0].model} moving fast (${topMarkets[0].avg_days_on_market} DOM) with ${topMarkets[0].deals_available} deals available.`
+        market_insights: `AI parsing failed - showing raw market data. Top opportunity: ${topMarkets[0].make} ${topMarkets[0].model} moving in ${topMarkets[0].avg_days_on_market} days with ${topMarkets[0].deals_available} deals priced below $${topMarkets[0].avg_price.toLocaleString()}. Market avg $${topMarkets[0].avg_price.toLocaleString()} vs MMR $${topMarkets[0].avg_mmr.toLocaleString()}.`
       };
     }
 
