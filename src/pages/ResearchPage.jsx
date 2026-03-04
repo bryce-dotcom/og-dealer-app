@@ -670,6 +670,73 @@ export default function ResearchPage() {
     }
   };
 
+  // Load opportunity recommendations (NEW vehicles to try)
+  const loadOpportunityRecommendations = async () => {
+    // Check credits BEFORE operation
+    const creditCheck = await CreditService.checkCredits(dealer.id, 'BUYING_RECOMMENDATIONS');
+
+    if (!creditCheck.success) {
+      if (creditCheck.rate_limited) {
+        setRecsError(`Rate limit reached. Try again at ${new Date(creditCheck.next_allowed_at).toLocaleTimeString()}`);
+        return;
+      }
+      setRecsError(creditCheck.message || 'Unable to generate recommendations');
+      return;
+    }
+
+    if (creditCheck.warning) {
+      console.warn(creditCheck.warning);
+    }
+
+    setRecsLoading(true);
+    setRecsError(null);
+
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('generate-opportunity-recommendations', {
+        body: {
+          dealer_id: dealer.id,
+          quantity: 10
+        }
+      });
+
+      if (fnError) throw fnError;
+
+      // Check for error response
+      if (data?.error || data?.success === false) {
+        console.error('Opportunity recommendations error:', data);
+        const errorMsg = data?.message || data?.error || 'Failed to generate opportunity recommendations';
+        setRecsError(errorMsg);
+        return;
+      }
+
+      // Log performance metrics
+      if (data?.cost_breakdown) {
+        console.log(`Opportunity Recommendations - API calls: ${data.cost_breakdown.api_calls_made}, Cost: $${data.cost_breakdown.estimated_cost?.toFixed(4)}, Time: ${data.cost_breakdown.elapsed_ms}ms`);
+      }
+
+      // Consume credits AFTER successful operation
+      await CreditService.consumeCredits(
+        dealer.id,
+        'BUYING_RECOMMENDATIONS',
+        `opportunity-recommendations-${new Date().toISOString()}`,
+        {
+          recommendations_count: data.recommendations?.length || 0,
+          type: 'opportunities',
+          api_calls: data.cost_breakdown?.api_calls_made || 0
+        }
+      );
+
+      setRecommendations(data);
+      setShowRecommendations(true);
+
+    } catch (err) {
+      console.error('Opportunity recommendations exception:', err);
+      setRecsError(err.message || 'Failed to generate opportunity recommendations');
+    } finally {
+      setRecsLoading(false);
+    }
+  };
+
   // Auto-populate search from recommendation
   const searchFromRecommendation = (rec) => {
     // Parse year range (e.g., "2018-2022")
@@ -961,32 +1028,58 @@ export default function ResearchPage() {
                   }}>🔄</div>
                   <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
                   <div style={{ fontSize: '18px', fontWeight: '600', color: theme.text, marginBottom: '8px' }}>
-                    Analyzing Your Sales History...
+                    {recommendations?.recommendation_type === 'new_opportunities' ? 'Discovering New Opportunities...' : 'Analyzing Your Sales History...'}
                   </div>
                   <div style={{ fontSize: '14px', color: theme.textMuted }}>
-                    Zero API calls • Instant results
+                    {recommendations?.recommendation_type === 'new_opportunities' ? 'Searching market for vehicles you haven\'t tried' : 'Zero API calls • Instant results'}
                   </div>
                   <div style={{ fontSize: '14px', color: theme.textMuted }}>
-                    Using your proven winners and seasonal patterns
+                    {recommendations?.recommendation_type === 'new_opportunities' ? 'Finding profitable gaps in your inventory' : 'Using your proven winners and seasonal patterns'}
                   </div>
                 </div>
               )}
 
               {!recommendations && !recsLoading && (
-                <button
-                  onClick={loadBuyingRecommendations}
-                  disabled={recsLoading}
-                  style={{
-                    ...btnStyle(true),
-                    backgroundColor: '#22c55e',
-                    padding: '14px 32px',
-                    fontSize: '15px',
-                    opacity: recsLoading ? 0.6 : 1,
-                    width: '100%'
-                  }}
-                >
-                  ✨ Get Smart Recommendations (15 credits)
-                </button>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <button
+                    onClick={loadBuyingRecommendations}
+                    disabled={recsLoading}
+                    style={{
+                      ...btnStyle(true),
+                      backgroundColor: '#22c55e',
+                      padding: '14px 20px',
+                      fontSize: '14px',
+                      opacity: recsLoading ? 0.6 : 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <div style={{ fontSize: '16px' }}>📊</div>
+                    <div style={{ fontWeight: '600' }}>My Proven Winners</div>
+                    <div style={{ fontSize: '11px', opacity: 0.9 }}>FREE • Instant</div>
+                  </button>
+                  <button
+                    onClick={loadOpportunityRecommendations}
+                    disabled={recsLoading}
+                    style={{
+                      ...btnStyle(true),
+                      backgroundColor: '#3b82f6',
+                      padding: '14px 20px',
+                      fontSize: '14px',
+                      opacity: recsLoading ? 0.6 : 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <div style={{ fontSize: '16px' }}>🔍</div>
+                    <div style={{ fontWeight: '600' }}>Discover Opportunities</div>
+                    <div style={{ fontSize: '11px', opacity: 0.9' }}>15 credits • Instant • Gap Analysis</div>
+                  </button>
+                </div>
               )}
 
               {recsError && (
@@ -997,33 +1090,42 @@ export default function ResearchPage() {
 
               {recommendations && (
                 <div>
-                  {/* Zero-API Badge */}
+                  {/* Badge (different for opportunities vs history) */}
                   <div style={{ marginBottom: 16, padding: 12, backgroundColor: theme.cardBg, borderRadius: 8, border: `1px solid ${theme.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <span style={{
                         padding: '6px 14px',
                         borderRadius: 6,
-                        backgroundColor: recommendations.data_source === 'dealer_history' ? '#22c55e' : '#eab308',
+                        backgroundColor: recommendations.recommendation_type === 'new_opportunities' ? '#3b82f6' :
+                                       recommendations.data_source === 'dealer_history' ? '#22c55e' : '#eab308',
                         color: 'white',
                         fontSize: 12,
                         fontWeight: 700,
                         letterSpacing: '0.5px'
                       }}>
-                        {recommendations.data_source === 'dealer_history' ? '⚡ YOUR DATA (INSTANT)' : '⚠️ INDUSTRY DEFAULTS'}
+                        {recommendations.recommendation_type === 'new_opportunities' ? '🔍 NEW OPPORTUNITIES' :
+                         recommendations.data_source === 'dealer_history' ? '⚡ YOUR DATA (INSTANT)' : '⚠️ INDUSTRY DEFAULTS'}
                       </span>
                       {recommendations.cost_breakdown && (
                         <span style={{ fontSize: 12, color: theme.textMuted }}>
-                          0 API calls • $0.00 cost • <50ms response
-                          {recommendations.cache_used > 0 && ` • ${recommendations.cache_used} cached market insights`}
+                          {recommendations.recommendation_type === 'new_opportunities'
+                            ? `${recommendations.cost_breakdown.api_calls_made} API calls • $${recommendations.cost_breakdown.estimated_cost?.toFixed(4)} cost • ${recommendations.cost_breakdown.elapsed_ms}ms`
+                            : `0 API calls • $0.00 cost • <50ms response${recommendations.cache_used > 0 ? ` • ${recommendations.cache_used} cached market insights` : ''}`
+                          }
                         </span>
                       )}
                     </div>
+                    {recommendations.recommendation_type === 'new_opportunities' && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
+                        💡 These are vehicles you HAVEN'T sold yet but could be profitable additions. Test 1-2 units to see if they work in your market.
+                      </div>
+                    )}
                     {recommendations.data_source === 'industry_defaults' && (
                       <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
                         ℹ️ New dealer with no sales history. Showing safe industry defaults. Track your sales to get personalized recommendations.
                       </div>
                     )}
-                    {recommendations.data_source === 'dealer_history' && (
+                    {recommendations.data_source === 'dealer_history' && !recommendations.recommendation_type && (
                       <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
                         ✨ 100% based on your proven track record. Zero API calls, instant results!
                       </div>
@@ -1049,7 +1151,7 @@ export default function ResearchPage() {
                           padding: '16px',
                           backgroundColor: isDark ? theme.bg : '#ffffff',
                           borderRadius: '10px',
-                          border: `2px solid ${i === 0 ? '#22c55e' : theme.border}`,
+                          border: `2px solid ${recommendations.recommendation_type === 'new_opportunities' ? (i === 0 ? '#3b82f6' : '#93c5fd') : (i === 0 ? '#22c55e' : theme.border)}`,
                           position: 'relative'
                         }}
                       >
@@ -1058,15 +1160,34 @@ export default function ResearchPage() {
                           position: 'absolute',
                           top: '-10px',
                           left: '12px',
-                          backgroundColor: i === 0 ? '#22c55e' : '#6b7280',
+                          backgroundColor: recommendations.recommendation_type === 'new_opportunities' ? (i === 0 ? '#3b82f6' : '#6b7280') : (i === 0 ? '#22c55e' : '#6b7280'),
                           color: '#ffffff',
                           padding: '4px 12px',
                           borderRadius: '12px',
                           fontSize: '11px',
                           fontWeight: '700'
                         }}>
-                          #{rec.rank} {i === 0 ? 'TOP PICK' : 'RECOMMENDED'}
+                          #{rec.rank} {recommendations.recommendation_type === 'new_opportunities' ? (i === 0 ? 'TOP OPPORTUNITY' : 'NEW TO YOU') : (i === 0 ? 'TOP PICK' : 'RECOMMENDED')}
                         </div>
+
+                        {/* Opportunity Type Badge (for new opportunities only) */}
+                        {rec.opportunity_type && (
+                          <div style={{
+                            position: 'absolute',
+                            top: '-10px',
+                            right: '12px',
+                            backgroundColor: rec.opportunity_type === 'hot_market' ? '#ef4444' :
+                                           rec.opportunity_type === 'undervalued' ? '#f59e0b' : '#3b82f6',
+                            color: '#ffffff',
+                            padding: '4px 10px',
+                            borderRadius: '12px',
+                            fontSize: '10px',
+                            fontWeight: '700'
+                          }}>
+                            {rec.opportunity_type === 'hot_market' ? '🔥 HOT' :
+                             rec.opportunity_type === 'undervalued' ? '💰 UNDERVALUED' : '💡 NEW'}
+                          </div>
+                        )}
 
                         {/* Vehicle Info */}
                         <div style={{ marginTop: '8px' }}>
@@ -1098,10 +1219,17 @@ export default function ResearchPage() {
 
                           {/* Reasoning */}
                           <div style={{ marginBottom: '12px' }}>
-                            <div style={{ fontSize: '11px', fontWeight: '600', color: theme.textMuted, marginBottom: '4px' }}>WHY THIS VEHICLE:</div>
+                            <div style={{ fontSize: '11px', fontWeight: '600', color: theme.textMuted, marginBottom: '4px' }}>
+                              {rec.why_you_should_try ? 'WHY TRY THIS:' : 'WHY THIS VEHICLE:'}
+                            </div>
                             <div style={{ color: theme.text, fontSize: '13px', lineHeight: '1.5' }}>
                               {rec.reasoning}
                             </div>
+                            {rec.why_you_should_try && (
+                              <div style={{ marginTop: '8px', padding: '8px 12px', backgroundColor: 'rgba(59,130,246,0.1)', borderRadius: '6px', fontSize: '12px', color: '#3b82f6', lineHeight: '1.5' }}>
+                                💡 {rec.why_you_should_try}
+                              </div>
+                            )}
                             {rec.seasonal_note && (
                               <div style={{ marginTop: '6px', padding: '6px 10px', backgroundColor: 'rgba(234,179,8,0.1)', borderRadius: '6px', fontSize: '12px', color: '#eab308' }}>
                                 🌤️ {rec.seasonal_note}
