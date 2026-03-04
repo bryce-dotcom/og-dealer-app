@@ -699,13 +699,16 @@ export default function ResearchPage() {
         }
       });
 
-      if (fnError) throw fnError;
+      if (fnError) {
+        console.error('Edge function error:', fnError);
+        throw fnError;
+      }
 
       // Check for error response
       if (data?.error || data?.success === false) {
         console.error('Opportunity recommendations error:', data);
         const errorMsg = data?.message || data?.error || 'Failed to generate opportunity recommendations';
-        setRecsError(errorMsg);
+        setRecsError(`${errorMsg}\n\nDebug: ${JSON.stringify(data, null, 2)}`);
         return;
       }
 
