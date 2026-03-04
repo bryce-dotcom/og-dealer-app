@@ -32,11 +32,19 @@ serve(async (req) => {
     const startTime = Date.now();
 
     // Get dealer info
-    const { data: dealer } = await supabase
+    const { data: dealer, error: dealerError } = await supabase
       .from("dealer_settings")
       .select("dealer_name, city, state, zip")
       .eq("id", dealer_id)
-      .single();
+      .maybeSingle();
+
+    if (dealerError) {
+      console.error("Error fetching dealer:", dealerError);
+    }
+
+    if (!dealer) {
+      throw new Error(`Dealer ${dealer_id} not found`);
+    }
 
     const dealerLocation = `${dealer?.city || "Unknown"}, ${dealer?.state || "UT"}`;
     const dealerZip = dealer?.zip || "84065";
@@ -108,7 +116,7 @@ serve(async (req) => {
             .eq("dealer_id", dealer_id)
             .eq("cache_key", cacheKey)
             .gte("expires_at", new Date().toISOString())
-            .single();
+            .maybeSingle();
 
           if (cached) {
             console.log(`✅ Cache HIT: ${pref.make} ${pref.model || ''}`);
