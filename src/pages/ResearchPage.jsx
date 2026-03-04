@@ -1077,7 +1077,7 @@ export default function ResearchPage() {
                   >
                     <div style={{ fontSize: '16px' }}>🔍</div>
                     <div style={{ fontWeight: '600' }}>Discover Opportunities</div>
-                    <div style={{ fontSize: '11px', opacity: 0.9' }}>15 credits • Instant • Gap Analysis</div>
+                    <div style={{ fontSize: '11px', opacity: 0.9 }}>15 credits • Instant • Gap Analysis</div>
                   </button>
                 </div>
               )}
