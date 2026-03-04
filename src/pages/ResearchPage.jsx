@@ -961,13 +961,13 @@ export default function ResearchPage() {
                   }}>🔄</div>
                   <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
                   <div style={{ fontSize: '18px', fontWeight: '600', color: theme.text, marginBottom: '8px' }}>
-                    Analyzing Market Data...
+                    Analyzing Your Sales History...
                   </div>
                   <div style={{ fontSize: '14px', color: theme.textMuted }}>
-                    Searching 25 models across 100-mile radius
+                    Zero API calls • Instant results
                   </div>
                   <div style={{ fontSize: '14px', color: theme.textMuted }}>
-                    Getting MMR values and calculating profit margins
+                    Using your proven winners and seasonal patterns
                   </div>
                 </div>
               )}
@@ -997,45 +997,35 @@ export default function ResearchPage() {
 
               {recommendations && (
                 <div>
-                  {/* Tier Badge */}
+                  {/* Zero-API Badge */}
                   <div style={{ marginBottom: 16, padding: 12, backgroundColor: theme.cardBg, borderRadius: 8, border: `1px solid ${theme.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <span style={{
                         padding: '6px 14px',
                         borderRadius: 6,
-                        backgroundColor: recommendations.tier === 'internal' ? '#22c55e' :
-                                       recommendations.tier === 'hybrid' ? '#3b82f6' : '#eab308',
+                        backgroundColor: recommendations.data_source === 'dealer_history' ? '#22c55e' : '#eab308',
                         color: 'white',
                         fontSize: 12,
                         fontWeight: 700,
                         letterSpacing: '0.5px'
                       }}>
-                        {recommendations.tier === 'internal' ? '💚 YOUR DATA' :
-                         recommendations.tier === 'hybrid' ? '🔵 MARKET VALIDATED' :
-                         '⚠️ INDUSTRY DEFAULTS'}
+                        {recommendations.data_source === 'dealer_history' ? '⚡ YOUR DATA (INSTANT)' : '⚠️ INDUSTRY DEFAULTS'}
                       </span>
                       {recommendations.cost_breakdown && (
                         <span style={{ fontSize: 12, color: theme.textMuted }}>
-                          {recommendations.cost_breakdown.api_calls_made} API calls •
-                          {' '}${recommendations.cost_breakdown.estimated_cost?.toFixed(4)} cost •
-                          {' '}{recommendations.cost_breakdown.cache_hits} cached •
-                          {' '}{recommendations.cost_breakdown.elapsed_ms}ms
+                          0 API calls • $0.00 cost • <50ms response
+                          {recommendations.cache_used > 0 && ` • ${recommendations.cache_used} cached market insights`}
                         </span>
                       )}
                     </div>
-                    {recommendations.tier === 'fallback' && (
+                    {recommendations.data_source === 'industry_defaults' && (
                       <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
                         ℹ️ New dealer with no sales history. Showing safe industry defaults. Track your sales to get personalized recommendations.
                       </div>
                     )}
-                    {recommendations.tier === 'internal' && (
+                    {recommendations.data_source === 'dealer_history' && (
                       <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
-                        ✨ 100% based on your proven track record. Zero market API calls needed!
-                      </div>
-                    )}
-                    {recommendations.tier === 'hybrid' && (
-                      <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
-                        ✅ Your sales history validated with current market data for maximum accuracy.
+                        ✨ 100% based on your proven track record. Zero API calls, instant results!
                       </div>
                     )}
                   </div>

@@ -6,30 +6,158 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Helper: Build reasoning from data (NO AI needed)
+function buildReasoning(pref: any, seasonal: any, market: any): string {
+  let reasoning = `You've sold ${pref.total_sold} ${pref.make} ${pref.model || ''} `;
+  reasoning += `with $${Math.round(pref.avg_profit || 0).toLocaleString()} avg profit in ${pref.avg_days_on_lot || '?'} days. `;
+  reasoning += `Success rate: ${((pref.success_rate || 0) * 100).toFixed(0)}%. `;
+
+  if (seasonal?.best_buy_months?.length > 0) {
+    const months = seasonal.best_buy_months.map((m: number) =>
+      new Date(2000, m - 1).toLocaleString('default', { month: 'short' })
+    );
+    reasoning += `Best to buy in ${months.join(', ')}. `;
+  }
+
+  if (market?.avg_price) {
+    reasoning += `Current market: ${market.inventory_count || '?'} available at $${market.avg_price.toLocaleString()} avg. `;
+  }
+
+  return reasoning;
+}
+
+// Helper: Build sourcing advice based on price point
+function buildSourcingAdvice(avgPrice: number): string[] {
+  if (avgPrice < 10000) {
+    return ["Copart", "IAA", "Private party", "Trade-ins"];
+  } else if (avgPrice < 20000) {
+    return ["Dealer auctions", "Manheim", "Wholesale groups", "Trade-ins"];
+  } else {
+    return ["Dealer auctions", "Wholesale groups", "Off-lease programs"];
+  }
+}
+
+// Helper: Calculate confidence score
+function calculateConfidence(totalSold: number, successRate: number): number {
+  // More sales + higher success rate = higher confidence
+  const salesScore = Math.min(totalSold / 20, 1); // Cap at 20 sales = 100%
+  const rateScore = successRate || 0;
+  return Math.round((salesScore * 0.4 + rateScore * 0.6) * 100);
+}
+
+// Helper: Industry defaults (NO API calls)
+function buildIndustryDefaults(quantity: number) {
+  const defaults = [
+    { make: "Honda", model: "Civic", buy: 12000, sell: 15500, profit: 2300, dom: 35 },
+    { make: "Toyota", model: "Camry", buy: 13000, sell: 16500, profit: 2300, dom: 32 },
+    { make: "Ford", model: "F-150", buy: 20000, sell: 25000, profit: 3500, dom: 28 },
+    { make: "Honda", model: "Accord", buy: 11000, sell: 14500, profit: 2300, dom: 36 },
+    { make: "Toyota", model: "RAV4", buy: 15000, sell: 19000, profit: 2800, dom: 30 },
+    { make: "Nissan", model: "Altima", buy: 10000, sell: 13000, profit: 1900, dom: 38 },
+    { make: "Chevrolet", model: "Silverado", buy: 22000, sell: 27000, profit: 3500, dom: 30 },
+    { make: "Toyota", model: "Corolla", buy: 11000, sell: 14000, profit: 1900, dom: 34 },
+    { make: "Jeep", model: "Wrangler", buy: 18000, sell: 23000, profit: 3500, dom: 25 },
+    { make: "Honda", model: "CR-V", buy: 14000, sell: 18000, profit: 2700, dom: 32 }
+  ];
+
+  return {
+    recommendations: defaults.slice(0, quantity).map((d, i) => ({
+      rank: i + 1,
+      make: d.make,
+      model: d.model,
+      year_range: "2015-2023",
+
+      // No dealer history (new dealer)
+      your_times_sold: null,
+      your_avg_profit: null,
+      your_avg_days_on_lot: null,
+      your_success_rate: null,
+      your_avg_purchase_price: null,
+      your_avg_sale_price: null,
+      times_sold: null,
+      your_historical_profit: null,
+
+      // No seasonal data
+      seasonal_buy_months: null,
+      seasonal_sell_months: null,
+
+      // No market data
+      current_market_price: null,
+      current_market_dom: null,
+      current_market_inventory: null,
+
+      // Recommendations based on industry standards (using field names frontend expects)
+      target_price_max: d.buy,
+      target_buy_price: d.buy,
+      target_sell_price: d.sell,
+      expected_profit: d.profit,
+      estimated_profit: d.profit,
+      expected_days_to_sell: d.dom,
+      estimated_days_to_sell: d.dom,
+      estimated_recon: 1200,
+
+      // Reasoning
+      reasoning: `Industry default: ${d.make} ${d.model} is a proven BHPH performer with strong resale value and consistent demand.`,
+      where_to_find: buildSourcingAdvice(d.buy),
+      action_item: "Safe bet for new dealers - track your results for personalized recommendations",
+
+      // Confidence
+      confidence_source: "industry_default",
+      confidence_score: 65
+    })),
+    data_source: "industry_defaults",
+    api_calls_made: 0,
+    cache_used: 0,
+    market_insights: "⚠️ No sales history available. These are safe industry defaults based on proven BHPH performers. Start tracking your sales to get personalized recommendations based on YOUR actual performance.",
+    tier: "fallback"
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+
+  const startTime = Date.now();
+  console.log("=== ZERO-API RECOMMENDATIONS STARTED ===");
+  console.log("Function invoked at:", new Date().toISOString());
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
+    console.log("Supabase client created");
 
-    const { dealer_id, quantity = 10 } = await req.json();
+    let requestBody;
+    try {
+      requestBody = await req.json();
+      console.log("Request body parsed:", requestBody);
+    } catch (parseError) {
+      console.error("Failed to parse request body:", parseError);
+      return new Response(JSON.stringify({
+        success: false,
+        error: "Invalid JSON in request body",
+        details: String(parseError)
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    console.log("=== SMART RECOMMENDATIONS (HYBRID INTELLIGENCE) ===");
+    const { dealer_id, quantity = 10 } = requestBody;
+
     console.log(`Dealer ID: ${dealer_id}, Quantity: ${quantity}`);
 
-    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
-
-    // Track cost and performance metrics
-    let apiCallsMade = 0;
-    let cacheHits = 0;
-    const startTime = Date.now();
+    if (!dealer_id) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: "dealer_id is required"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Get dealer info
     const { data: dealer, error: dealerError } = await supabase
@@ -47,17 +175,17 @@ serve(async (req) => {
     }
 
     const dealerLocation = `${dealer?.city || "Unknown"}, ${dealer?.state || "UT"}`;
-    const dealerZip = dealer?.zip || "84065";
-
     console.log(`Dealer: ${dealer?.dealer_name}, Location: ${dealerLocation}`);
 
-    // STEP 1: Query dealer's proven winners from sales history
+    // STEP 1: Query dealer's proven winners (ONE database query)
+    console.log("Step 1: Querying dealer_vehicle_preferences...");
     const { data: dealerPrefs, error: prefsError } = await supabase
       .from("dealer_vehicle_preferences")
       .select("*")
       .eq("dealer_id", dealer_id)
-      .gte("total_sold", 2) // At least 2 sales to be considered "proven"
-      .order("avg_profit", { ascending: false });
+      .gte("total_sold", 2) // At least 2 sales to be "proven"
+      .order("avg_profit", { ascending: false })
+      .limit(quantity);
 
     if (prefsError) {
       console.error("Error fetching dealer preferences:", prefsError);
@@ -65,8 +193,35 @@ serve(async (req) => {
 
     console.log(`Found ${dealerPrefs?.length || 0} proven makes in dealer history`);
 
-    // STEP 2: Query seasonal patterns
-    const { data: seasonalData, error: seasonalError } = await supabase
+    // If no dealer history, return industry defaults immediately
+    if (!dealerPrefs || dealerPrefs.length === 0) {
+      console.log("⚠️ No sales history - returning industry defaults");
+      const elapsedMs = Date.now() - startTime;
+      const response = {
+        ...buildIndustryDefaults(quantity),
+        cost_breakdown: {
+          api_calls_made: 0,
+          cache_hits: 0,
+          estimated_cost: 0,
+          elapsed_ms: elapsedMs
+        },
+        dealer_context: {
+          location: dealerLocation,
+          proven_makes_count: 0,
+          has_seasonal_data: false
+        }
+      };
+
+      console.log(`=== ZERO-API COMPLETE === Time: ${elapsedMs}ms, Cost: $0.00`);
+
+      return new Response(JSON.stringify(response), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // STEP 2: Query seasonal patterns (ONE database query)
+    console.log("Step 2: Querying seasonal_vehicle_patterns...");
+    const { data: seasonal, error: seasonalError } = await supabase
       .from("seasonal_vehicle_patterns")
       .select("*")
       .eq("dealer_id", dealer_id);
@@ -75,429 +230,147 @@ serve(async (req) => {
       console.error("Error fetching seasonal patterns:", seasonalError);
     }
 
-    console.log(`Found ${seasonalData?.length || 0} seasonal patterns`);
+    console.log(`Found ${seasonal?.length || 0} seasonal patterns`);
 
-    // Create seasonal lookup map
-    const seasonalMap = new Map();
-    if (seasonalData) {
-      for (const pattern of seasonalData) {
-        const key = pattern.model ? `${pattern.make}_${pattern.model}` : pattern.make;
-        seasonalMap.set(key, pattern);
-      }
+    // Create lookup map for seasonal data
+    const seasonalMap = new Map(
+      seasonal?.map(s => [`${s.make}_${s.model || s.make}`, s]) || []
+    );
+
+    // STEP 3: Query cached market data if available (ONE database query, OPTIONAL)
+    console.log("Step 3: Querying market_intelligence_cache...");
+    const { data: marketCache, error: cacheError } = await supabase
+      .from("market_intelligence_cache")
+      .select("*")
+      .eq("dealer_id", dealer_id)
+      .gte("expires_at", new Date().toISOString()); // Only non-expired
+
+    if (cacheError) {
+      console.error("Error fetching market cache:", cacheError);
     }
 
-    // STEP 3: Determine tier and data strategy
-    let tier = "fallback";
-    let marketData: any[] = [];
-    let topMakes: string[] = [];
+    console.log(`Found ${marketCache?.length || 0} cached market insights (non-expired)`);
 
-    if (dealerPrefs && dealerPrefs.length >= 5) {
-      // TIER 1: Internal data only (dealer has strong history)
-      tier = "internal";
-      console.log("✅ TIER 1 (INTERNAL): Using 100% dealer sales history, ZERO API calls");
+    // Create lookup map for market cache
+    const marketMap = new Map(
+      marketCache?.map(m => [`${m.make}_${m.model || m.make}`, m.insights]) || []
+    );
 
-      topMakes = dealerPrefs.slice(0, 5).map(p => p.make);
+    // STEP 4: Build recommendations using ONLY database data (pure logic, NO API)
+    console.log("Step 4: Building recommendations from database data...");
 
-    } else if (dealerPrefs && dealerPrefs.length >= 2) {
-      // TIER 2: Hybrid validation (some history, validate with market data)
-      tier = "hybrid";
-      console.log("🔵 TIER 2 (HYBRID): Validating dealer's top makes with market data");
+    const recommendations = dealerPrefs.map((pref, index) => {
+      const seasonalData = seasonalMap.get(`${pref.make}_${pref.model || pref.make}`);
+      const marketData = marketMap.get(`${pref.make}_${pref.model || pref.make}`);
 
-      topMakes = dealerPrefs.slice(0, 5).map(p => p.make);
+      const targetBuyPrice = Math.round((pref.avg_purchase_price || 15000) * 0.95);
+      const targetSellPrice = Math.round(pref.avg_sale_price || 18000);
+      const estimatedProfit = Math.round(pref.avg_profit || 0);
 
-      // Make API calls ONLY for dealer's proven makes (5-10 calls max)
-      for (const pref of dealerPrefs.slice(0, 5)) {
-        try {
-          // Check cache first (24h TTL)
-          const cacheKey = `market_${dealer_id}_${pref.make}_${pref.model || 'any'}`;
-          const { data: cached } = await supabase
-            .from("market_intelligence_cache")
-            .select("*")
-            .eq("dealer_id", dealer_id)
-            .eq("cache_key", cacheKey)
-            .gte("expires_at", new Date().toISOString())
-            .maybeSingle();
+      // Convert best_buy_months to month names for frontend
+      const seasonalBuyMonths = seasonalData?.best_buy_months?.map((m: number) =>
+        new Date(2000, m - 1).toLocaleString('default', { month: 'short' })
+      ) || null;
+      const seasonalSellMonths = seasonalData?.best_sell_months?.map((m: number) =>
+        new Date(2000, m - 1).toLocaleString('default', { month: 'short' })
+      ) || null;
 
-          if (cached) {
-            console.log(`✅ Cache HIT: ${pref.make} ${pref.model || ''}`);
-            cacheHits++;
-            marketData.push({
-              make: pref.make,
-              model: pref.model,
-              ...cached.insights,
-              cached: true
-            });
-            continue;
-          }
+      return {
+        rank: index + 1,
+        make: pref.make,
+        model: pref.model,
+        year_range: "2015-2023", // Reasonable default
 
-          // Cache miss - call API
-          if (!MARKETCHECK_API_KEY) {
-            console.log("⚠️ No MarketCheck API key, skipping market validation");
-            continue;
-          }
+        // Historical performance (from dealer_vehicle_preferences)
+        your_times_sold: pref.total_sold,
+        your_avg_profit: Math.round(pref.avg_profit || 0),
+        your_avg_days_on_lot: pref.avg_days_on_lot,
+        your_success_rate: pref.success_rate,
+        your_avg_purchase_price: Math.round(pref.avg_purchase_price || 0),
+        your_avg_sale_price: Math.round(pref.avg_sale_price || 0),
 
-          console.log(`🔍 Cache MISS: Fetching ${pref.make} ${pref.model || ''} from MarketCheck`);
+        // Seasonal intelligence (from seasonal_vehicle_patterns) - converted to month names
+        seasonal_buy_months: seasonalBuyMonths,
+        seasonal_sell_months: seasonalSellMonths,
 
-          await new Promise(resolve => setTimeout(resolve, 300)); // Rate limit protection
+        // Current market (from market_intelligence_cache - 24h old, already paid for)
+        current_market_price: marketData?.avg_price || null,
+        current_market_dom: marketData?.avg_dom || null,
+        current_market_inventory: marketData?.inventory_count || null,
 
-          const params = new URLSearchParams({
-            api_key: MARKETCHECK_API_KEY,
-            make: pref.make.toLowerCase(),
-            year: "2015-2023",
-            zip: dealerZip,
-            radius: "100",
-            car_type: "used",
-            price_min: "8000",
-            price_max: "40000",
-            rows: "50",
-            stats: "price,miles,dom"
-          });
+        // Recommendation (frontend expects these field names)
+        target_price_max: targetBuyPrice,
+        target_buy_price: targetBuyPrice, // Also keep this for compatibility
+        target_sell_price: targetSellPrice,
+        expected_profit: estimatedProfit,
+        estimated_profit: estimatedProfit, // Also keep this for compatibility
+        expected_days_to_sell: pref.avg_days_on_lot,
+        estimated_days_to_sell: pref.avg_days_on_lot, // Also keep this for compatibility
+        estimated_recon: pref.avg_purchase_price < 15000 ? 1000 : 1500,
 
-          if (pref.model) {
-            params.set("model", pref.model);
-          }
+        // Reasoning (data-driven, NO AI needed)
+        reasoning: buildReasoning(pref, seasonalData, marketData),
 
-          const apiUrl = `https://mc-api.marketcheck.com/v2/search/car/active?${params.toString()}`;
-          const marketRes = await fetch(apiUrl);
-          apiCallsMade++;
+        // Sourcing advice (based on price point, NO AI needed)
+        where_to_find: buildSourcingAdvice(pref.avg_purchase_price || 15000),
 
-          if (!marketRes.ok) {
-            console.error(`MarketCheck API error for ${pref.make}:`, marketRes.status);
-            continue;
-          }
+        // Action item
+        action_item: `Target ${pref.make} ${pref.model || ''} units similar to your proven winners. Buy around $${targetBuyPrice.toLocaleString()}, sell around $${targetSellPrice.toLocaleString()}.`,
 
-          const marketJson = await marketRes.json();
-          const listings = marketJson.listings || [];
+        // Confidence
+        confidence_source: "dealer_history",
+        confidence_score: calculateConfidence(pref.total_sold, pref.success_rate || 0),
 
-          console.log(`📊 ${pref.make} ${pref.model || ''}: Found ${listings.length} current listings`);
-
-          if (listings.length === 0) continue;
-
-          // Calculate current market metrics
-          const prices = listings.map((l: any) => l.price).filter((p: number) => p > 0);
-          const domValues = listings.map((l: any) => l.dom).filter((d: number) => d >= 0);
-
-          const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
-          const avgDom = domValues.length > 0 ? domValues.reduce((a, b) => a + b, 0) / domValues.length : 0;
-
-          const insights = {
-            inventory_count: listings.length,
-            avg_price: Math.round(avgPrice),
-            avg_dom: Math.round(avgDom),
-            market_temp: avgDom < 30 ? "HOT" : avgDom < 60 ? "WARM" : "COOL",
-            supply_level: listings.length > 40 ? "HIGH" : listings.length > 20 ? "MEDIUM" : "LOW"
-          };
-
-          marketData.push({
-            make: pref.make,
-            model: pref.model,
-            ...insights,
-            cached: false
-          });
-
-          // Store in cache (24h TTL)
-          const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-          await supabase
-            .from("market_intelligence_cache")
-            .upsert({
-              dealer_id,
-              cache_key: cacheKey,
-              make: pref.make,
-              model: pref.model,
-              insights,
-              expires_at: expiresAt
-            });
-
-          console.log(`💾 Cached market data for ${pref.make} ${pref.model || ''}`);
-
-        } catch (err) {
-          console.error(`Error fetching market data for ${pref.make}:`, err);
-        }
-      }
-
-    } else {
-      // TIER 3: Industry defaults (new dealer, no history)
-      tier = "fallback";
-      console.log("⚠️ TIER 3 (FALLBACK): New dealer - using industry defaults");
-
-      const industryDefaults = [
-        { make: "Honda", model: "Civic" },
-        { make: "Toyota", model: "Camry" },
-        { make: "Ford", model: "F-150" },
-        { make: "Honda", model: "Accord" },
-        { make: "Toyota", model: "RAV4" }
-      ];
-
-      topMakes = industryDefaults.map(d => d.make);
-
-      // Make 5 API calls for industry defaults (if API key available)
-      if (MARKETCHECK_API_KEY) {
-        for (const vehicle of industryDefaults) {
-          try {
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            const params = new URLSearchParams({
-              api_key: MARKETCHECK_API_KEY,
-              make: vehicle.make.toLowerCase(),
-              model: vehicle.model,
-              year: "2015-2023",
-              zip: dealerZip,
-              radius: "100",
-              car_type: "used",
-              price_min: "8000",
-              price_max: "35000",
-              rows: "50"
-            });
-
-            const apiUrl = `https://mc-api.marketcheck.com/v2/search/car/active?${params.toString()}`;
-            const marketRes = await fetch(apiUrl);
-            apiCallsMade++;
-
-            if (marketRes.ok) {
-              const marketJson = await marketRes.json();
-              const listings = marketJson.listings || [];
-
-              const prices = listings.map((l: any) => l.price).filter((p: number) => p > 0);
-              const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
-
-              marketData.push({
-                make: vehicle.make,
-                model: vehicle.model,
-                inventory_count: listings.length,
-                avg_price: Math.round(avgPrice),
-                market_source: "industry_default"
-              });
-            }
-          } catch (err) {
-            console.error(`Error fetching default ${vehicle.make} ${vehicle.model}:`, err);
-          }
-        }
-      }
-    }
-
-    // STEP 4: Build AI prompt with appropriate data tier
-    const currentMonth = new Date().toLocaleString("default", { month: "long" });
-    const currentYear = new Date().getFullYear();
-
-    let dealerHistoryText = "";
-    if (dealerPrefs && dealerPrefs.length > 0) {
-      dealerHistoryText = dealerPrefs.slice(0, 10).map(p => {
-        const seasonal = seasonalMap.get(p.model ? `${p.make}_${p.model}` : p.make);
-        const bestBuy = seasonal?.best_buy_months?.map((m: number) =>
-          new Date(2000, m - 1).toLocaleString('default', { month: 'short' })
-        ).join(', ') || 'Unknown';
-        const bestSell = seasonal?.best_sell_months?.map((m: number) =>
-          new Date(2000, m - 1).toLocaleString('default', { month: 'short' })
-        ).join(', ') || 'Unknown';
-
-        return `- ${p.make} ${p.model || '(any model)'}: Sold ${p.total_sold} units, $${Math.round(p.avg_profit || 0).toLocaleString()} avg profit, ${p.avg_days_on_lot || '?'} days on lot, ${((p.success_rate || 0) * 100).toFixed(0)}% success rate
-  Historical: Buy avg $${Math.round(p.avg_purchase_price || 0).toLocaleString()}, Sell avg $${Math.round(p.avg_sale_price || 0).toLocaleString()}
-  Seasonal: Best buy months: ${bestBuy}, Best sell months: ${bestSell}`;
-      }).join('\n\n');
-    } else {
-      dealerHistoryText = "No sales history available (new dealer)";
-    }
-
-    let marketDataText = "";
-    if (marketData.length > 0) {
-      marketDataText = marketData.map(m =>
-        `- ${m.make} ${m.model || ''}: ${m.inventory_count || '?'} available, Avg price $${m.avg_price?.toLocaleString() || 'N/A'}, ${m.avg_dom || '?'} DOM, ${m.market_temp || '?'} market, ${m.supply_level || '?'} supply${m.cached ? ' (cached)' : ''}`
-      ).join('\n');
-    } else {
-      marketDataText = "No current market data available";
-    }
-
-    const prompt = `You are a vehicle acquisition analyst for a used car dealer in ${dealerLocation}.
-
-DATA TIER: ${tier.toUpperCase()}
-${tier === 'internal' ? '✅ Using dealer\'s proven track record (no market data needed)' :
-  tier === 'hybrid' ? '🔵 Blending dealer history with current market validation' :
-  '⚠️ New dealer - using safe industry defaults'}
-
-YOUR PROVEN WINNERS (Last 24 months actual sales):
-${dealerHistoryText}
-
-${tier === 'hybrid' ? `CURRENT MARKET DATA (100mi radius, validated):
-${marketDataText}
-` : ''}
-
-CONTEXT:
-- Current month: ${currentMonth} ${currentYear}
-- Location: ${dealerLocation}
-- Focus: BHPH-friendly vehicles ($8k-$35k range)
-
-TASK: Recommend top ${quantity} vehicles based on ${tier === 'internal' ? 'DEALER\'S PROVEN TRACK RECORD' : tier === 'hybrid' ? 'DEALER HISTORY + CURRENT MARKET' : 'SAFE INDUSTRY STANDARDS'}.
-
-For each recommendation, provide:
-1. **Historical Performance**: Cite dealer's actual metrics (your avg profit, times sold, days on lot)
-2. **Seasonal Timing**: Reference best buy/sell months from seasonal data
-3. **Current Market** (if Tier 2): Validate with current inventory/pricing
-4. **Sourcing Strategy**: Specific advice (auctions, private party, wholesale)
-5. **Action Plan**: Exact target buy price, expected sale price, estimated profit
-
-${tier === 'fallback' ? `
-⚠️ IMPORTANT: This dealer is NEW with no sales history.
-- Recommendations are SAFE INDUSTRY DEFAULTS (Honda Civic, Toyota Camry, etc.)
-- Clearly state these are "industry standard" picks, not personalized
-- Encourage dealer to track sales for future personalized recommendations
-` : ''}
-
-DATA SOURCE TRANSPARENCY:
-- "Your average" or "You've sold" = Dealer's actual sales history
-- "Current market shows" = MarketCheck API data (if Tier 2)
-- "Estimated" or "Industry standard" = AI inference or defaults
-
-Return JSON:
-{
-  "recommendations": [
-    {
-      "rank": 1,
-      "make": "Honda",
-      "model": "Civic",
-      "year_range": "2015-2022",
-      "confidence_source": "${tier === 'internal' ? 'dealer_history' : tier === 'hybrid' ? 'market_validated' : 'industry_default'}",
-      "times_sold": <number from dealer history, or null>,
-      "your_historical_profit": <avg profit from dealer history, or null>,
-      "your_avg_days_on_lot": <from dealer history, or null>,
-      "current_market_price": <from market data if available, or null>,
-      "current_market_dom": <from market data if available, or null>,
-      "seasonal_buy_months": ["Feb", "Mar"],
-      "seasonal_sell_months": ["Jun", "Jul"],
-      "target_buy_price": <specific dollar amount>,
-      "target_sell_price": <specific dollar amount>,
-      "estimated_profit": <target_sell - target_buy - recon>,
-      "estimated_recon": <800-2000 based on price point>,
-      "reasoning": "Clear explanation citing ACTUAL data sources",
-      "where_to_find": ["Dealer auctions", "Copart", "Wholesale groups"],
-      "action_item": "Specific next step"
-    }
-  ],
-  "market_insights": "2-3 sentences summarizing key opportunities. ${tier === 'fallback' ? 'Clearly state these are industry defaults for a new dealer.' : 'Reference dealer\'s proven patterns and seasonal timing.'}"
-}
-
-CRITICAL: Return ONLY valid JSON. No markdown, no code blocks, just JSON starting with { and ending with }.`;
-
-    console.log("Calling Claude AI for intelligent analysis...");
-
-    // STEP 5: Get AI analysis
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 4000,
-        messages: [{ role: "user", content: prompt }],
-      }),
+        // Additional fields for compatibility
+        times_sold: pref.total_sold,
+        your_historical_profit: Math.round(pref.avg_profit || 0)
+      };
     });
 
-    if (!anthropicRes.ok) {
-      throw new Error(`Anthropic API error: ${anthropicRes.status}`);
-    }
+    // Build market insights from data
+    const avgProfit = Math.round(
+      dealerPrefs.reduce((sum, p) => sum + (p.avg_profit || 0), 0) / dealerPrefs.length
+    );
+    const avgDaysOnLot = Math.round(
+      dealerPrefs.reduce((sum, p) => sum + (p.avg_days_on_lot || 0), 0) / dealerPrefs.length
+    );
+    const totalSold = dealerPrefs.reduce((sum, p) => sum + (p.total_sold || 0), 0);
 
-    const anthropicData = await anthropicRes.json();
-    let aiText = anthropicData.content?.[0]?.text || "{}";
+    const marketInsights = `Your proven winners: ${dealerPrefs.length} makes/models with ${totalSold} total sales. Average profit: $${avgProfit.toLocaleString()}, average days on lot: ${avgDaysOnLot}. ${
+      seasonal && seasonal.length > 0
+        ? `Seasonal timing data available for ${seasonal.length} makes.`
+        : 'Consider tracking seasonal patterns for better timing.'
+    } ${
+      marketCache && marketCache.length > 0
+        ? `Current market data cached for ${marketCache.length} makes.`
+        : ''
+    }`;
 
-    console.log("AI response received (length:", aiText.length, ")");
-
-    // Parse AI response
-    let result;
-    try {
-      // Clean up markdown if present
-      aiText = aiText.trim();
-      if (aiText.startsWith('```json')) {
-        aiText = aiText.replace(/```json\n?/g, '').replace(/```\n?$/g, '').trim();
-      } else if (aiText.startsWith('```')) {
-        aiText = aiText.replace(/```\n?/g, '').trim();
-      }
-
-      result = JSON.parse(aiText);
-      console.log(`✅ AI returned ${result.recommendations?.length || 0} recommendations`);
-
-    } catch (parseError) {
-      console.error("Failed to parse AI response:", parseError);
-      console.error("AI text (first 500 chars):", aiText.substring(0, 500));
-
-      // Fallback: Create basic recommendations from dealer history or defaults
-      if (dealerPrefs && dealerPrefs.length > 0) {
-        result = {
-          recommendations: dealerPrefs.slice(0, quantity).map((p, i) => ({
-            rank: i + 1,
-            make: p.make,
-            model: p.model,
-            year_range: "2015-2022",
-            confidence_source: "dealer_history",
-            times_sold: p.total_sold,
-            your_historical_profit: Math.round(p.avg_profit || 0),
-            your_avg_days_on_lot: p.avg_days_on_lot,
-            target_buy_price: Math.round((p.avg_purchase_price || 20000) * 0.95),
-            target_sell_price: Math.round(p.avg_sale_price || 25000),
-            estimated_profit: Math.round(p.avg_profit || 0),
-            estimated_recon: 1200,
-            reasoning: `Based on your history: Sold ${p.total_sold} units with $${Math.round(p.avg_profit || 0)} avg profit in ${p.avg_days_on_lot || '?'} days`,
-            where_to_find: ["Dealer auctions", "Wholesale groups", "Trade-ins"],
-            action_item: "Target similar units based on your proven success"
-          })),
-          market_insights: "Using your proven track record. AI parsing failed but recommendations are based on your actual sales data."
-        };
-      } else {
-        // Industry defaults fallback
-        const defaults = [
-          { make: "Honda", model: "Civic", buy: 12000, sell: 15500 },
-          { make: "Toyota", model: "Camry", buy: 13000, sell: 16500 },
-          { make: "Ford", model: "F-150", buy: 20000, sell: 25000 },
-          { make: "Honda", model: "Accord", buy: 11000, sell: 14500 },
-          { make: "Toyota", model: "RAV4", buy: 15000, sell: 19000 }
-        ];
-
-        result = {
-          recommendations: defaults.slice(0, quantity).map((d, i) => ({
-            rank: i + 1,
-            make: d.make,
-            model: d.model,
-            year_range: "2015-2022",
-            confidence_source: "industry_default",
-            times_sold: null,
-            your_historical_profit: null,
-            target_buy_price: d.buy,
-            target_sell_price: d.sell,
-            estimated_profit: d.sell - d.buy - 1200,
-            estimated_recon: 1200,
-            reasoning: `Industry standard: ${d.make} ${d.model} is a proven BHPH performer with strong resale value`,
-            where_to_find: ["Dealer auctions", "Manheim", "Copart"],
-            action_item: "Safe bet for new dealers - track your results"
-          })),
-          market_insights: "⚠️ New dealer: These are safe industry defaults. Track your sales to get personalized recommendations."
-        };
-      }
-    }
-
-    // Calculate performance metrics
     const elapsedMs = Date.now() - startTime;
-    const estimatedCost = apiCallsMade * 0.02; // Rough estimate: $0.02 per API call
 
-    // Add metadata to response
     const response = {
-      ...result,
-      tier,
+      recommendations,
+      market_insights: marketInsights,
+      data_source: "dealer_history",
+      tier: "internal",
+      api_calls_made: 0,
+      cache_used: marketCache?.length || 0,
+      generated_at: new Date().toISOString(),
       cost_breakdown: {
-        api_calls_made: apiCallsMade,
-        cache_hits: cacheHits,
-        estimated_cost: estimatedCost,
+        api_calls_made: 0,
+        cache_hits: marketCache?.length || 0,
+        estimated_cost: 0.00,
         elapsed_ms: elapsedMs
       },
       dealer_context: {
         location: dealerLocation,
         proven_makes_count: dealerPrefs?.length || 0,
-        has_seasonal_data: (seasonalData?.length || 0) > 0
+        has_seasonal_data: (seasonal?.length || 0) > 0
       }
     };
 
-    console.log("=== SMART RECOMMENDATIONS COMPLETE ===");
-    console.log(`Tier: ${tier}, API Calls: ${apiCallsMade}, Cache Hits: ${cacheHits}, Cost: $${estimatedCost.toFixed(4)}, Time: ${elapsedMs}ms`);
+    console.log("=== ZERO-API RECOMMENDATIONS COMPLETE ===");
+    console.log(`API Calls: 0, Cache Used: ${marketCache?.length || 0}, Cost: $0.00, Time: ${elapsedMs}ms`);
 
     return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
