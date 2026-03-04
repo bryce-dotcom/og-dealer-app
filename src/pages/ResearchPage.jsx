@@ -620,10 +620,9 @@ export default function ResearchPage() {
     setRecsError(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('generate-buying-recommendations', {
+      const { data, error: fnError } = await supabase.functions.invoke('generate-smart-recommendations', {
         body: {
           dealer_id: dealer.id,
-          budget_max: null,
           quantity: 10
         }
       });
@@ -643,13 +642,20 @@ export default function ResearchPage() {
         return;
       }
 
+      // Log performance metrics
+      if (data?.cost_breakdown) {
+        console.log(`Smart Recommendations - Tier: ${data.tier}, API calls: ${data.cost_breakdown.api_calls_made}, Cache hits: ${data.cost_breakdown.cache_hits}, Cost: $${data.cost_breakdown.estimated_cost?.toFixed(4)}, Time: ${data.cost_breakdown.elapsed_ms}ms`);
+      }
+
       // Consume credits AFTER successful operation
       await CreditService.consumeCredits(
         dealer.id,
         'BUYING_RECOMMENDATIONS',
-        `recommendations-${new Date().toISOString()}`,
+        `smart-recommendations-${new Date().toISOString()}`,
         {
-          recommendations_count: data.recommendations?.length || 0
+          recommendations_count: data.recommendations?.length || 0,
+          tier: data.tier,
+          api_calls: data.cost_breakdown?.api_calls_made || 0
         }
       );
 
@@ -991,6 +997,49 @@ export default function ResearchPage() {
 
               {recommendations && (
                 <div>
+                  {/* Tier Badge */}
+                  <div style={{ marginBottom: 16, padding: 12, backgroundColor: theme.cardBg, borderRadius: 8, border: `1px solid ${theme.border}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{
+                        padding: '6px 14px',
+                        borderRadius: 6,
+                        backgroundColor: recommendations.tier === 'internal' ? '#22c55e' :
+                                       recommendations.tier === 'hybrid' ? '#3b82f6' : '#eab308',
+                        color: 'white',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        letterSpacing: '0.5px'
+                      }}>
+                        {recommendations.tier === 'internal' ? '💚 YOUR DATA' :
+                         recommendations.tier === 'hybrid' ? '🔵 MARKET VALIDATED' :
+                         '⚠️ INDUSTRY DEFAULTS'}
+                      </span>
+                      {recommendations.cost_breakdown && (
+                        <span style={{ fontSize: 12, color: theme.textMuted }}>
+                          {recommendations.cost_breakdown.api_calls_made} API calls •
+                          {' '}${recommendations.cost_breakdown.estimated_cost?.toFixed(4)} cost •
+                          {' '}{recommendations.cost_breakdown.cache_hits} cached •
+                          {' '}{recommendations.cost_breakdown.elapsed_ms}ms
+                        </span>
+                      )}
+                    </div>
+                    {recommendations.tier === 'fallback' && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
+                        ℹ️ New dealer with no sales history. Showing safe industry defaults. Track your sales to get personalized recommendations.
+                      </div>
+                    )}
+                    {recommendations.tier === 'internal' && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
+                        ✨ 100% based on your proven track record. Zero market API calls needed!
+                      </div>
+                    )}
+                    {recommendations.tier === 'hybrid' && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
+                        ✅ Your sales history validated with current market data for maximum accuracy.
+                      </div>
+                    )}
+                  </div>
+
                   {/* Market Insights */}
                   {recommendations.market_insights && (
                     <div style={{ padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', marginBottom: '20px', border: `1px solid ${theme.border}` }}>
@@ -1068,6 +1117,29 @@ export default function ResearchPage() {
                                 🌤️ {rec.seasonal_note}
                               </div>
                             )}
+                          </div>
+
+                          {/* Data Source / Confidence */}
+                          <div style={{ marginBottom: '12px', padding: '8px 10px', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderRadius: '6px' }}>
+                            <div style={{ fontSize: '11px', color: theme.textMuted, lineHeight: '1.5' }}>
+                              📊 Data source: <strong style={{ color: theme.text }}>
+                                {rec.confidence_source === 'dealer_history' ? 'Your sales history' :
+                                 rec.confidence_source === 'market_validated' ? 'Market validated' :
+                                 'Industry standard'}
+                              </strong>
+                              {rec.times_sold && rec.your_historical_profit && (
+                                <span> • You've sold <strong style={{ color: '#22c55e' }}>{rec.times_sold} units</strong> (${Math.round(rec.your_historical_profit).toLocaleString()} avg profit{rec.your_avg_days_on_lot ? `, ${rec.your_avg_days_on_lot} days on lot` : ''})</span>
+                              )}
+                              {rec.seasonal_buy_months && rec.seasonal_buy_months.length > 0 && (
+                                <span> • Best buy: <strong style={{ color: '#eab308' }}>{rec.seasonal_buy_months.join(', ')}</strong></span>
+                              )}
+                              {rec.seasonal_sell_months && rec.seasonal_sell_months.length > 0 && (
+                                <span> • Best sell: <strong style={{ color: '#22c55e' }}>{rec.seasonal_sell_months.join(', ')}</strong></span>
+                              )}
+                              {rec.current_market_price && (
+                                <span> • Current market: ${Math.round(rec.current_market_price).toLocaleString()} avg</span>
+                              )}
+                            </div>
                           </div>
 
                           {/* Where to Find */}
