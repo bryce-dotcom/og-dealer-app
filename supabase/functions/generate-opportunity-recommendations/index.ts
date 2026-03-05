@@ -132,8 +132,8 @@ serve(async (req) => {
           estimated_profit: gap.typical_profit,
           target_price_max: gap.typical_buy,
           expected_profit: gap.typical_profit,
-          expected_days_to_sell: 35,
-          reasoning: `New opportunity: ${gap.make} ${gap.model} averages $${gap.typical_profit.toLocaleString()} profit and turns in ~35 days. You haven't sold this model yet - could be a strong addition.`,
+          expected_days_to_sell: null, // Don't show fake data
+          reasoning: `New opportunity: ${gap.make} ${gap.model} averages $${gap.typical_profit.toLocaleString()} profit for similar dealers. You haven't sold this model yet - could be a strong addition.`,
           why_you_should_try: `Similar dealers profit $${gap.typical_profit.toLocaleString()} per unit on ${gap.make} ${gap.model}. Strong demand, quick turnover.`,
           where_to_find: gap.typical_buy < 15000
             ? ["Copart", "IAA", "Private party", "Trade-ins"]
@@ -190,8 +190,8 @@ serve(async (req) => {
             estimated_profit: gap.typical_profit,
             target_price_max: gap.typical_buy,
             expected_profit: gap.typical_profit,
-            expected_days_to_sell: 35,
-            reasoning: `NEW MODEL TO TRY: ${gap.make} ${gap.model} averages $${gap.typical_profit.toLocaleString()} profit and turns in ~35 days. You haven't sold this specific model yet.`,
+            expected_days_to_sell: null, // Don't show fake data
+            reasoning: `NEW MODEL TO TRY: ${gap.make} ${gap.model} averages $${gap.typical_profit.toLocaleString()} profit for similar dealers. You haven't sold this specific model yet.`,
             why_you_should_try: `Similar dealers profit $${gap.typical_profit.toLocaleString()} per unit on ${gap.make} ${gap.model}. Strong demand, quick turnover. Limited local inventory - check regional sources.`,
             where_to_find: gap.typical_buy < 15000
               ? ["Copart", "IAA", "Private party", "Trade-ins"]
@@ -266,11 +266,11 @@ serve(async (req) => {
         rank: i + 1,
         ...opp
       })),
-      market_insights: `Found ${finalOpportunities.length} vehicles you HAVEN'T tried yet! These models make strong profit and turn quickly for similar dealers. ${
+      market_insights: `Found ${finalOpportunities.length} vehicles you HAVEN'T tried yet! These models are profitable for similar dealers. ${
         apiCallsMade > 0
           ? `Validated ${apiCallsMade} against current market data.`
-          : 'Based on proven performance data - zero API costs!'
-      } Consider testing 1-2 units to expand your profit centers.`,
+          : 'Based on industry performance data.'
+      } Consider testing 1-2 units to see how they perform in your market.`,
       data_source: "opportunity_discovery",
       recommendation_type: "new_opportunities",
       api_calls_made: apiCallsMade,
