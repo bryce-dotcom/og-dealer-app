@@ -133,8 +133,8 @@ serve(async (req) => {
           target_price_max: gap.typical_buy,
           expected_profit: gap.typical_profit,
           expected_days_to_sell: 35,
-          reasoning: `Industry opportunity: ${gap.make} ${gap.model} is a proven BHPH performer with $${gap.typical_profit.toLocaleString()} typical profit. You haven't sold this specific model yet - could be a new profit center.`,
-          why_you_should_try: `Similar dealers average $${gap.typical_profit.toLocaleString()} profit on ${gap.make} ${gap.model}. Strong resale value and consistent demand.`,
+          reasoning: `New opportunity: ${gap.make} ${gap.model} averages $${gap.typical_profit.toLocaleString()} profit and turns in ~35 days. You haven't sold this model yet - could be a strong addition.`,
+          why_you_should_try: `Similar dealers profit $${gap.typical_profit.toLocaleString()} per unit on ${gap.make} ${gap.model}. Strong demand, quick turnover.`,
           where_to_find: gap.typical_buy < 15000
             ? ["Copart", "IAA", "Private party", "Trade-ins"]
             : ["Dealer auctions", "Manheim", "Wholesale groups"],
@@ -191,8 +191,8 @@ serve(async (req) => {
             target_price_max: gap.typical_buy,
             expected_profit: gap.typical_profit,
             expected_days_to_sell: 35,
-            reasoning: `NEW MODEL TO TRY: ${gap.make} ${gap.model} is a proven BHPH performer with $${gap.typical_profit.toLocaleString()} typical profit. You haven't sold this specific model yet.`,
-            why_you_should_try: `Similar dealers average $${gap.typical_profit.toLocaleString()} profit on ${gap.make} ${gap.model}. Strong resale value and consistent demand. Limited local inventory - check regional sources.`,
+            reasoning: `NEW MODEL TO TRY: ${gap.make} ${gap.model} averages $${gap.typical_profit.toLocaleString()} profit and turns in ~35 days. You haven't sold this specific model yet.`,
+            why_you_should_try: `Similar dealers profit $${gap.typical_profit.toLocaleString()} per unit on ${gap.make} ${gap.model}. Strong demand, quick turnover. Limited local inventory - check regional sources.`,
             where_to_find: gap.typical_buy < 15000
               ? ["Copart", "IAA", "Private party", "Trade-ins"]
               : ["Dealer auctions", "Manheim", "Wholesale groups"],
@@ -237,10 +237,10 @@ serve(async (req) => {
           expected_days_to_sell: Math.round(avgDom),
           reasoning: `NEW OPPORTUNITY: ${listings.length} ${gap.make} ${gap.model} available nearby at $${Math.round(avgPrice).toLocaleString()} avg (selling in ${Math.round(avgDom)} days). You haven't tried this specific model yet.`,
           why_you_should_try: opportunityType === "hot_market"
-            ? `HOT MARKET: ${listings.length} available, selling fast (${Math.round(avgDom)} DOM). Similar dealers profit $${gap.typical_profit.toLocaleString()}.`
+            ? `HOT MARKET: ${listings.length} available, turning fast (${Math.round(avgDom)} days). Similar dealers profit $${gap.typical_profit.toLocaleString()}.`
             : opportunityType === "undervalued"
             ? `UNDERVALUED: Market price $${Math.round(avgPrice).toLocaleString()} is below typical buy range. Strong profit potential.`
-            : `UNTAPPED: You haven't sold this specific model. Similar dealers average $${gap.typical_profit.toLocaleString()} profit. ${listings.length} available to try.`,
+            : `UNTAPPED OPPORTUNITY: You haven't sold this model. Similar dealers profit $${gap.typical_profit.toLocaleString()} per unit. ${listings.length} available nearby.`,
           where_to_find: avgPrice < 15000
             ? ["Copart", "IAA", "Private party", "Trade-ins"]
             : ["Dealer auctions", "Manheim", "Wholesale groups"],
@@ -266,10 +266,10 @@ serve(async (req) => {
         rank: i + 1,
         ...opp
       })),
-      market_insights: `Found ${finalOpportunities.length} vehicles you HAVEN'T tried yet! These are proven BHPH winners that similar dealers profit from. ${
+      market_insights: `Found ${finalOpportunities.length} vehicles you HAVEN'T tried yet! These models make strong profit and turn quickly for similar dealers. ${
         apiCallsMade > 0
           ? `Validated ${apiCallsMade} against current market data.`
-          : 'Based on industry performance data - zero API costs!'
+          : 'Based on proven performance data - zero API costs!'
       } Consider testing 1-2 units to expand your profit centers.`,
       data_source: "opportunity_discovery",
       recommendation_type: "new_opportunities",
