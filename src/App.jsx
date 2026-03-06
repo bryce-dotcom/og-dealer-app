@@ -25,6 +25,7 @@ import PayrollPage from './pages/PayrollPage';
 import DevConsolePage from './pages/DevConsolePage';
 import StateUpdatesPage from './pages/StateUpdatesPage';
 import DataImportPage from './pages/DataImportPage';
+import MarketplaceSettingsPage from './pages/MarketplaceSettingsPage';
 
 export default function App() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/deal-finder" element={<DealFinderPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/import" element={<DataImportPage />} />
+          <Route path="/marketplaces" element={<MarketplaceSettingsPage />} />
           <Route path="/timeclock" element={<TimeClockPage />} />
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/dev" element={<DevConsolePage />} />

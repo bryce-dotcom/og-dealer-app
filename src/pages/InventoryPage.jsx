@@ -4,6 +4,7 @@ import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 import ImportExportButton from '../components/ImportExportButton';
+import MarketplaceStatusBadge from '../components/MarketplaceStatusBadge';
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -834,6 +835,11 @@ export default function InventoryPage() {
                         <div style={{ fontSize: '11px', color: theme.textMuted }}>Price</div>
                         <div style={{ fontSize: '20px', fontWeight: '700', color: '#4ade80' }}>{formatCurrency(v.sale_price)}</div>
                       </div>
+                    </div>
+
+                    {/* Marketplace Status */}
+                    <div style={{ marginTop: '12px' }}>
+                      <MarketplaceStatusBadge inventoryId={v.id} dealerId={dealerId} />
                     </div>
                   </div>
                 </div>
