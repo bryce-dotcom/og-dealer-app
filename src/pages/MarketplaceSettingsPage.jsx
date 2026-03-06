@@ -34,7 +34,10 @@ export default function MarketplaceSettingsPage() {
         .eq('auth_id', user.id)
         .single();
 
-      if (empError) throw empError;
+      if (empError) throw new Error(`Employee lookup failed: ${empError.message}`);
+      if (!employee) throw new Error('No employee record found for your account');
+      if (!employee.dealer_id) throw new Error('Employee record has no dealer_id');
+
       setDealerId(employee.dealer_id);
 
       // Load marketplace settings
@@ -59,7 +62,8 @@ export default function MarketplaceSettingsPage() {
 
     } catch (error) {
       console.error('Error loading settings:', error);
-      alert('Failed to load marketplace settings');
+      const errorMsg = error.message || 'Unknown error';
+      alert(`Failed to load marketplace settings:\n\n${errorMsg}\n\nPlease check:\n1. You are logged in\n2. Migration was applied\n3. Browser console for details`);
     } finally {
       setLoading(false);
     }
