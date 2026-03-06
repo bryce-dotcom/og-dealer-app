@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
+import ImportExportButton from '../components/ImportExportButton';
 
 const PhoneIcon = () => <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>;
 const EmailIcon = () => <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>;
@@ -129,7 +130,10 @@ export default function CustomersPage() {
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0 }}>Customers</h1>
           <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '14px' }}>{filtered.length} customers</p>
         </div>
-        <button onClick={() => setShowAdd(true)} style={{ padding: '10px 20px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>+ Add Customer</button>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <ImportExportButton dataType="customers" onImportComplete={() => window.location.reload()} />
+          <button onClick={() => setShowAdd(true)} style={{ padding: '10px 20px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>+ Add Customer</button>
+        </div>
       </div>
 
       {customersLooking > 0 && (

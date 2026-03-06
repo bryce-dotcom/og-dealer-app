@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import ImportExportButton from '../components/ImportExportButton';
 
 export default function TeamPage() {
   const { dealerId, employees, refreshEmployees } = useStore();
@@ -242,6 +243,7 @@ export default function TeamPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {isAdmin && <ImportExportButton dataType="employees" onImportComplete={() => window.location.reload()} />}
           {isAdmin && employees.filter(e => !e.active).length > 0 && (
             <button onClick={() => setShowArchived(!showArchived)} style={{ ...buttonStyle, backgroundColor: showArchived ? theme.accent : theme.border, color: showArchived ? '#fff' : theme.text }}>
               {showArchived ? '✓ Archived' : '🗄️ Show Archived'}

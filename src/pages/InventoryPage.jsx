@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import ImportExportButton from '../components/ImportExportButton';
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -749,7 +750,8 @@ export default function InventoryPage() {
             <h1 style={{ fontSize: '28px', fontWeight: '700', margin: 0 }}>Inventory</h1>
             <p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>{stats.total} vehicles</p>
           </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <ImportExportButton dataType="inventory" onImportComplete={() => window.location.reload()} />
             <button onClick={() => window.location.href = '/research'} style={btnStyle()}>Research</button>
             <button onClick={() => openAddModal()} style={btnStyle(true)}>+ Add Vehicle</button>
           </div>

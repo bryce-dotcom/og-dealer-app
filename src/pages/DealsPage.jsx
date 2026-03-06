@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 import { calculateFees } from '../lib/feeCalculator';
 import { CreditService } from '../lib/creditService';
+import ImportExportButton from '../components/ImportExportButton';
 
 // ============ CONSTANTS ============
 const STAGES = [
@@ -1347,6 +1348,7 @@ export default function DealsPage() {
           <p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>{deals.filter(d => !d.archived).length} active deals</p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <ImportExportButton dataType="deals" onImportComplete={() => window.location.reload()} />
           <button onClick={() => setShowArchived(!showArchived)} style={{ padding: '8px 16px', backgroundColor: showArchived ? theme.accent : 'transparent', color: showArchived ? '#fff' : theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}>
             {showArchived ? 'Show Active' : 'Show Archived'}
           </button>
