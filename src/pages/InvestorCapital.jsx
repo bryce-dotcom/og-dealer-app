@@ -65,50 +65,44 @@ export default function InvestorCapital() {
       return;
     }
 
-    if (!confirm(`Deposit $${depositAmount.toLocaleString()}?\n\nThis will initiate an ACH transfer from your linked bank account.`)) {
+    // Check if bank account is linked
+    if (!investor?.linked_bank_account) {
+      alert('Please link a bank account first before making deposits.');
+      return;
+    }
+
+    if (!confirm(`Deposit $${depositAmount.toLocaleString()}?\n\nThis will initiate an ACH transfer from your linked bank account.\n\nFunds will be pulled from:\n${investor.linked_bank_account.name} ****${investor.linked_bank_account.mask}\n\nEstimated settlement: 3-5 business days`)) {
       return;
     }
 
     try {
       setSubmitting(true);
 
-      // Get default pool
-      const { data: shares } = await supabase
-        .from('investor_pool_shares')
-        .select('pool_id')
-        .eq('investor_id', investor.id)
-        .eq('active', true)
-        .limit(1);
-
-      const poolId = shares?.[0]?.pool_id;
-
-      if (!poolId) {
-        alert('No active investment pool found. Please contact support.');
-        return;
-      }
-
-      // Create capital transaction
-      const { error } = await supabase
-        .from('investor_capital')
-        .insert({
+      // Initiate Plaid ACH transfer
+      const { data, error } = await supabase.functions.invoke('plaid-initiate-transfer', {
+        body: {
           investor_id: investor.id,
-          pool_id: poolId,
-          transaction_type: 'deposit',
           amount: depositAmount,
-          status: 'pending',
-          payment_method: 'ach',
-          notes: 'Deposit via investor portal'
-        });
+          transfer_type: 'deposit',
+          description: 'Investment capital deposit via investor portal'
+        }
+      });
 
       if (error) throw error;
 
-      alert(`Deposit initiated!\n\n$${depositAmount.toLocaleString()} will be transferred from your linked bank account.\n\nProcessing time: 3-5 business days`);
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to initiate transfer');
+      }
+
+      const estimatedDate = new Date(data.transfer.estimated_settlement).toLocaleDateString();
+
+      alert(`✅ Deposit initiated successfully!\n\n💰 Amount: $${depositAmount.toLocaleString()}\n📅 Estimated settlement: ${estimatedDate}\n🏦 From: ${investor.linked_bank_account.name}\n\nYou'll receive a notification when the transfer completes.`);
       setAmount('');
       loadCapitalData();
 
     } catch (error) {
       console.error('Error processing deposit:', error);
-      alert('Failed to process deposit: ' + error.message);
+      alert('❌ Failed to process deposit\n\n' + error.message);
     } finally {
       setSubmitting(false);
     }
@@ -123,37 +117,48 @@ export default function InvestorCapital() {
     const withdrawAmount = parseFloat(amount);
 
     if (withdrawAmount > investor.available_balance) {
-      alert(`Insufficient balance. Available: $${investor.available_balance.toLocaleString()}`);
+      alert(`❌ Insufficient balance\n\nRequested: $${withdrawAmount.toLocaleString()}\nAvailable: $${investor.available_balance.toLocaleString()}`);
       return;
     }
 
-    if (!confirm(`Withdraw $${withdrawAmount.toLocaleString()}?\n\nFunds will be transferred to your linked bank account.`)) {
+    // Check if bank account is linked
+    if (!investor?.linked_bank_account) {
+      alert('Please link a bank account first before making withdrawals.');
+      return;
+    }
+
+    if (!confirm(`Withdraw $${withdrawAmount.toLocaleString()}?\n\nFunds will be transferred to:\n${investor.linked_bank_account.name} ****${investor.linked_bank_account.mask}\n\nEstimated arrival: 2-3 business days`)) {
       return;
     }
 
     try {
       setSubmitting(true);
 
-      const { error } = await supabase
-        .from('investor_capital')
-        .insert({
+      // Initiate Plaid ACH transfer
+      const { data, error } = await supabase.functions.invoke('plaid-initiate-transfer', {
+        body: {
           investor_id: investor.id,
-          transaction_type: 'withdrawal',
           amount: withdrawAmount,
-          status: 'pending',
-          payment_method: 'ach',
-          notes: 'Withdrawal via investor portal'
-        });
+          transfer_type: 'withdrawal',
+          description: 'Investment withdrawal via investor portal'
+        }
+      });
 
       if (error) throw error;
 
-      alert(`Withdrawal requested!\n\n$${withdrawAmount.toLocaleString()} will be sent to your linked bank account.\n\nProcessing time: 2-3 business days`);
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to initiate transfer');
+      }
+
+      const estimatedDate = new Date(data.transfer.estimated_settlement).toLocaleDateString();
+
+      alert(`✅ Withdrawal initiated successfully!\n\n💰 Amount: $${withdrawAmount.toLocaleString()}\n📅 Estimated arrival: ${estimatedDate}\n🏦 To: ${investor.linked_bank_account.name}\n\nYou'll receive a notification when the transfer completes.`);
       setAmount('');
       loadCapitalData();
 
     } catch (error) {
       console.error('Error processing withdrawal:', error);
-      alert('Failed to process withdrawal: ' + error.message);
+      alert('❌ Failed to process withdrawal\n\n' + error.message);
     } finally {
       setSubmitting(false);
     }
@@ -401,41 +406,73 @@ export default function InvestorCapital() {
 
           <div className="space-y-3">
             {transactions.map((tx) => (
-              <div key={tx.id} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700">
-                <div className="flex items-center gap-4">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    tx.transaction_type === 'deposit' ? 'bg-blue-500/20' : 'bg-green-500/20'
-                  }`}>
-                    {tx.transaction_type === 'deposit' ? (
-                      <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
-                      </svg>
+              <div key={tx.id} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      tx.transaction_type === 'deposit' ? 'bg-blue-500/20' : 'bg-green-500/20'
+                    }`}>
+                      {tx.transaction_type === 'deposit' ? (
+                        <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-white font-medium capitalize">
+                        {tx.transaction_type} • {tx.payment_method?.toUpperCase()}
+                      </div>
+                      <div className="text-slate-400 text-sm">
+                        {new Date(tx.initiated_at).toLocaleDateString()} at{' '}
+                        {new Date(tx.initiated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      {tx.description && (
+                        <div className="text-slate-400 text-xs mt-1">{tx.description}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-lg font-bold ${
+                      tx.transaction_type === 'deposit' ? 'text-blue-400' : 'text-green-400'
+                    }`}>
+                      {tx.transaction_type === 'deposit' ? '+' : '-'}{formatCurrency(tx.amount)}
+                    </div>
+                    <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(tx.status)}`}>
+                      {tx.status}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Additional details */}
+                {(tx.metadata || tx.plaid_transfer_id) && (
+                  <div className="mt-3 pt-3 border-t border-slate-700 flex flex-wrap gap-4 text-xs text-slate-400">
+                    {tx.plaid_transfer_id && (
+                      <div>
+                        <span className="text-slate-500">Transfer ID:</span> {tx.plaid_transfer_id.substring(0, 16)}...
+                      </div>
+                    )}
+                    {tx.metadata?.estimated_settlement && (
+                      <div>
+                        <span className="text-slate-500">Est. Settlement:</span>{' '}
+                        {new Date(tx.metadata.estimated_settlement).toLocaleDateString()}
+                      </div>
+                    )}
+                    {tx.metadata?.transfer_status && (
+                      <div>
+                        <span className="text-slate-500">Plaid Status:</span> {tx.metadata.transfer_status}
+                      </div>
+                    )}
+                    {tx.metadata?.failure_reason && (
+                      <div className="text-red-400">
+                        <span className="text-slate-500">Reason:</span> {tx.metadata.failure_reason}
+                      </div>
                     )}
                   </div>
-                  <div>
-                    <div className="text-white font-medium capitalize">
-                      {tx.transaction_type} • {tx.payment_method?.toUpperCase()}
-                    </div>
-                    <div className="text-slate-400 text-sm">
-                      {new Date(tx.initiated_at).toLocaleDateString()} at{' '}
-                      {new Date(tx.initiated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-lg font-bold ${
-                    tx.transaction_type === 'deposit' ? 'text-blue-400' : 'text-green-400'
-                  }`}>
-                    {tx.transaction_type === 'deposit' ? '+' : '-'}{formatCurrency(tx.amount)}
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(tx.status)}`}>
-                    {tx.status}
-                  </span>
-                </div>
+                )}
               </div>
             ))}
           </div>
