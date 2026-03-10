@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-03-10 (updated with Phase 7 dealer features)
+> **Last Updated:** 2026-03-10 (updated with Phase 8 features)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 87
+> **Total Tables:** 95
 
 ---
 
@@ -117,6 +117,24 @@
 
 ### Analytics
 - [`analytics_snapshots`](#analytics_snapshots) *
+
+### Compliance (Phase 8)
+- [`compliance_tracking`](#compliance_tracking) *
+- [`compliance_checklist_items`](#compliance_checklist_items) *
+
+### Marketplace Listings (Phase 8)
+- [`marketplace_listings`](#marketplace_listings) *
+
+### CRM Workflows (Phase 8)
+- [`crm_workflows`](#crm_workflows) *
+- [`crm_workflow_runs`](#crm_workflow_runs) *
+
+### Customer Portal (Phase 8)
+- [`customer_portal_access`](#customer_portal_access) *
+- [`customer_portal_payments`](#customer_portal_payments) *
+
+### Leads (Phase 8)
+- [`leads`](#leads) *
 
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
@@ -2302,3 +2320,205 @@
 | `created_at` | timestamptz | YES | now() |
 
 > **UNIQUE constraint:** `(dealer_id, snapshot_date)`
+
+---
+
+# Phase 8: Compliance, Marketplace, CRM, Customer Portal, Leads
+
+## compliance_tracking (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `compliance_type` | text | NO | (dealer_license, business_license, surety_bond, garage_liability, general_liability, workers_comp, dmv_title, temp_tag, emissions_inspection, sales_tax_filing, annual_report, custom) |
+| `name` | text | NO | |
+| `description` | text | YES | |
+| `status` | text | YES | active (active, expiring_soon, expired, pending_renewal, not_applicable) |
+| `priority` | text | YES | normal (low, normal, high, critical) |
+| `effective_date` | date | YES | |
+| `expiration_date` | date | YES | |
+| `renewal_date` | date | YES | |
+| `reminder_days` | integer | YES | 30 |
+| `last_reminder_sent` | timestamptz | YES | |
+| `document_url` | text | YES | |
+| `document_number` | text | YES | |
+| `issuing_authority` | text | YES | |
+| `cost` | numeric(10,2) | YES | |
+| `related_id` | text | YES | |
+| `related_type` | text | YES | |
+| `vehicle_id` | text | YES | |
+| `auto_renew` | boolean | YES | false |
+| `notes` | text | YES | |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## compliance_checklist_items (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `category` | text | NO | (licensing, insurance, bonding, facility, record_keeping, advertising, title_registration, tax, employee, safety, environmental) |
+| `requirement` | text | NO | |
+| `description` | text | YES | |
+| `state_code` | text | YES | UT |
+| `completed` | boolean | YES | false |
+| `completed_at` | timestamptz | YES | |
+| `completed_by` | integer | YES | |
+| `due_date` | date | YES | |
+| `recurring` | text | YES | (once, monthly, quarterly, annually, biannually) |
+| `evidence_url` | text | YES | |
+| `evidence_notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## marketplace_listings (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | YES | |
+| `marketplace` | text | NO | (facebook, ksl, craigslist, autotrader, cars_com) |
+| `title` | text | YES | |
+| `description` | text | YES | |
+| `price` | numeric(10,2) | YES | |
+| `images` | jsonb | YES | |
+| `status` | text | YES | draft (draft, pending, active, paused, sold, expired, error, removed) |
+| `external_listing_id` | text | YES | |
+| `external_url` | text | YES | |
+| `error_message` | text | YES | |
+| `views` | integer | YES | 0 |
+| `inquiries` | integer | YES | 0 |
+| `saves` | integer | YES | 0 |
+| `published_at` | timestamptz | YES | |
+| `expires_at` | timestamptz | YES | |
+| `last_synced_at` | timestamptz | YES | |
+| `leads_captured` | integer | YES | 0 |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## crm_workflows (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `name` | text | NO | |
+| `description` | text | YES | |
+| `trigger_type` | text | NO | (new_lead, deal_created, deal_lost, post_sale, payment_overdue, birthday, service_due, no_activity, appointment_missed, custom) |
+| `trigger_conditions` | jsonb | YES | |
+| `steps` | jsonb | NO | |
+| `active` | boolean | YES | true |
+| `runs_count` | integer | YES | 0 |
+| `last_run_at` | timestamptz | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## crm_workflow_runs (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `workflow_id` | uuid | NO | |
+| `customer_id` | integer | YES | |
+| `status` | text | YES | running (running, completed, failed, cancelled, paused) |
+| `current_step` | integer | YES | 1 |
+| `total_steps` | integer | NO | |
+| `next_step_at` | timestamptz | YES | |
+| `steps_completed` | jsonb | YES | |
+| `error_message` | text | YES | |
+| `trigger_data` | jsonb | YES | |
+| `started_at` | timestamptz | YES | now() |
+| `completed_at` | timestamptz | YES | |
+
+## customer_portal_access (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `customer_id` | integer | NO | |
+| `email` | text | NO | |
+| `pin_hash` | text | YES | |
+| `access_token` | text | YES | |
+| `token_expires_at` | timestamptz | YES | |
+| `magic_link_token` | text | YES | |
+| `magic_link_expires_at` | timestamptz | YES | |
+| `active` | boolean | YES | true |
+| `last_login_at` | timestamptz | YES | |
+| `login_count` | integer | YES | 0 |
+| `can_view_payments` | boolean | YES | true |
+| `can_make_payments` | boolean | YES | true |
+| `can_view_documents` | boolean | YES | true |
+| `can_view_appointments` | boolean | YES | true |
+| `can_schedule_appointments` | boolean | YES | false |
+| `can_message_dealer` | boolean | YES | true |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+> **UNIQUE constraints:** `(dealer_id, customer_id)`, `(dealer_id, email)`
+
+## customer_portal_payments (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `customer_id` | integer | NO | |
+| `loan_id` | integer | YES | |
+| `amount` | numeric(10,2) | NO | |
+| `payment_method` | text | YES | card (card, ach, debit, cash_app, venmo) |
+| `status` | text | YES | pending (pending, processing, completed, failed, refunded) |
+| `provider` | text | YES | stripe |
+| `provider_payment_id` | text | YES | |
+| `provider_data` | jsonb | YES | |
+| `ip_address` | text | YES | |
+| `user_agent` | text | YES | |
+| `notes` | text | YES | |
+| `error_message` | text | YES | |
+| `processed_at` | timestamptz | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## leads (Phase 8)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `first_name` | text | NO | |
+| `last_name` | text | YES | |
+| `email` | text | YES | |
+| `phone` | text | YES | |
+| `preferred_contact` | text | YES | phone (phone, email, sms, any) |
+| `source` | text | NO | (walk_in, phone_call, website, facebook, ksl, craigslist, autotrader, referral, repeat_customer, marketplace, other) |
+| `source_details` | text | YES | |
+| `marketplace_listing_id` | uuid | YES | |
+| `interested_vehicle_id` | text | YES | |
+| `vehicle_preferences` | jsonb | YES | |
+| `budget_min` | numeric(10,2) | YES | |
+| `budget_max` | numeric(10,2) | YES | |
+| `trade_in_vehicle` | text | YES | |
+| `trade_in_value` | numeric(10,2) | YES | |
+| `financing_needed` | boolean | YES | |
+| `lead_score` | integer | YES | 50 (0-100) |
+| `temperature` | text | YES | warm (hot, warm, cold, dead) |
+| `assigned_to` | integer | YES | |
+| `assigned_at` | timestamptz | YES | |
+| `status` | text | YES | new (new, contacted, qualified, negotiating, won, lost) |
+| `lost_reason` | text | YES | |
+| `next_follow_up` | date | YES | |
+| `last_contact_at` | timestamptz | YES | |
+| `contact_count` | integer | YES | 0 |
+| `converted_to_customer` | boolean | YES | false |
+| `customer_id` | integer | YES | |
+| `deal_id` | integer | YES | |
+| `converted_at` | timestamptz | YES | |
+| `notes` | text | YES | |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |

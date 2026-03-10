@@ -42,6 +42,11 @@ import AppointmentsPage from './pages/AppointmentsPage';
 import ESignaturePage from './pages/ESignaturePage';
 import DealerNotificationsPage from './pages/DealerNotificationsPage';
 import AdvancedAnalyticsPage from './pages/AdvancedAnalyticsPage';
+import ComplianceDashboard from './pages/ComplianceDashboard';
+import MarketplaceListingsPage from './pages/MarketplaceListingsPage';
+import CRMWorkflowsPage from './pages/CRMWorkflowsPage';
+import CustomerPortalPage from './pages/CustomerPortalPage';
+import LeadsPage from './pages/LeadsPage';
 
 export default function App() {
   return (
@@ -95,6 +100,11 @@ export default function App() {
           <Route path="/esignature" element={<ESignaturePage />} />
           <Route path="/notifications" element={<DealerNotificationsPage />} />
           <Route path="/analytics" element={<AdvancedAnalyticsPage />} />
+          <Route path="/compliance" element={<ComplianceDashboard />} />
+          <Route path="/marketplace-listings" element={<MarketplaceListingsPage />} />
+          <Route path="/crm-workflows" element={<CRMWorkflowsPage />} />
+          <Route path="/customer-portal" element={<CustomerPortalPage />} />
+          <Route path="/leads" element={<LeadsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
