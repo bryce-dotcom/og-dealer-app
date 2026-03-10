@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-02-27 (updated with AI Research tables)
+> **Last Updated:** 2026-03-10 (updated with Investor Portal Phase 6 tables)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 78
+> **Total Tables:** 80
 
 ---
 
@@ -1882,3 +1882,239 @@
 | `form-library` | form_library default | Promoted form storage |
 | `form-staging` | form_staging default | Staging form storage |
 | `generated-documents` | generated_documents default | Generated doc storage |
+| `investor-documents` | InvestorAccreditation | Accreditation verification docs |
+
+---
+
+# Investor Portal
+
+## investors
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `user_id` | uuid | YES | |
+| `email` | text | NO | |
+| `full_name` | text | NO | |
+| `phone` | text | YES | |
+| `address` | jsonb | YES | |
+| `accredited_investor` | boolean | YES | false |
+| `identity_verified` | boolean | YES | false |
+| `accreditation_verified` | boolean | YES | false |
+| `accreditation_method` | text | YES | |
+| `accreditation_date` | date | YES | |
+| `verification_documents` | jsonb | YES | |
+| `total_invested` | numeric(12,2) | YES | 0.00 |
+| `total_returned` | numeric(12,2) | YES | 0.00 |
+| `total_profit` | numeric(12,2) | YES | 0.00 |
+| `available_balance` | numeric(12,2) | YES | 0.00 |
+| `lifetime_roi` | numeric(5,2) | YES | 0.00 |
+| `plaid_item_id` | text | YES | |
+| `plaid_access_token` | text | YES | |
+| `linked_bank_account` | jsonb | YES | |
+| `status` | text | YES | pending |
+| `notification_preferences` | jsonb | YES | (default prefs) |
+| `timezone` | text | YES | America/Denver |
+| `preferred_currency` | text | YES | USD |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## investment_pools
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `pool_name` | text | NO | |
+| `description` | text | YES | |
+| `status` | text | YES | active |
+| `total_capital` | numeric(12,2) | YES | 0.00 |
+| `deployed_capital` | numeric(12,2) | YES | 0.00 |
+| `available_capital` | numeric(12,2) | YES | 0.00 |
+| `reserved_capital` | numeric(12,2) | YES | 0.00 |
+| `total_profit` | numeric(12,2) | YES | 0.00 |
+| `total_vehicles_funded` | integer | YES | 0 |
+| `total_vehicles_sold` | integer | YES | 0 |
+| `lifetime_roi` | numeric(5,2) | YES | 0.00 |
+| `avg_days_to_sell` | numeric(5,1) | YES | 0.0 |
+| `investor_profit_share` | numeric(5,2) | YES | 60.00 |
+| `platform_fee_share` | numeric(5,2) | YES | 20.00 |
+| `dealer_profit_share` | numeric(5,2) | YES | 20.00 |
+| `min_investment` | numeric(12,2) | YES | 10000.00 |
+| `max_investment` | numeric(12,2) | YES | |
+| `bank_account_name` | text | YES | |
+| `bank_account_number` | text | YES | |
+| `bank_routing_number` | text | YES | |
+| `plaid_item_id` | text | YES | |
+| `plaid_access_token` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## investor_pool_shares
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `investor_id` | uuid | NO | |
+| `pool_id` | uuid | NO | |
+| `capital_invested` | numeric(12,2) | NO | |
+| `ownership_percentage` | numeric(7,4) | YES | |
+| `total_profit_earned` | numeric(12,2) | YES | 0.00 |
+| `total_distributions` | numeric(12,2) | YES | 0.00 |
+| `current_roi` | numeric(5,2) | YES | 0.00 |
+| `active` | boolean | YES | true |
+| `joined_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## investor_capital
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `investor_id` | uuid | NO | |
+| `pool_id` | uuid | YES | |
+| `transaction_type` | text | NO | |
+| `amount` | numeric(12,2) | NO | |
+| `status` | text | YES | pending |
+| `payment_method` | text | YES | ach |
+| `plaid_transfer_id` | text | YES | |
+| `plaid_transaction_id` | text | YES | |
+| `bank_account_last4` | text | YES | |
+| `bank_name` | text | YES | |
+| `initiated_at` | timestamptz | YES | now() |
+| `processing_at` | timestamptz | YES | |
+| `completed_at` | timestamptz | YES | |
+| `failed_at` | timestamptz | YES | |
+| `error_message` | text | YES | |
+| `approved_by` | uuid | YES | |
+| `notes` | text | YES | |
+| `description` | text | YES | |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## investor_vehicles
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `pool_id` | uuid | NO | |
+| `inventory_id` | text | NO | |
+| `dealer_id` | integer | NO | |
+| `capital_deployed` | numeric(12,2) | NO | |
+| `purchase_price` | numeric(12,2) | NO | |
+| `purchase_date` | date | YES | |
+| `sale_price` | numeric(12,2) | YES | |
+| `sale_date` | date | YES | |
+| `days_held` | integer | YES | |
+| `gross_profit` | numeric(12,2) | YES | |
+| `investor_profit` | numeric(12,2) | YES | |
+| `platform_fee_amount` | numeric(12,2) | YES | |
+| `dealer_profit` | numeric(12,2) | YES | |
+| `reconditioning_cost` | numeric(12,2) | YES | 0.00 |
+| `holding_cost` | numeric(12,2) | YES | 0.00 |
+| `other_costs` | numeric(12,2) | YES | 0.00 |
+| `total_costs` | numeric(12,2) | NO | GENERATED |
+| `status` | text | YES | active |
+| `vehicle_info` | jsonb | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## investor_distributions
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `investor_id` | uuid | NO | |
+| `pool_id` | uuid | YES | |
+| `vehicle_id` | uuid | YES | |
+| `distribution_type` | text | NO | |
+| `amount` | numeric(12,2) | NO | |
+| `status` | text | YES | pending |
+| `payment_method` | text | YES | ach |
+| `plaid_transfer_id` | text | YES | |
+| `plaid_transaction_id` | text | YES | |
+| `bank_account_last4` | text | YES | |
+| `scheduled_date` | date | YES | |
+| `approved_at` | timestamptz | YES | |
+| `paid_at` | timestamptz | YES | |
+| `failed_at` | timestamptz | YES | |
+| `approved_by` | uuid | YES | |
+| `error_message` | text | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## investor_reports
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `investor_id` | uuid | NO | |
+| `report_type` | text | NO | |
+| `period_start` | date | NO | |
+| `period_end` | date | NO | |
+| `summary` | jsonb | YES | |
+| `pdf_url` | text | YES | |
+| `csv_url` | text | YES | |
+| `generated_at` | timestamptz | YES | |
+| `sent_at` | timestamptz | YES | |
+| `viewed_at` | timestamptz | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## investor_notifications (Phase 6)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `investor_id` | uuid | NO | |
+| `type` | text | NO | |
+| `title` | text | NO | |
+| `message` | text | NO | |
+| `action_url` | text | YES | |
+| `related_id` | uuid | YES | |
+| `related_type` | text | YES | |
+| `read` | boolean | YES | false |
+| `read_at` | timestamptz | YES | |
+| `dismissed` | boolean | YES | false |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## investor_documents (Phase 6)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `investor_id` | uuid | NO | |
+| `document_type` | text | NO | |
+| `file_name` | text | NO | |
+| `file_url` | text | NO | |
+| `file_size` | integer | YES | |
+| `mime_type` | text | YES | |
+| `status` | text | YES | pending |
+| `reviewed_by` | uuid | YES | |
+| `reviewed_at` | timestamptz | YES | |
+| `review_notes` | text | YES | |
+| `uploaded_at` | timestamptz | YES | now() |
+| `expires_at` | date | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## pool_transactions
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `pool_id` | uuid | NO | |
+| `transaction_type` | text | NO | |
+| `amount` | numeric(12,2) | NO | |
+| `balance_after` | numeric(12,2) | YES | |
+| `investor_id` | uuid | YES | |
+| `vehicle_id` | uuid | YES | |
+| `distribution_id` | uuid | YES | |
+| `capital_transaction_id` | uuid | YES | |
+| `plaid_transaction_id` | text | YES | |
+| `plaid_category` | text | YES | |
+| `description` | text | NO | |
+| `merchant_name` | text | YES | |
+| `metadata` | jsonb | YES | |
+| `transaction_date` | timestamptz | NO | |
+| `created_at` | timestamptz | YES | now() |

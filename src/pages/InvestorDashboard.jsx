@@ -11,6 +11,7 @@ export default function InvestorDashboard() {
   const [portfolioData, setPortfolioData] = useState([]);
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [activeVehicles, setActiveVehicles] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     loadDashboard();
@@ -51,6 +52,12 @@ export default function InvestorDashboard() {
 
       // Generate portfolio chart data (last 6 months)
       generatePortfolioData(investorData.id);
+
+      // Get unread notification count
+      const { data: countData } = await supabase.rpc('get_investor_unread_count', {
+        p_investor_id: investorData.id,
+      });
+      setUnreadCount(countData || 0);
 
     } catch (error) {
       console.error('Error loading dashboard:', error);
@@ -166,7 +173,21 @@ export default function InvestorDashboard() {
             </h1>
             <p className="text-blue-200">Your investment portfolio at a glance</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
+            <button
+              onClick={() => navigate('/investor/notifications')}
+              className="relative p-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition"
+              title="Notifications"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => navigate('/investor/capital')}
               className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
@@ -421,6 +442,28 @@ export default function InvestorDashboard() {
               <p>No recent activity</p>
             </div>
           )}
+        </div>
+
+        {/* Quick Navigation */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+          {[
+            { label: 'Analytics', desc: 'Performance metrics', path: '/investor/analytics', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+            { label: 'Reports', desc: 'Statements & tax docs', path: '/investor/reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+            { label: 'Accreditation', desc: 'Verify investor status', path: '/investor/accreditation', icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z' },
+            { label: 'Bank Account', desc: 'Pool transactions', path: '/investor/bank-account', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
+          ].map(nav => (
+            <button
+              key={nav.path}
+              onClick={() => navigate(nav.path)}
+              className="bg-white/5 hover:bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/10 hover:border-blue-500/50 transition text-left"
+            >
+              <svg className="w-6 h-6 text-blue-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={nav.icon} />
+              </svg>
+              <div className="text-white font-semibold">{nav.label}</div>
+              <div className="text-slate-400 text-xs">{nav.desc}</div>
+            </button>
+          ))}
         </div>
 
       </div>

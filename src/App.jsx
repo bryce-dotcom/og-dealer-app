@@ -31,6 +31,11 @@ import InvestorDashboard from './pages/InvestorDashboard';
 import InvestorPortfolio from './pages/InvestorPortfolio';
 import InvestorCapital from './pages/InvestorCapital';
 import InvestorBankAccount from './pages/InvestorBankAccount';
+import InvestorSettings from './pages/InvestorSettings';
+import InvestorReports from './pages/InvestorReports';
+import InvestorAccreditation from './pages/InvestorAccreditation';
+import InvestorAnalytics from './pages/InvestorAnalytics';
+import InvestorNotifications from './pages/InvestorNotifications';
 import AdminInvestorDashboard from './pages/AdminInvestorDashboard';
 
 export default function App() {
@@ -49,7 +54,12 @@ export default function App() {
         <Route path="/investor/portfolio" element={<InvestorPortfolio />} />
         <Route path="/investor/capital" element={<InvestorCapital />} />
         <Route path="/investor/bank-account" element={<InvestorBankAccount />} />
-        
+        <Route path="/investor/settings" element={<InvestorSettings />} />
+        <Route path="/investor/reports" element={<InvestorReports />} />
+        <Route path="/investor/accreditation" element={<InvestorAccreditation />} />
+        <Route path="/investor/analytics" element={<InvestorAnalytics />} />
+        <Route path="/investor/notifications" element={<InvestorNotifications />} />
+
         {/* Protected routes with Layout */}
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />

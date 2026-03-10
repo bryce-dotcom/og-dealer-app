@@ -6,13 +6,14 @@ import PlaidLinkButton from '../components/PlaidLinkButton';
 export default function AdminInvestorDashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview'); // overview, investors, transfers, pools
+  const [activeTab, setActiveTab] = useState('overview'); // overview, investors, transfers, pools, accreditation
 
   const [stats, setStats] = useState(null);
   const [investors, setInvestors] = useState([]);
   const [pools, setPools] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [selectedPool, setSelectedPool] = useState(null);
+  const [accreditationDocs, setAccreditationDocs] = useState([]);
 
   useEffect(() => {
     loadAdminData();
@@ -57,6 +58,14 @@ export default function AdminInvestorDashboard() {
         .limit(50);
       setTransfers(transfersData || []);
 
+      // Load accreditation documents pending review
+      const { data: docsData } = await supabase
+        .from('investor_documents')
+        .select('*, investors(full_name, email)')
+        .eq('status', 'pending')
+        .order('uploaded_at', { ascending: false });
+      setAccreditationDocs(docsData || []);
+
       // Calculate stats
       const totalInvestors = investorsData?.length || 0;
       const totalCapital = poolsData?.reduce((sum, p) => sum + (parseFloat(p.total_capital) || 0), 0) || 0;
@@ -98,6 +107,73 @@ export default function AdminInvestorDashboard() {
     } catch (error) {
       console.error('Error syncing transactions:', error);
       alert('Failed to sync: ' + error.message);
+    }
+  }
+
+  async function handleAccreditationReview(docId, investorId, status, notes = '') {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // Update document status
+      const { error: docError } = await supabase
+        .from('investor_documents')
+        .update({
+          status,
+          reviewed_by: user.id,
+          reviewed_at: new Date().toISOString(),
+          review_notes: notes,
+        })
+        .eq('id', docId);
+
+      if (docError) throw docError;
+
+      if (status === 'approved') {
+        // Check if all docs for this investor are approved
+        const { data: allDocs } = await supabase
+          .from('investor_documents')
+          .select('status')
+          .eq('investor_id', investorId);
+
+        const allApproved = allDocs?.every(d => d.id === docId ? true : d.status === 'approved');
+
+        if (allApproved) {
+          // Mark investor as accredited
+          const { error: invError } = await supabase
+            .from('investors')
+            .update({
+              accredited_investor: true,
+              accreditation_verified: true,
+              identity_verified: true,
+              accreditation_date: new Date().toISOString().split('T')[0],
+            })
+            .eq('id', investorId);
+
+          if (invError) throw invError;
+
+          // Send notification
+          await supabase.rpc('create_investor_notification', {
+            p_investor_id: investorId,
+            p_type: 'accreditation_approved',
+            p_title: 'Accreditation Approved',
+            p_message: 'Your accredited investor status has been verified. You now have full access to all investment features.',
+            p_action_url: '/investor/settings',
+          });
+        }
+      } else if (status === 'rejected') {
+        await supabase.rpc('create_investor_notification', {
+          p_investor_id: investorId,
+          p_type: 'accreditation_rejected',
+          p_title: 'Document Needs Attention',
+          p_message: `A document was rejected: ${notes || 'Please re-upload with valid documentation.'}`,
+          p_action_url: '/investor/accreditation',
+        });
+      }
+
+      alert(`Document ${status}`);
+      loadAdminData();
+    } catch (error) {
+      console.error('Error reviewing document:', error);
+      alert('Failed: ' + error.message);
     }
   }
 
@@ -182,7 +258,8 @@ export default function AdminInvestorDashboard() {
             { id: 'overview', label: 'Overview' },
             { id: 'investors', label: 'Investors' },
             { id: 'transfers', label: 'Transfers' },
-            { id: 'pools', label: 'Investment Pools' }
+            { id: 'pools', label: 'Investment Pools' },
+            { id: 'accreditation', label: `Accreditation (${accreditationDocs.length})` }
           ].map(tab => (
             <button
               key={tab.id}
@@ -467,6 +544,125 @@ export default function AdminInvestorDashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Accreditation Tab */}
+        {activeTab === 'accreditation' && (
+          <div className="space-y-6">
+            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <h2 className="text-xl font-bold text-white mb-4">Pending Accreditation Reviews</h2>
+              {accreditationDocs.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  <p>No documents pending review</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {accreditationDocs.map(doc => (
+                    <div key={doc.id} className="p-4 bg-slate-700/50 rounded-lg border border-slate-600">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <div className="text-white font-semibold">{doc.investors?.full_name}</div>
+                          <div className="text-slate-400 text-sm">{doc.investors?.email}</div>
+                        </div>
+                        <span className="text-xs px-2 py-1 rounded-full font-semibold text-amber-400 bg-amber-500/20">
+                          pending
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                          </svg>
+                          <div>
+                            <div className="text-white text-sm">{doc.file_name}</div>
+                            <div className="text-slate-400 text-xs">
+                              {doc.document_type.replace(/_/g, ' ')} | Uploaded {new Date(doc.uploaded_at).toLocaleDateString()}
+                              {doc.file_size ? ` | ${(doc.file_size / 1024).toFixed(0)} KB` : ''}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          {doc.file_url && (
+                            <a
+                              href={doc.file_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-semibold transition"
+                            >
+                              View
+                            </a>
+                          )}
+                          <button
+                            onClick={() => handleAccreditationReview(doc.id, doc.investor_id, 'approved')}
+                            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold transition"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => {
+                              const notes = prompt('Rejection reason:');
+                              if (notes !== null) handleAccreditationReview(doc.id, doc.investor_id, 'rejected', notes);
+                            }}
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Accredited Investors Summary */}
+            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <h2 className="text-xl font-bold text-white mb-4">Accreditation Status</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-slate-700">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Investor</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Method</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Accredited</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Verified</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700">
+                    {investors.map(inv => (
+                      <tr key={inv.id} className="hover:bg-slate-700/30">
+                        <td className="px-4 py-3">
+                          <div className="text-white font-medium">{inv.full_name}</div>
+                          <div className="text-slate-400 text-xs">{inv.email}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 capitalize">{inv.accreditation_method || '-'}</td>
+                        <td className="px-4 py-3">
+                          {inv.accredited_investor ? (
+                            <span className="text-green-400 text-sm font-semibold">Yes</span>
+                          ) : (
+                            <span className="text-slate-500 text-sm">No</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {inv.accreditation_verified ? (
+                            <span className="text-green-400 text-sm font-semibold">Verified</span>
+                          ) : inv.accreditation_method ? (
+                            <span className="text-amber-400 text-sm">Pending</span>
+                          ) : (
+                            <span className="text-slate-500 text-sm">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 text-sm">
+                          {inv.accreditation_date ? new Date(inv.accreditation_date).toLocaleDateString() : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 
