@@ -26,6 +26,10 @@ import DevConsolePage from './pages/DevConsolePage';
 import StateUpdatesPage from './pages/StateUpdatesPage';
 import DataImportPage from './pages/DataImportPage';
 import MarketplaceSettingsPage from './pages/MarketplaceSettingsPage';
+import InvestorLogin from './pages/InvestorLogin';
+import InvestorDashboard from './pages/InvestorDashboard';
+import InvestorPortfolio from './pages/InvestorPortfolio';
+import InvestorCapital from './pages/InvestorCapital';
 
 export default function App() {
   return (
@@ -36,6 +40,12 @@ export default function App() {
         <Route path="/employee-setup" element={<EmployeeSetupPage />} />
         <Route path="/embed/:dealerId" element={<EmbedInventory />} />
         <Route path="/find-rig/:dealerId" element={<EmbedFindRig />} />
+
+        {/* Investor Portal routes (no layout) */}
+        <Route path="/investor/login" element={<InvestorLogin />} />
+        <Route path="/investor/dashboard" element={<InvestorDashboard />} />
+        <Route path="/investor/portfolio" element={<InvestorPortfolio />} />
+        <Route path="/investor/capital" element={<InvestorCapital />} />
         
         {/* Protected routes with Layout */}
         <Route element={<Layout />}>
