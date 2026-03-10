@@ -37,6 +37,11 @@ import InvestorAccreditation from './pages/InvestorAccreditation';
 import InvestorAnalytics from './pages/InvestorAnalytics';
 import InvestorNotifications from './pages/InvestorNotifications';
 import AdminInvestorDashboard from './pages/AdminInvestorDashboard';
+import SMSPage from './pages/SMSPage';
+import AppointmentsPage from './pages/AppointmentsPage';
+import ESignaturePage from './pages/ESignaturePage';
+import DealerNotificationsPage from './pages/DealerNotificationsPage';
+import AdvancedAnalyticsPage from './pages/AdvancedAnalyticsPage';
 
 export default function App() {
   return (
@@ -85,6 +90,11 @@ export default function App() {
           <Route path="/admin/dev-console" element={<AdminDevConsole />} />
           <Route path="/admin/state-updates" element={<StateUpdatesPage />} />
           <Route path="/admin/investors" element={<AdminInvestorDashboard />} />
+          <Route path="/sms" element={<SMSPage />} />
+          <Route path="/appointments" element={<AppointmentsPage />} />
+          <Route path="/esignature" element={<ESignaturePage />} />
+          <Route path="/notifications" element={<DealerNotificationsPage />} />
+          <Route path="/analytics" element={<AdvancedAnalyticsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

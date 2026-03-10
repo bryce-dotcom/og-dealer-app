@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-03-10 (updated with Investor Portal Phase 6 tables)
+> **Last Updated:** 2026-03-10 (updated with Phase 7 dealer features)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 80
+> **Total Tables:** 87
 
 ---
 
@@ -106,6 +106,17 @@
 - [`message_history`](#message_history)
 - [`feedback`](#feedback) *
 - [`announcements`](#announcements)
+- [`sms_messages`](#sms_messages) *
+- [`sms_settings`](#sms_settings) *
+- [`customer_interactions`](#customer_interactions) *
+- [`dealer_notifications`](#dealer_notifications) *
+
+### Appointments & E-Signatures
+- [`appointments`](#appointments) *
+- [`esignature_requests`](#esignature_requests) *
+
+### Analytics
+- [`analytics_snapshots`](#analytics_snapshots) *
 
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
@@ -2118,3 +2129,176 @@
 | `metadata` | jsonb | YES | |
 | `transaction_date` | timestamptz | NO | |
 | `created_at` | timestamptz | YES | now() |
+
+---
+
+# Phase 7: Dealer Features
+
+## sms_messages (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `customer_id` | integer | YES | |
+| `direction` | text | NO | (outbound, inbound) |
+| `from_number` | text | NO | |
+| `to_number` | text | NO | |
+| `body` | text | NO | |
+| `status` | text | YES | queued (queued, sent, delivered, failed, received) |
+| `error_message` | text | YES | |
+| `provider` | text | YES | twilio |
+| `provider_message_id` | text | YES | |
+| `message_type` | text | YES | manual (manual, payment_reminder, appointment_reminder, follow_up, marketing, system) |
+| `related_id` | text | YES | |
+| `related_type` | text | YES | |
+| `sent_by` | integer | YES | |
+| `sent_by_name` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## sms_settings (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | UNIQUE |
+| `twilio_account_sid` | text | YES | |
+| `twilio_auth_token` | text | YES | |
+| `twilio_phone_number` | text | YES | |
+| `is_active` | boolean | YES | false |
+| `auto_payment_reminders` | boolean | YES | true |
+| `reminder_days_before` | integer | YES | 3 |
+| `auto_appointment_reminders` | boolean | YES | true |
+| `appointment_reminder_hours` | integer | YES | 24 |
+| `payment_reminder_template` | text | YES | (default template) |
+| `appointment_reminder_template` | text | YES | (default template) |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## customer_interactions (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `customer_id` | integer | NO | |
+| `interaction_type` | text | NO | (call, sms, email, visit, test_drive, quote, follow_up, note) |
+| `direction` | text | YES | (inbound, outbound) |
+| `summary` | text | NO | |
+| `details` | text | YES | |
+| `related_id` | text | YES | |
+| `related_type` | text | YES | |
+| `follow_up_date` | date | YES | |
+| `follow_up_completed` | boolean | YES | false |
+| `employee_id` | integer | YES | |
+| `employee_name` | text | YES | |
+| `duration_seconds` | integer | YES | |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## appointments (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `customer_id` | integer | YES | |
+| `customer_name` | text | YES | |
+| `customer_phone` | text | YES | |
+| `customer_email` | text | YES | |
+| `employee_id` | integer | YES | |
+| `employee_name` | text | YES | |
+| `appointment_type` | text | NO | (test_drive, sales_meeting, delivery, service, financing, other) |
+| `title` | text | NO | |
+| `description` | text | YES | |
+| `scheduled_date` | date | NO | |
+| `start_time` | time | NO | |
+| `end_time` | time | YES | |
+| `duration_minutes` | integer | YES | 30 |
+| `location` | text | YES | |
+| `vehicle_id` | text | YES | |
+| `deal_id` | integer | YES | |
+| `status` | text | YES | scheduled (scheduled, confirmed, completed, cancelled, no_show) |
+| `confirmation_sent` | boolean | YES | false |
+| `reminder_sent` | boolean | YES | false |
+| `notes` | text | YES | |
+| `cancellation_reason` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## dealer_notifications (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `user_id` | uuid | YES | |
+| `employee_id` | integer | YES | |
+| `type` | text | NO | (payment_due, payment_overdue, payment_received, deal_created, deal_status_changed, deal_document_ready, appointment_upcoming, appointment_confirmed, appointment_cancelled, inventory_low, inventory_aged, title_deadline, compliance_alert, esignature_completed, esignature_declined, sms_received, customer_inquiry, system, announcement) |
+| `priority` | text | YES | normal (low, normal, high, urgent) |
+| `title` | text | NO | |
+| `message` | text | NO | |
+| `action_url` | text | YES | |
+| `related_id` | text | YES | |
+| `related_type` | text | YES | |
+| `read` | boolean | YES | false |
+| `read_at` | timestamptz | YES | |
+| `dismissed` | boolean | YES | false |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## esignature_requests (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `deal_id` | integer | YES | |
+| `document_name` | text | NO | |
+| `document_url` | text | YES | |
+| `template_id` | text | YES | |
+| `signers` | jsonb | NO | |
+| `provider` | text | YES | docuseal |
+| `provider_submission_id` | text | YES | |
+| `provider_data` | jsonb | YES | |
+| `status` | text | YES | draft (draft, sent, partially_signed, completed, declined, expired, voided) |
+| `sent_at` | timestamptz | YES | |
+| `completed_at` | timestamptz | YES | |
+| `expires_at` | timestamptz | YES | |
+| `signed_document_url` | text | YES | |
+| `audit_trail` | jsonb | YES | |
+| `created_by` | integer | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## analytics_snapshots (Phase 7)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `snapshot_date` | date | NO | |
+| `total_vehicles` | integer | YES | 0 |
+| `total_inventory_value` | numeric(12,2) | YES | 0 |
+| `avg_days_on_lot` | numeric(5,1) | YES | 0 |
+| `vehicles_over_60_days` | integer | YES | 0 |
+| `vehicles_over_90_days` | integer | YES | 0 |
+| `vehicles_sold` | integer | YES | 0 |
+| `total_revenue` | numeric(12,2) | YES | 0 |
+| `total_profit` | numeric(12,2) | YES | 0 |
+| `avg_profit_per_vehicle` | numeric(10,2) | YES | 0 |
+| `avg_days_to_sell` | numeric(5,1) | YES | 0 |
+| `active_loans` | integer | YES | 0 |
+| `total_loan_balance` | numeric(12,2) | YES | 0 |
+| `payments_collected` | numeric(12,2) | YES | 0 |
+| `payments_overdue` | integer | YES | 0 |
+| `delinquency_rate` | numeric(5,2) | YES | 0 |
+| `total_customers` | integer | YES | 0 |
+| `new_customers` | integer | YES | 0 |
+| `customers_looking` | integer | YES | 0 |
+| `total_expenses` | numeric(12,2) | YES | 0 |
+| `net_income` | numeric(12,2) | YES | 0 |
+| `created_at` | timestamptz | YES | now() |
+
+> **UNIQUE constraint:** `(dealer_id, snapshot_date)`
