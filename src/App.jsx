@@ -47,6 +47,11 @@ import MarketplaceListingsPage from './pages/MarketplaceListingsPage';
 import CRMWorkflowsPage from './pages/CRMWorkflowsPage';
 import CustomerPortalPage from './pages/CustomerPortalPage';
 import LeadsPage from './pages/LeadsPage';
+import ReconditioningPage from './pages/ReconditioningPage';
+import VehicleTrackingPage from './pages/VehicleTrackingPage';
+import TradeInsPage from './pages/TradeInsPage';
+import DealTimelinePage from './pages/DealTimelinePage';
+import VehicleDetailPage from './pages/VehicleDetailPage';
 
 export default function App() {
   return (
@@ -105,6 +110,11 @@ export default function App() {
           <Route path="/crm-workflows" element={<CRMWorkflowsPage />} />
           <Route path="/customer-portal" element={<CustomerPortalPage />} />
           <Route path="/leads" element={<LeadsPage />} />
+          <Route path="/reconditioning" element={<ReconditioningPage />} />
+          <Route path="/vehicle-tracking" element={<VehicleTrackingPage />} />
+          <Route path="/trade-ins" element={<TradeInsPage />} />
+          <Route path="/deal-timeline" element={<DealTimelinePage />} />
+          <Route path="/vehicle/:id" element={<VehicleDetailPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

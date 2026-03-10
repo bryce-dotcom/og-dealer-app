@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-03-10 (updated with Phase 8 features)
+> **Last Updated:** 2026-03-10 (updated with Phase 9 features)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 95
+> **Total Tables:** 101
 
 ---
 
@@ -135,6 +135,20 @@
 
 ### Leads (Phase 8)
 - [`leads`](#leads) *
+
+### Reconditioning (Phase 9)
+- [`reconditioning_tasks`](#reconditioning_tasks) *
+- [`reconditioning_templates`](#reconditioning_templates) *
+
+### GPS Tracking (Phase 9)
+- [`vehicle_gps_tracking`](#vehicle_gps_tracking) *
+- [`gps_location_history`](#gps_location_history) *
+
+### Trade-Ins (Phase 9)
+- [`trade_ins`](#trade_ins) *
+
+### Deal Timeline (Phase 9)
+- [`deal_timeline`](#deal_timeline) *
 
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
@@ -2522,3 +2536,170 @@
 | `metadata` | jsonb | YES | |
 | `created_at` | timestamptz | YES | now() |
 | `updated_at` | timestamptz | YES | now() |
+
+---
+
+# Reconditioning (Phase 9)
+
+## reconditioning_tasks (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `task_type` | text | NO | (inspection, mechanical, body_work, paint, interior, detail, tires, glass, electrical, emissions, safety, cosmetic, custom) |
+| `title` | text | NO | |
+| `description` | text | YES | |
+| `priority` | text | YES | normal (low, normal, high, urgent) |
+| `status` | text | YES | pending (pending, in_progress, completed, skipped, blocked) |
+| `started_at` | timestamptz | YES | |
+| `completed_at` | timestamptz | YES | |
+| `assigned_to` | integer | YES | |
+| `assigned_name` | text | YES | |
+| `vendor_name` | text | YES | |
+| `estimated_cost` | numeric(10,2) | YES | 0 |
+| `actual_cost` | numeric(10,2) | YES | |
+| `parts_cost` | numeric(10,2) | YES | 0 |
+| `labor_cost` | numeric(10,2) | YES | 0 |
+| `labor_hours` | numeric(5,2) | YES | |
+| `before_photos` | jsonb | YES | |
+| `after_photos` | jsonb | YES | |
+| `notes` | text | YES | |
+| `completion_notes` | text | YES | |
+| `sort_order` | integer | YES | 0 |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## reconditioning_templates (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `name` | text | NO | |
+| `description` | text | YES | |
+| `vehicle_type` | text | YES | |
+| `tasks` | jsonb | NO | |
+| `is_default` | boolean | YES | false |
+| `created_at` | timestamptz | YES | now() |
+
+---
+
+# GPS Tracking (Phase 9)
+
+## vehicle_gps_tracking (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `loan_id` | integer | YES | |
+| `device_id` | text | YES | |
+| `device_type` | text | YES | gps (gps, obd, hardwired, manual) |
+| `provider` | text | YES | |
+| `current_lat` | numeric(10,7) | YES | |
+| `current_lng` | numeric(10,7) | YES | |
+| `current_address` | text | YES | |
+| `last_ping_at` | timestamptz | YES | |
+| `speed` | numeric(5,1) | YES | 0 |
+| `heading` | numeric(5,1) | YES | |
+| `ignition_on` | boolean | YES | false |
+| `geofence_enabled` | boolean | YES | false |
+| `geofence_center_lat` | numeric(10,7) | YES | |
+| `geofence_center_lng` | numeric(10,7) | YES | |
+| `geofence_radius_miles` | numeric(5,1) | YES | 50 |
+| `geofence_alert_sent` | boolean | YES | false |
+| `active` | boolean | YES | true |
+| `battery_level` | integer | YES | |
+| `starter_disabled` | boolean | YES | false |
+| `last_known_mileage` | integer | YES | |
+| `mileage_limit` | integer | YES | |
+| `mileage_alert_sent` | boolean | YES | false |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## gps_location_history (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `tracking_id` | uuid | NO | |
+| `dealer_id` | integer | NO | |
+| `lat` | numeric(10,7) | NO | |
+| `lng` | numeric(10,7) | NO | |
+| `address` | text | YES | |
+| `speed` | numeric(5,1) | YES | |
+| `heading` | numeric(5,1) | YES | |
+| `ignition_on` | boolean | YES | |
+| `event_type` | text | YES | ping (ping, ignition_on, ignition_off, geofence_exit, geofence_enter, speed_alert, tow_alert) |
+| `recorded_at` | timestamptz | YES | now() |
+
+---
+
+# Trade-Ins (Phase 9)
+
+## trade_ins (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `deal_id` | integer | YES | |
+| `customer_id` | integer | YES | |
+| `vin` | text | YES | |
+| `year` | integer | YES | |
+| `make` | text | YES | |
+| `model` | text | YES | |
+| `trim` | text | YES | |
+| `color` | text | YES | |
+| `mileage` | integer | YES | |
+| `condition` | text | YES | good (excellent, good, fair, poor, salvage) |
+| `kbb_value` | numeric(10,2) | YES | |
+| `nada_value` | numeric(10,2) | YES | |
+| `market_value` | numeric(10,2) | YES | |
+| `acv` | numeric(10,2) | YES | |
+| `offered_value` | numeric(10,2) | YES | |
+| `agreed_value` | numeric(10,2) | YES | |
+| `has_lien` | boolean | YES | false |
+| `lien_holder` | text | YES | |
+| `payoff_amount` | numeric(10,2) | YES | |
+| `payoff_good_through` | date | YES | |
+| `negative_equity` | numeric(10,2) | YES | |
+| `payoff_verified` | boolean | YES | false |
+| `appraised_by` | integer | YES | |
+| `appraised_at` | timestamptz | YES | |
+| `appraisal_notes` | text | YES | |
+| `appraisal_photos` | jsonb | YES | |
+| `checklist` | jsonb | YES | |
+| `status` | text | YES | pending (pending, appraised, offered, accepted, declined, completed) |
+| `disposition` | text | YES | (retail, wholesale, auction, parts, pending) |
+| `added_to_inventory` | boolean | YES | false |
+| `inventory_id` | text | YES | |
+| `notes` | text | YES | |
+| `metadata` | jsonb | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+---
+
+# Deal Timeline (Phase 9)
+
+## deal_timeline (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `deal_id` | integer | NO | |
+| `event_type` | text | NO | (created, status_changed, price_changed, payment_received, document_generated, document_signed, trade_in_added, financing_approved, financing_denied, customer_changed, note_added, appointment_set, test_drive, delivery, title_sent, title_received, cancelled, custom) |
+| `title` | text | NO | |
+| `description` | text | YES | |
+| `old_value` | text | YES | |
+| `new_value` | text | YES | |
+| `metadata` | jsonb | YES | |
+| `employee_id` | integer | YES | |
+| `employee_name` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
