@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import PlaidLinkButton from '../components/PlaidLinkButton';
 
 export default function InvestorCapital() {
   const navigate = useNavigate();
@@ -248,9 +249,13 @@ export default function InvestorCapital() {
           ) : (
             <div className="text-center py-6">
               <div className="text-blue-200 mb-4">No bank account linked</div>
-              <button className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition">
-                Link Bank Account with Plaid
-              </button>
+              <PlaidLinkButton
+                investorId={investor?.id}
+                onSuccess={() => {
+                  alert('Bank account linked! Reloading...');
+                  window.location.reload();
+                }}
+              />
             </div>
           )}
         </div>

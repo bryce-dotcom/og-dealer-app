@@ -30,6 +30,7 @@ import InvestorLogin from './pages/InvestorLogin';
 import InvestorDashboard from './pages/InvestorDashboard';
 import InvestorPortfolio from './pages/InvestorPortfolio';
 import InvestorCapital from './pages/InvestorCapital';
+import InvestorBankAccount from './pages/InvestorBankAccount';
 
 export default function App() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/investor/dashboard" element={<InvestorDashboard />} />
         <Route path="/investor/portfolio" element={<InvestorPortfolio />} />
         <Route path="/investor/capital" element={<InvestorCapital />} />
+        <Route path="/investor/bank-account" element={<InvestorBankAccount />} />
         
         {/* Protected routes with Layout */}
         <Route element={<Layout />}>
