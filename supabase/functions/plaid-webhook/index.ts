@@ -109,6 +109,26 @@ async function handleTransferWebhook(supabase: any, webhook: any) {
     } else if (capitalRecord.transaction_type === 'withdrawal') {
       await processWithdrawal(supabase, capitalRecord);
     }
+
+    // Send completion notification
+    await sendNotification(supabase, capitalRecord.investor_id, 'transfer_completed', {
+      type: capitalRecord.transaction_type,
+      amount: capitalRecord.amount,
+      transfer_id: transfer_id,
+      new_balance: 0, // Will be updated below
+      total_invested: 0,
+      lifetime_roi: 0
+    });
+  }
+
+  // If transfer failed, send failure notification
+  if (newStatus === 'failed') {
+    await sendNotification(supabase, capitalRecord.investor_id, 'transfer_failed', {
+      type: capitalRecord.transaction_type,
+      amount: capitalRecord.amount,
+      transfer_id: transfer_id,
+      failure_reason: failure_reason
+    });
   }
 
   return new Response(JSON.stringify({ received: true, processed: shouldProcess }), {
@@ -289,4 +309,33 @@ async function handleItemWebhook(supabase: any, webhook: any) {
   return new Response(JSON.stringify({ received: true }), {
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+async function sendNotification(supabase: any, investor_id: string, notification_type: string, data: any) {
+  try {
+    // Get updated investor data
+    const { data: investor } = await supabase
+      .from('investors')
+      .select('*')
+      .eq('id', investor_id)
+      .single();
+
+    if (investor) {
+      data.new_balance = investor.available_balance;
+      data.total_invested = investor.total_invested;
+      data.lifetime_roi = investor.lifetime_roi;
+    }
+
+    // Call notification function
+    await supabase.functions.invoke('send-investor-notification', {
+      body: {
+        investor_id: investor_id,
+        notification_type: notification_type,
+        data: data
+      }
+    });
+  } catch (error) {
+    console.error('Error sending notification:', error);
+    // Don't fail the webhook if notification fails
+  }
 }

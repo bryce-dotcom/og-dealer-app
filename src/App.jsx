@@ -31,6 +31,7 @@ import InvestorDashboard from './pages/InvestorDashboard';
 import InvestorPortfolio from './pages/InvestorPortfolio';
 import InvestorCapital from './pages/InvestorCapital';
 import InvestorBankAccount from './pages/InvestorBankAccount';
+import AdminInvestorDashboard from './pages/AdminInvestorDashboard';
 
 export default function App() {
   return (
@@ -73,6 +74,7 @@ export default function App() {
           <Route path="/dev" element={<DevConsolePage />} />
           <Route path="/admin/dev-console" element={<AdminDevConsole />} />
           <Route path="/admin/state-updates" element={<StateUpdatesPage />} />
+          <Route path="/admin/investors" element={<AdminInvestorDashboard />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -161,7 +161,29 @@ serve(async (req) => {
       );
     }
 
-    // Step 4: Return success response
+    // Step 4: Send notification email
+    const estimatedSettlement = addBusinessDays(new Date(), transfer_type === 'deposit' ? 4 : 3);
+
+    try {
+      await supabase.functions.invoke('send-investor-notification', {
+        body: {
+          investor_id: investor_id,
+          notification_type: 'transfer_initiated',
+          data: {
+            type: transfer_type,
+            amount: amount,
+            transfer_id: transfer.id,
+            bank_name: investor.linked_bank_account?.name,
+            estimated_settlement: new Date(estimatedSettlement).toLocaleDateString()
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error sending notification:', error);
+      // Don't fail the transfer if notification fails
+    }
+
+    // Step 5: Return success response
     return new Response(
       JSON.stringify({
         success: true,
@@ -171,7 +193,7 @@ serve(async (req) => {
           amount: amount,
           type: transfer_type,
           created: transfer.created,
-          estimated_settlement: addBusinessDays(new Date(), 3) // ACH typically takes 3-5 business days
+          estimated_settlement: estimatedSettlement
         },
         capital_record_id: capitalRecord.id
       }),
