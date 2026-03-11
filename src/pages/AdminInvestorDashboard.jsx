@@ -6,7 +6,7 @@ import PlaidLinkButton from '../components/PlaidLinkButton';
 export default function AdminInvestorDashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview'); // overview, investors, transfers, pools, accreditation
+  const [activeTab, setActiveTab] = useState('overview');
 
   const [stats, setStats] = useState(null);
   const [investors, setInvestors] = useState([]);
@@ -15,29 +15,59 @@ export default function AdminInvestorDashboard() {
   const [selectedPool, setSelectedPool] = useState(null);
   const [accreditationDocs, setAccreditationDocs] = useState([]);
 
+  // Invite form state
+  const [inviteForm, setInviteForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    pool_id: '',
+    investor_profit_share: '',
+    platform_fee_share: '',
+    dealer_profit_share: '',
+    min_investment: '',
+    notes: '',
+  });
+  const [showPreview, setShowPreview] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
+
   useEffect(() => {
     loadAdminData();
   }, []);
+
+  // When a pool is selected in the invite form, pre-fill its terms
+  useEffect(() => {
+    if (inviteForm.pool_id) {
+      const pool = pools.find(p => p.id === inviteForm.pool_id);
+      if (pool) {
+        setInviteForm(prev => ({
+          ...prev,
+          investor_profit_share: pool.investor_profit_share ?? 60,
+          platform_fee_share: pool.platform_fee_share ?? 20,
+          dealer_profit_share: pool.dealer_profit_share ?? 20,
+          min_investment: pool.min_investment ?? 10000,
+        }));
+      }
+    }
+  }, [inviteForm.pool_id, pools]);
 
   async function loadAdminData() {
     try {
       setLoading(true);
 
-      // Check if user is admin (has dealer access)
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         navigate('/login');
         return;
       }
 
-      // Load investors
       const { data: investorsData } = await supabase
         .from('investors')
         .select('*')
         .order('created_at', { ascending: false });
       setInvestors(investorsData || []);
 
-      // Load pools
       const { data: poolsData } = await supabase
         .from('investment_pools')
         .select('*')
@@ -47,7 +77,6 @@ export default function AdminInvestorDashboard() {
         setSelectedPool(poolsData[0]);
       }
 
-      // Load recent transfers
       const { data: transfersData } = await supabase
         .from('investor_capital')
         .select(`
@@ -58,7 +87,6 @@ export default function AdminInvestorDashboard() {
         .limit(50);
       setTransfers(transfersData || []);
 
-      // Load accreditation documents pending review
       const { data: docsData } = await supabase
         .from('investor_documents')
         .select('*, investors(full_name, email)')
@@ -66,7 +94,6 @@ export default function AdminInvestorDashboard() {
         .order('uploaded_at', { ascending: false });
       setAccreditationDocs(docsData || []);
 
-      // Calculate stats
       const totalInvestors = investorsData?.length || 0;
       const totalCapital = poolsData?.reduce((sum, p) => sum + (parseFloat(p.total_capital) || 0), 0) || 0;
       const deployedCapital = poolsData?.reduce((sum, p) => sum + (parseFloat(p.deployed_capital) || 0), 0) || 0;
@@ -99,7 +126,7 @@ export default function AdminInvestorDashboard() {
       if (error) throw error;
 
       if (data.success) {
-        alert(`✅ Sync complete!\n\nNew: ${data.new_count}\nUpdated: ${data.updated_count}\nBalance: $${data.balance?.toLocaleString()}`);
+        alert(`Sync complete!\n\nNew: ${data.new_count}\nUpdated: ${data.updated_count}\nBalance: $${data.balance?.toLocaleString()}`);
         loadAdminData();
       } else {
         throw new Error(data.error);
@@ -114,7 +141,6 @@ export default function AdminInvestorDashboard() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Update document status
       const { error: docError } = await supabase
         .from('investor_documents')
         .update({
@@ -128,7 +154,6 @@ export default function AdminInvestorDashboard() {
       if (docError) throw docError;
 
       if (status === 'approved') {
-        // Check if all docs for this investor are approved
         const { data: allDocs } = await supabase
           .from('investor_documents')
           .select('status')
@@ -137,7 +162,6 @@ export default function AdminInvestorDashboard() {
         const allApproved = allDocs?.every(d => d.id === docId ? true : d.status === 'approved');
 
         if (allApproved) {
-          // Mark investor as accredited
           const { error: invError } = await supabase
             .from('investors')
             .update({
@@ -150,7 +174,6 @@ export default function AdminInvestorDashboard() {
 
           if (invError) throw invError;
 
-          // Send notification
           await supabase.rpc('create_investor_notification', {
             p_investor_id: investorId,
             p_type: 'accreditation_approved',
@@ -177,6 +200,79 @@ export default function AdminInvestorDashboard() {
     }
   }
 
+  async function handleSendInvite() {
+    if (!inviteForm.full_name || !inviteForm.email) {
+      alert('Please enter at least a name and email.');
+      return;
+    }
+
+    try {
+      setInviteSending(true);
+      const inviteToken = crypto.randomUUID();
+
+      const inviteNotes = JSON.stringify({
+        invite_token: inviteToken,
+        pool_id: inviteForm.pool_id || null,
+        custom_terms: {
+          investor_profit_share: Number(inviteForm.investor_profit_share) || 60,
+          platform_fee_share: Number(inviteForm.platform_fee_share) || 20,
+          dealer_profit_share: Number(inviteForm.dealer_profit_share) || 20,
+          min_investment: Number(inviteForm.min_investment) || 10000,
+        },
+        special_notes: inviteForm.notes || '',
+        invited_at: new Date().toISOString(),
+      });
+
+      const { error } = await supabase
+        .from('investors')
+        .insert({
+          email: inviteForm.email,
+          full_name: inviteForm.full_name,
+          phone: inviteForm.phone || null,
+          status: 'invited',
+          notes: inviteNotes,
+        });
+
+      if (error) throw error;
+
+      // If a pool was selected, we'll link them after they sign up
+      const link = `${window.location.origin}/investor/login?invite=${inviteToken}`;
+      setInviteLink(link);
+      setShowPreview(false);
+
+      // Reload data
+      loadAdminData();
+    } catch (error) {
+      console.error('Error sending invite:', error);
+      alert('Failed to create invite: ' + error.message);
+    } finally {
+      setInviteSending(false);
+    }
+  }
+
+  function handleCopyLink() {
+    navigator.clipboard.writeText(inviteLink);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2000);
+  }
+
+  function resetInviteForm() {
+    setInviteForm({
+      full_name: '',
+      email: '',
+      phone: '',
+      pool_id: '',
+      investor_profit_share: '',
+      platform_fee_share: '',
+      dealer_profit_share: '',
+      min_investment: '',
+      notes: '',
+    });
+    setShowPreview(false);
+    setInviteLink('');
+    setInviteCopied(false);
+  }
+
   function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -192,10 +288,16 @@ export default function AdminInvestorDashboard() {
       case 'pending': return 'text-amber-400 bg-amber-500/20';
       case 'failed': return 'text-red-400 bg-red-500/20';
       case 'active': return 'text-green-400 bg-green-500/20';
+      case 'invited': return 'text-purple-400 bg-purple-500/20';
       case 'suspended': return 'text-amber-400 bg-amber-500/20';
       case 'closed': return 'text-slate-400 bg-slate-500/20';
       default: return 'text-slate-400 bg-slate-500/20';
     }
+  }
+
+  function getSelectedPoolForPreview() {
+    if (!inviteForm.pool_id) return null;
+    return pools.find(p => p.id === inviteForm.pool_id) || null;
   }
 
   if (loading) {
@@ -220,7 +322,7 @@ export default function AdminInvestorDashboard() {
             onClick={() => navigate('/dashboard')}
             className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
           >
-            ← Back to Dashboard
+            &larr; Back to Dashboard
           </button>
         </div>
 
@@ -253,9 +355,10 @@ export default function AdminInvestorDashboard() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-slate-700">
+        <div className="flex gap-2 mb-6 border-b border-slate-700 overflow-x-auto">
           {[
             { id: 'overview', label: 'Overview' },
+            { id: 'invite', label: 'Invite Investor', highlight: true },
             { id: 'investors', label: 'Investors' },
             { id: 'transfers', label: 'Transfers' },
             { id: 'pools', label: 'Investment Pools' },
@@ -264,12 +367,17 @@ export default function AdminInvestorDashboard() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-3 font-semibold transition border-b-2 ${
+              className={`px-6 py-3 font-semibold transition border-b-2 whitespace-nowrap ${
                 activeTab === tab.id
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-white'
+                  ? tab.highlight ? 'border-green-500 text-green-400' : 'border-blue-500 text-blue-400'
+                  : tab.highlight ? 'border-transparent text-green-400/60 hover:text-green-400' : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
+              {tab.highlight && (
+                <svg className="w-4 h-4 inline-block mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              )}
               {tab.label}
             </button>
           ))}
@@ -278,7 +386,6 @@ export default function AdminInvestorDashboard() {
         {/* Overview Tab */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Recent Transfers */}
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <h2 className="text-xl font-bold text-white mb-4">Recent Transfers</h2>
               <div className="space-y-2">
@@ -286,7 +393,7 @@ export default function AdminInvestorDashboard() {
                   <div key={tx.id} className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg">
                     <div>
                       <div className="text-white font-medium">
-                        {tx.investors?.full_name || 'Unknown'} • {tx.transaction_type}
+                        {tx.investors?.full_name || 'Unknown'} &bull; {tx.transaction_type}
                       </div>
                       <div className="text-slate-400 text-sm">
                         {new Date(tx.initiated_at).toLocaleDateString()}
@@ -303,7 +410,6 @@ export default function AdminInvestorDashboard() {
               </div>
             </div>
 
-            {/* Active Pools */}
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <h2 className="text-xl font-bold text-white mb-4">Investment Pools</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -331,12 +437,330 @@ export default function AdminInvestorDashboard() {
                     </div>
                     <div className="mt-3 pt-3 border-t border-slate-600 text-xs text-slate-400">
                       <div>Vehicles: {pool.total_vehicles_funded || 0} funded, {pool.total_vehicles_sold || 0} sold</div>
-                      <div>ROI: {pool.lifetime_roi?.toFixed(2) || 0}% • Avg Days: {pool.avg_days_to_sell?.toFixed(0) || 0}</div>
+                      <div>ROI: {pool.lifetime_roi?.toFixed(2) || 0}% &bull; Avg Days: {pool.avg_days_to_sell?.toFixed(0) || 0}</div>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Invite Investor Tab */}
+        {activeTab === 'invite' && (
+          <div className="max-w-4xl mx-auto">
+            {inviteLink ? (
+              /* Success state - show the invite link */
+              <div className="bg-slate-800 rounded-xl p-8 border border-slate-700 text-center">
+                <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">Invite Created!</h2>
+                <p className="text-slate-400 mb-6">
+                  An investor record for <span className="text-white font-semibold">{inviteForm.full_name}</span> has been created.
+                  Share the link below to get them started.
+                </p>
+
+                <div className="bg-slate-900 rounded-lg p-4 mb-6 flex items-center gap-3">
+                  <input
+                    type="text"
+                    readOnly
+                    value={inviteLink}
+                    className="flex-1 bg-transparent text-blue-400 text-sm font-mono outline-none"
+                  />
+                  <button
+                    onClick={handleCopyLink}
+                    className={`px-4 py-2 rounded-lg font-semibold text-sm transition whitespace-nowrap ${
+                      inviteCopied
+                        ? 'bg-green-600 text-white'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {inviteCopied ? 'Copied!' : 'Copy Link'}
+                  </button>
+                </div>
+
+                <div className="bg-slate-700/30 rounded-lg p-4 mb-6 text-left">
+                  <h3 className="text-white font-semibold mb-2 text-sm">What happens next:</h3>
+                  <ol className="text-slate-400 text-sm space-y-1.5 list-decimal list-inside">
+                    <li>Share this link with {inviteForm.full_name} via text, email, or in person</li>
+                    <li>They will see a welcome page explaining the investment opportunity</li>
+                    <li>They create an account (email is pre-filled)</li>
+                    <li>They link their bank account and fund their investment</li>
+                  </ol>
+                </div>
+
+                <button
+                  onClick={resetInviteForm}
+                  className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+                >
+                  Invite Another Investor
+                </button>
+              </div>
+            ) : showPreview ? (
+              /* Preview of what the investor will see */
+              <div className="space-y-6">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-xl font-bold text-white">Preview: What the Investor Will See</h2>
+                  <button
+                    onClick={() => setShowPreview(false)}
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-semibold transition"
+                  >
+                    &larr; Back to Form
+                  </button>
+                </div>
+
+                {/* Mock investor welcome page */}
+                <div className="bg-gradient-to-br from-slate-900 via-blue-900/50 to-slate-900 rounded-2xl border border-blue-500/30 overflow-hidden">
+                  <div className="p-8 text-center border-b border-blue-500/20">
+                    <div className="text-blue-400 text-sm font-semibold tracking-widest uppercase mb-3">You've been invited</div>
+                    <h1 className="text-3xl font-bold text-white mb-2">
+                      Invest with OG DiX Motor Club
+                    </h1>
+                    <p className="text-blue-200 text-lg max-w-lg mx-auto">
+                      Think of it like opening a joint bank account - you fund it, we buy and sell vehicles, you earn profit.
+                    </p>
+                  </div>
+
+                  <div className="p-8">
+                    {/* Steps */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                      <div className="text-center p-4">
+                        <div className="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                          <span className="text-blue-400 font-bold text-lg">1</span>
+                        </div>
+                        <h3 className="text-white font-semibold mb-1">Create Account</h3>
+                        <p className="text-slate-400 text-sm">Sign up in 30 seconds with your email</p>
+                      </div>
+                      <div className="text-center p-4">
+                        <div className="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                          <span className="text-blue-400 font-bold text-lg">2</span>
+                        </div>
+                        <h3 className="text-white font-semibold mb-1">Link Bank & Fund</h3>
+                        <p className="text-slate-400 text-sm">Securely connect your bank and transfer funds</p>
+                      </div>
+                      <div className="text-center p-4">
+                        <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                          <span className="text-green-400 font-bold text-lg">3</span>
+                        </div>
+                        <h3 className="text-white font-semibold mb-1">Watch It Grow</h3>
+                        <p className="text-slate-400 text-sm">Track your returns in real-time on your dashboard</p>
+                      </div>
+                    </div>
+
+                    {/* Terms */}
+                    <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                      <h3 className="text-white font-bold text-lg mb-4">Your Investment Terms</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                          <div className="text-slate-400 text-sm">Your Profit Share</div>
+                          <div className="text-2xl font-bold text-blue-400">{inviteForm.investor_profit_share || 60}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-sm">Platform Fee</div>
+                          <div className="text-2xl font-bold text-amber-400">{inviteForm.platform_fee_share || 20}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-sm">Dealer Share</div>
+                          <div className="text-2xl font-bold text-green-400">{inviteForm.dealer_profit_share || 20}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-sm">Min. Investment</div>
+                          <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
+                        </div>
+                      </div>
+                      {getSelectedPoolForPreview() && (
+                        <div className="mt-4 pt-4 border-t border-slate-700">
+                          <div className="text-slate-400 text-sm">Investment Pool</div>
+                          <div className="text-white font-semibold">{getSelectedPoolForPreview().pool_name}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Send button */}
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setShowPreview(false)}
+                    className="flex-1 px-6 py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+                  >
+                    Edit Invite
+                  </button>
+                  <button
+                    onClick={handleSendInvite}
+                    disabled={inviteSending}
+                    className="flex-1 px-6 py-4 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-lg font-bold text-lg transition"
+                  >
+                    {inviteSending ? 'Creating Invite...' : 'Send Invite'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Invite form */
+              <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                <div className="p-6 border-b border-slate-700">
+                  <h2 className="text-2xl font-bold text-white mb-1">Invite a New Investor</h2>
+                  <p className="text-slate-400">Set up an investor profile and generate a unique invite link they can use to sign up.</p>
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {/* Contact Info */}
+                  <div>
+                    <h3 className="text-white font-semibold mb-4 text-lg">Contact Information</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Full Name *</label>
+                        <input
+                          type="text"
+                          value={inviteForm.full_name}
+                          onChange={e => setInviteForm(prev => ({ ...prev, full_name: e.target.value }))}
+                          placeholder="John Smith"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Email *</label>
+                        <input
+                          type="email"
+                          value={inviteForm.email}
+                          onChange={e => setInviteForm(prev => ({ ...prev, email: e.target.value }))}
+                          placeholder="investor@example.com"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Phone (optional)</label>
+                        <input
+                          type="tel"
+                          value={inviteForm.phone}
+                          onChange={e => setInviteForm(prev => ({ ...prev, phone: e.target.value }))}
+                          placeholder="(555) 123-4567"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Investment Pool</label>
+                        <select
+                          value={inviteForm.pool_id}
+                          onChange={e => setInviteForm(prev => ({ ...prev, pool_id: e.target.value }))}
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        >
+                          <option value="">Select a pool...</option>
+                          {pools.map(pool => (
+                            <option key={pool.id} value={pool.id}>
+                              {pool.pool_name} ({pool.status})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Custom Terms */}
+                  <div>
+                    <h3 className="text-white font-semibold mb-4 text-lg">Custom Terms</h3>
+                    <p className="text-slate-400 text-sm mb-4">
+                      These are pre-filled from the selected pool defaults. Adjust as needed for this investor.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Investor Profit %</label>
+                        <input
+                          type="number"
+                          value={inviteForm.investor_profit_share}
+                          onChange={e => setInviteForm(prev => ({ ...prev, investor_profit_share: e.target.value }))}
+                          placeholder="60"
+                          min="0"
+                          max="100"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Platform Fee %</label>
+                        <input
+                          type="number"
+                          value={inviteForm.platform_fee_share}
+                          onChange={e => setInviteForm(prev => ({ ...prev, platform_fee_share: e.target.value }))}
+                          placeholder="20"
+                          min="0"
+                          max="100"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Dealer Share %</label>
+                        <input
+                          type="number"
+                          value={inviteForm.dealer_profit_share}
+                          onChange={e => setInviteForm(prev => ({ ...prev, dealer_profit_share: e.target.value }))}
+                          placeholder="20"
+                          min="0"
+                          max="100"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Min Investment ($)</label>
+                        <input
+                          type="number"
+                          value={inviteForm.min_investment}
+                          onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
+                          placeholder="10000"
+                          min="0"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Percentage validation */}
+                    {(Number(inviteForm.investor_profit_share || 0) + Number(inviteForm.platform_fee_share || 0) + Number(inviteForm.dealer_profit_share || 0)) !== 100 &&
+                      inviteForm.investor_profit_share !== '' && (
+                      <div className="mt-3 text-amber-400 text-sm">
+                        Note: Profit shares total {Number(inviteForm.investor_profit_share || 0) + Number(inviteForm.platform_fee_share || 0) + Number(inviteForm.dealer_profit_share || 0)}% (should be 100%)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block text-slate-300 text-sm font-semibold mb-2">Notes / Special Terms</label>
+                    <textarea
+                      value={inviteForm.notes}
+                      onChange={e => setInviteForm(prev => ({ ...prev, notes: e.target.value }))}
+                      placeholder="Any special terms, agreements, or notes about this investor..."
+                      rows={3}
+                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none resize-none"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-4 pt-4 border-t border-slate-700">
+                    <button
+                      onClick={() => {
+                        if (!inviteForm.full_name || !inviteForm.email) {
+                          alert('Please enter at least a name and email.');
+                          return;
+                        }
+                        setShowPreview(true);
+                      }}
+                      className="flex-1 px-6 py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+                    >
+                      Preview Invite
+                    </button>
+                    <button
+                      onClick={handleSendInvite}
+                      disabled={inviteSending || !inviteForm.full_name || !inviteForm.email}
+                      className="flex-1 px-6 py-4 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-lg font-bold text-lg transition"
+                    >
+                      {inviteSending ? 'Creating...' : 'Send Invite'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -373,7 +797,7 @@ export default function AdminInvestorDashboard() {
                       </td>
                       <td className="px-6 py-4">
                         {investor.linked_bank_account ? (
-                          <span className="text-green-400">✓ Linked</span>
+                          <span className="text-green-400">Linked</span>
                         ) : (
                           <span className="text-slate-400">Not linked</span>
                         )}
@@ -445,7 +869,6 @@ export default function AdminInvestorDashboard() {
                   </span>
                 </div>
 
-                {/* Capital Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                   <div className="bg-slate-700/50 rounded-lg p-4">
                     <div className="text-slate-400 text-sm mb-1">Total Capital</div>
@@ -465,7 +888,6 @@ export default function AdminInvestorDashboard() {
                   </div>
                 </div>
 
-                {/* Performance Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                   <div className="bg-slate-700/50 rounded-lg p-4">
                     <div className="text-slate-400 text-sm mb-1">Total Profit</div>
@@ -485,7 +907,6 @@ export default function AdminInvestorDashboard() {
                   </div>
                 </div>
 
-                {/* Profit Split */}
                 <div className="bg-slate-700/30 rounded-lg p-4 mb-6">
                   <h3 className="text-white font-semibold mb-3">Profit Split Terms</h3>
                   <div className="grid grid-cols-3 gap-4 text-sm">
@@ -504,7 +925,6 @@ export default function AdminInvestorDashboard() {
                   </div>
                 </div>
 
-                {/* Bank Account */}
                 <div className="bg-slate-700/30 rounded-lg p-4">
                   <h3 className="text-white font-semibold mb-3">Pool Bank Account</h3>
                   {pool.plaid_item_id ? (
@@ -616,7 +1036,6 @@ export default function AdminInvestorDashboard() {
               )}
             </div>
 
-            {/* Accredited Investors Summary */}
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <h2 className="text-xl font-bold text-white mb-4">Accreditation Status</h2>
               <div className="overflow-x-auto">
