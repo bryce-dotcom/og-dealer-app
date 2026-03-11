@@ -2,6 +2,7 @@ import { useState, useEffect, createContext, useContext } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import { getPermissions, NAV_PERMISSION_MAP } from '../lib/permissions';
 import AIAssistant from './AIAssistant';
 import FeedbackButton from './FeedbackButton';
 import CreditBalanceWidget from './CreditBalanceWidget';
@@ -29,9 +30,10 @@ export default function Layout() {
     return saved !== null ? saved === 'true' : true;
   });
 
-  const { dealer, setDealer, clearDealer } = useStore();
+  const { dealer, setDealer, clearDealer, currentEmployee, setCurrentEmployee } = useStore();
   const navigate = useNavigate();
   const isAdmin = dealer?.dealer_name === 'OG DiX Motor Club';
+  const permissions = getPermissions(currentEmployee);
 
   // Auth protection - check session on mount
   useEffect(() => {
@@ -54,11 +56,12 @@ export default function Layout() {
 
         if (dealerData) {
           setDealer(dealerData);
+          setCurrentEmployee(null); // null = dealer owner = full access
         } else {
           // Check if user is an employee
           const { data: employeeData } = await supabase
             .from('employees')
-            .select('dealer_id')
+            .select('*')
             .eq('user_id', session.user.id)
             .eq('active', true)
             .maybeSingle();
@@ -73,6 +76,7 @@ export default function Layout() {
 
             if (empDealerData) {
               setDealer(empDealerData);
+              setCurrentEmployee(employeeData); // Store the employee record with roles
             } else {
               // Employee's dealer not found
               await supabase.auth.signOut();
@@ -86,6 +90,15 @@ export default function Layout() {
             return;
           }
         }
+      } else if (currentEmployee === undefined) {
+        // Dealer loaded from persistence but currentEmployee not set yet
+        const { data: empCheck } = await supabase
+          .from('employees')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .eq('active', true)
+          .maybeSingle();
+        setCurrentEmployee(empCheck || null);
       }
 
       setAuthChecking(false);
@@ -273,7 +286,10 @@ export default function Layout() {
             {!sidebarOpen && !isMobile && section.label && (
               <div style={{ height: '1px', backgroundColor: theme.border, margin: '8px 12px' }} />
             )}
-            {section.items.map(item => (
+            {section.items.filter(item => {
+              const permKey = NAV_PERMISSION_MAP[item.to];
+              return !permKey || permissions[permKey];
+            }).map(item => (
               <NavLink
                 key={item.to}
                 to={item.to}

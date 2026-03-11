@@ -8,6 +8,7 @@ export const useStore = create(
       dealerId: null,
       dealer: null,
       user: null,
+      currentEmployee: null, // null = dealer owner (full access), object = employee
       inventory: [],
       employees: [],
       bhphLoans: [],
@@ -16,20 +17,23 @@ export const useStore = create(
       loading: false,
 
       setDealer: (dealer) => set({ dealer, dealerId: dealer?.id }),
-      
+
       setUser: (user) => set({ user }),
+
+      setCurrentEmployee: (employee) => set({ currentEmployee: employee }),
 
       clearDealer: async () => {
         await supabase.auth.signOut();
-        set({ 
-          dealer: null, 
-          dealerId: null, 
+        set({
+          dealer: null,
+          dealerId: null,
           user: null,
-          inventory: [], 
-          employees: [], 
-          bhphLoans: [], 
-          deals: [], 
-          customers: [] 
+          currentEmployee: null,
+          inventory: [],
+          employees: [],
+          bhphLoans: [],
+          deals: [],
+          customers: []
         });
       },
 

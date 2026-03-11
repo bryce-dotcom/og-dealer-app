@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
+import { getPermissions } from '../lib/permissions';
 import { CreditService } from '../lib/creditService';
 
 const MicIcon = () => (
@@ -47,7 +48,8 @@ export default function AIAssistant({ isOpen, onClose }) {
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
 
-  const { inventory, employees, bhphLoans, deals, dealer } = useStore();
+  const { inventory, employees, bhphLoans, deals, dealer, currentEmployee } = useStore();
+  const perms = getPermissions(currentEmployee);
 
   const speechSupported = typeof window !== 'undefined' && 
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
@@ -166,47 +168,96 @@ export default function AIAssistant({ isOpen, onClose }) {
     if (!dealerId) return { dealer_name: 'Unknown' };
 
     try {
-      // Fetch ALL major tables in parallel
-      const [
-        inventoryRes,
-        employeesRes,
-        bhphLoansRes,
-        bhphPaymentsRes,
-        dealsRes,
-        customersRes,
-        commissionsRes,
-        invCommissionsRes,
-        invExpensesRes,
-        manualExpensesRes,
-        assetsRes,
-        liabilitiesRes,
-        paystubsRes,
-        timeClockRes,
-        bankAccountsRes,
-        bankTransactionsRes,
-        documentPackagesRes,
-        formLibraryRes,
-        messageTemplatesRes
-      ] = await Promise.all([
+      // Base queries everyone can see
+      const baseQueries = [
         supabase.from('inventory').select('*').eq('dealer_id', dealerId),
-        supabase.from('employees').select('*').eq('dealer_id', dealerId),
-        supabase.from('bhph_loans').select('*').eq('dealer_id', dealerId),
-        supabase.from('bhph_payments').select('*').eq('dealer_id', dealerId),
         supabase.from('deals').select('*').eq('dealer_id', dealerId),
         supabase.from('customers').select('*').eq('dealer_id', dealerId),
-        supabase.from('commissions').select('*').eq('dealer_id', dealerId),
-        supabase.from('inventory_commissions').select('*').eq('dealer_id', dealerId),
-        supabase.from('inventory_expenses').select('*').eq('dealer_id', dealerId),
-        supabase.from('manual_expenses').select('*').eq('dealer_id', dealerId),
-        supabase.from('assets').select('*').eq('dealer_id', dealerId),
-        supabase.from('liabilities').select('*').eq('dealer_id', dealerId),
-        supabase.from('paystubs').select('*').eq('dealer_id', dealerId),
-        supabase.from('time_clock').select('*').eq('dealer_id', dealerId),
-        supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId),
-        supabase.from('bank_transactions').select('*').eq('dealer_id', dealerId),
-        supabase.from('document_packages').select('*').eq('dealer_id', dealerId),
-        supabase.from('form_library').select('*').limit(100),
-        supabase.from('message_templates').select('*').eq('dealer_id', dealerId)
+      ];
+
+      // Only fetch sensitive data if user has permission
+      const employeeQuery = perms.canViewAllEmployeeData
+        ? supabase.from('employees').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const bhphQuery = perms.canViewFinancials
+        ? supabase.from('bhph_loans').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const bhphPaymentsQuery = perms.canViewFinancials
+        ? supabase.from('bhph_payments').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const commissionsQuery = perms.canViewCommissions
+        ? supabase.from('commissions').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const invCommissionsQuery = perms.canViewCommissions
+        ? supabase.from('inventory_commissions').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const expensesQuery = perms.canViewExpenses
+        ? supabase.from('inventory_expenses').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const manualExpensesQuery = perms.canViewExpenses
+        ? supabase.from('manual_expenses').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const assetsQuery = perms.canViewFinancials
+        ? supabase.from('assets').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const liabilitiesQuery = perms.canViewFinancials
+        ? supabase.from('liabilities').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const paystubsQuery = perms.canViewPayroll
+        ? supabase.from('paystubs').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const timeClockQuery = perms.canViewAllEmployeeData
+        ? supabase.from('time_clock').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const bankAccountsQuery = perms.canViewBankAccounts
+        ? supabase.from('bank_accounts').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const bankTransactionsQuery = perms.canViewBankAccounts
+        ? supabase.from('bank_transactions').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const docPackagesQuery = perms.isManager
+        ? supabase.from('document_packages').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const formLibraryQuery = perms.isManager
+        ? supabase.from('form_library').select('*').limit(100)
+        : Promise.resolve({ data: [] });
+
+      const templatesQuery = perms.isManager
+        ? supabase.from('message_templates').select('*').eq('dealer_id', dealerId)
+        : Promise.resolve({ data: [] });
+
+      const [
+        inventoryRes, dealsRes, customersRes,
+        employeesRes, bhphLoansRes, bhphPaymentsRes,
+        commissionsRes, invCommissionsRes,
+        invExpensesRes, manualExpensesRes,
+        assetsRes, liabilitiesRes,
+        paystubsRes, timeClockRes,
+        bankAccountsRes, bankTransactionsRes,
+        documentPackagesRes, formLibraryRes, messageTemplatesRes
+      ] = await Promise.all([
+        ...baseQueries,
+        employeeQuery, bhphQuery, bhphPaymentsQuery,
+        commissionsQuery, invCommissionsQuery,
+        expensesQuery, manualExpensesQuery,
+        assetsQuery, liabilitiesQuery,
+        paystubsQuery, timeClockQuery,
+        bankAccountsQuery, bankTransactionsQuery,
+        docPackagesQuery, formLibraryQuery, templatesQuery
       ]);
 
       const inventory = inventoryRes.data || [];
@@ -229,7 +280,14 @@ export default function AIAssistant({ isOpen, onClose }) {
       const formLibrary = formLibraryRes.data || [];
       const messageTemplates = messageTemplatesRes.data || [];
 
-      return {
+      // Build context with user's access level noted
+      const userRole = currentEmployee ? (currentEmployee.roles?.join(', ') || 'Employee') : 'Dealer Owner';
+
+      const context = {
+        user_access_level: userRole,
+        access_note: currentEmployee
+          ? 'This user is an employee. Only share information they have permission to see. Do NOT reveal payroll, bank accounts, financial details, or other employee data unless they have finance/admin roles.'
+          : 'This user is the dealer owner with full access.',
         dealer: {
           name: dealer?.dealer_name,
           state: dealer?.state,
@@ -243,51 +301,18 @@ export default function AIAssistant({ isOpen, onClose }) {
             sold: inventory.filter(v => v.status === 'Sold').length,
             bhph: inventory.filter(v => v.status === 'BHPH').length
           },
-          total_value: inventory.reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0),
+          total_value: perms.canViewFinancials ? inventory.reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0) : undefined,
           vehicles: inventory.map(v => ({
             id: v.id,
             year: v.year,
             make: v.make,
             model: v.model,
             vin: v.vin,
-            price: v.sale_price,
-            purchase_price: v.purchase_price,
+            price: perms.canViewFinancials ? v.sale_price : undefined,
+            purchase_price: perms.canViewFinancials ? v.purchase_price : undefined,
             status: v.status,
             miles: v.miles || v.mileage,
             stock_number: v.stock_number
-          }))
-        },
-        employees: {
-          total: employees.length,
-          active: employees.filter(e => e.active).length,
-          list: employees.map(e => ({
-            id: e.id,
-            name: e.name,
-            active: e.active,
-            roles: e.roles,
-            job_title: e.job_title,
-            hourly_rate: e.hourly_rate,
-            hire_date: e.hire_date
-          }))
-        },
-        bhph: {
-          active_loans: bhphLoans.filter(l => l.status === 'Active').length,
-          total_owed: bhphLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0),
-          monthly_income: bhphLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0),
-          loans: bhphLoans.map(l => ({
-            id: l.id,
-            customer: l.client_name,
-            balance: l.balance,
-            monthly_payment: l.monthly_payment,
-            status: l.status,
-            payments_made: l.payments_made
-          })),
-          payments: bhphPayments.map(p => ({
-            loan_id: p.loan_id,
-            amount: p.amount,
-            principal: p.principal,
-            interest: p.interest,
-            payment_date: p.payment_date
           }))
         },
         deals: {
@@ -296,12 +321,12 @@ export default function AIAssistant({ isOpen, onClose }) {
             completed: deals.filter(d => d.deal_status === 'Completed').length,
             pending: deals.filter(d => d.deal_status === 'Pending').length
           },
-          total_revenue: deals.filter(d => d.deal_status === 'Completed').reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0),
+          total_revenue: perms.canViewFinancials ? deals.filter(d => d.deal_status === 'Completed').reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0) : undefined,
           list: deals.map(d => ({
             id: d.id,
             customer: d.purchaser_name,
             vehicle_id: d.vehicle_id,
-            price: d.price,
+            price: perms.canViewFinancials ? d.price : undefined,
             status: d.deal_status,
             date: d.date_of_sale,
             salesman: d.salesman,
@@ -319,7 +344,82 @@ export default function AIAssistant({ isOpen, onClose }) {
             state: c.state
           }))
         },
-        commissions: {
+      };
+
+      // Only include sensitive sections if user has permission
+      if (perms.canViewAllEmployeeData) {
+        context.employees = {
+          total: employees.length,
+          active: employees.filter(e => e.active).length,
+          list: employees.map(e => ({
+            id: e.id,
+            name: e.name,
+            active: e.active,
+            roles: e.roles,
+            job_title: e.job_title,
+            hourly_rate: perms.canViewPayroll ? e.hourly_rate : undefined,
+            hire_date: e.hire_date
+          }))
+        };
+      }
+
+      if (perms.canViewFinancials) {
+        context.bhph = {
+          active_loans: bhphLoans.filter(l => l.status === 'Active').length,
+          total_owed: bhphLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0),
+          monthly_income: bhphLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0),
+          loans: bhphLoans.map(l => ({
+            id: l.id, customer: l.client_name, balance: l.balance,
+            monthly_payment: l.monthly_payment, status: l.status, payments_made: l.payments_made
+          })),
+          payments: bhphPayments.map(p => ({
+            loan_id: p.loan_id, amount: p.amount, principal: p.principal,
+            interest: p.interest, payment_date: p.payment_date
+          }))
+        };
+
+        context.expenses = {
+          inventory: invExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+          manual: manualExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+          total: invExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0) +
+                 manualExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+          inventory_expenses: invExpenses.map(e => ({
+            inventory_id: e.inventory_id, description: e.description,
+            amount: e.amount, category: e.category, date: e.expense_date
+          })),
+          manual_expenses: manualExpenses.map(e => ({
+            description: e.description, amount: e.amount,
+            vendor: e.vendor, date: e.expense_date
+          }))
+        };
+
+        context.financials = {
+          assets: {
+            total: assets.length,
+            total_value: assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0),
+            list: assets.map(a => ({ name: a.name, type: a.asset_type, current_value: a.current_value, purchase_price: a.purchase_price }))
+          },
+          liabilities: {
+            total: liabilities.length,
+            total_owed: liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0),
+            monthly_payments: liabilities.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0),
+            list: liabilities.map(l => ({ name: l.name, type: l.liability_type, balance: l.current_balance, monthly_payment: l.monthly_payment, lender: l.lender }))
+          },
+        };
+      }
+
+      if (perms.canViewBankAccounts) {
+        if (!context.financials) context.financials = {};
+        context.financials.bank_accounts = bankAccounts.map(b => ({
+          name: b.account_name, type: b.account_type, balance: b.current_balance, institution: b.institution_name
+        }));
+        context.financials.recent_transactions = bankTransactions.slice(0, 20).map(t => ({
+          date: t.transaction_date, amount: t.amount, merchant: t.merchant_name, category: t.plaid_category
+        }));
+      }
+
+      if (perms.canViewCommissions) {
+        context.commissions = {
           pending: commissions.filter(c => c.status === 'pending').length,
           paid: commissions.filter(c => c.status === 'paid').length,
           total_pending: commissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0),
@@ -331,100 +431,36 @@ export default function AIAssistant({ isOpen, onClose }) {
             return acc;
           }, {}),
           inventory_commissions: invCommissions.map(c => ({
-            inventory_id: c.inventory_id,
-            employee_name: c.employee_name,
-            role: c.role,
-            amount: c.amount
+            inventory_id: c.inventory_id, employee_name: c.employee_name, role: c.role, amount: c.amount
           }))
-        },
-        expenses: {
-          inventory: invExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
-          manual: manualExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
-          total: invExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0) +
-                 manualExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
-          inventory_expenses: invExpenses.map(e => ({
-            inventory_id: e.inventory_id,
-            description: e.description,
-            amount: e.amount,
-            category: e.category,
-            date: e.expense_date
-          })),
-          manual_expenses: manualExpenses.map(e => ({
-            description: e.description,
-            amount: e.amount,
-            vendor: e.vendor,
-            date: e.expense_date
-          }))
-        },
-        financials: {
-          assets: {
-            total: assets.length,
-            total_value: assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0),
-            list: assets.map(a => ({
-              name: a.name,
-              type: a.asset_type,
-              current_value: a.current_value,
-              purchase_price: a.purchase_price
-            }))
-          },
-          liabilities: {
-            total: liabilities.length,
-            total_owed: liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0),
-            monthly_payments: liabilities.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0),
-            list: liabilities.map(l => ({
-              name: l.name,
-              type: l.liability_type,
-              balance: l.current_balance,
-              monthly_payment: l.monthly_payment,
-              lender: l.lender
-            }))
-          },
-          bank_accounts: bankAccounts.map(b => ({
-            name: b.account_name,
-            type: b.account_type,
-            balance: b.current_balance,
-            institution: b.institution_name
-          })),
-          recent_transactions: bankTransactions.slice(0, 20).map(t => ({
-            date: t.transaction_date,
-            amount: t.amount,
-            merchant: t.merchant_name,
-            category: t.plaid_category
-          }))
-        },
-        payroll: {
+        };
+      }
+
+      if (perms.canViewPayroll) {
+        context.payroll = {
           recent_paystubs: paystubs.slice(0, 10).map(p => ({
-            employee_id: p.employee_id,
-            pay_date: p.pay_date,
-            gross_pay: p.gross_pay,
-            net_pay: p.net_pay
+            employee_id: p.employee_id, pay_date: p.pay_date, gross_pay: p.gross_pay, net_pay: p.net_pay
           })),
           total_payroll_ytd: paystubs.reduce((sum, p) => sum + (parseFloat(p.gross_pay) || 0), 0)
-        },
-        time_clock: {
+        };
+        context.time_clock = {
           recent_entries: timeClock.slice(0, 20).map(t => ({
-            employee_id: t.employee_id,
-            clock_in: t.clock_in,
-            clock_out: t.clock_out,
-            total_hours: t.total_hours
+            employee_id: t.employee_id, clock_in: t.clock_in, clock_out: t.clock_out, total_hours: t.total_hours
           }))
-        },
-        documents: {
-          packages: documentPackages.map(p => ({
-            deal_type: p.deal_type,
-            state: p.state,
-            docs: p.docs
-          })),
+        };
+      }
+
+      if (perms.isManager) {
+        context.documents = {
+          packages: documentPackages.map(p => ({ deal_type: p.deal_type, state: p.state, docs: p.docs })),
           forms_available: formLibrary.length
-        },
-        messaging: {
-          templates: messageTemplates.map(t => ({
-            name: t.name,
-            type: t.type,
-            subject: t.subject
-          }))
-        }
-      };
+        };
+        context.messaging = {
+          templates: messageTemplates.map(t => ({ name: t.name, type: t.type, subject: t.subject }))
+        };
+      }
+
+      return context;
     } catch (error) {
       console.error('Error building context:', error);
       return {
@@ -463,6 +499,7 @@ export default function AIAssistant({ isOpen, onClose }) {
 
     // Team / Employees / Payroll
     if (q.includes('team') || q.includes('employee') || q.includes('staff') || q.includes('who') || q.includes('crew') || q.includes('payroll')) {
+      if (!perms.canViewAllEmployeeData) return "Yo, that info's above your pay grade. Talk to your manager if you need team details.";
       const active = (employees || []).filter(e => e.active);
       if (active.length === 0) return "Ain't got nobody in the system yet. We gotta fix that.";
       const names = active.map(e => e.name).join(', ');
@@ -471,6 +508,7 @@ export default function AIAssistant({ isOpen, onClose }) {
 
     // BHPH / Loans / Financing
     if (q.includes('bhph') || q.includes('loan') || q.includes('owe') || q.includes('payment') || q.includes('financ')) {
+      if (!perms.canViewFinancials) return "Nah, I can't share financial details with you. That's for the boss and finance team only.";
       const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
       const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
       const monthly = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
@@ -495,17 +533,32 @@ export default function AIAssistant({ isOpen, onClose }) {
 
     // Commissions
     if (q.includes('commission') || q.includes('owed to') || q.includes('pay out')) {
+      if (!perms.canViewCommissions) return "Commission details? That's management-level info. I can't share that with you.";
       return "Yo, I got limited commission data in local mode. Try asking when the AI is online for the full breakdown.";
     }
 
     // Expenses
     if (q.includes('expense') || q.includes('spending') || q.includes('cost')) {
+      if (!perms.canViewExpenses) return "Expense info is restricted to finance and admin. Can't help you there.";
       return "I can see you're askin' about expenses. I got that data when the AI's online. Hang tight.";
     }
 
     // Assets / Liabilities / Books
     if (q.includes('asset') || q.includes('liabilit') || q.includes('debt') || q.includes('owe') || q.includes('book')) {
+      if (!perms.canViewFinancials) return "The books? That's locked down tight. Only the boss and finance team see that.";
       return "Books and financials? I got all that when the AI's running. Let me fetch the full data for you.";
+    }
+
+    // Payroll specific
+    if (q.includes('payroll') || q.includes('salary') || q.includes('pay rate') || q.includes('hourly')) {
+      if (!perms.canViewPayroll) return "Payroll info? Nah, that's confidential. Talk to HR or the boss.";
+      return "Payroll data needs the AI online for the full picture. Hang tight.";
+    }
+
+    // Bank accounts
+    if (q.includes('bank') || q.includes('account') || q.includes('transaction') || q.includes('balance')) {
+      if (!perms.canViewBankAccounts) return "Bank account info is off limits. That's owner and finance eyes only.";
+      return "Bank data needs the AI online. I'll pull it when connected.";
     }
 
     // Greetings
@@ -515,15 +568,28 @@ export default function AIAssistant({ isOpen, onClose }) {
 
     // Help
     if (q.includes('help') || q.includes('what can you')) {
-      return "I know EVERYTHING about your dealership - inventory, BHPH, deals, team, customers, commissions, expenses, assets, liabilities, payroll, time clock, bank accounts, documents, messaging. Just ask me straight up.";
+      const topics = ['inventory', 'deals', 'customers'];
+      if (perms.canViewFinancials) topics.push('BHPH', 'expenses', 'assets', 'liabilities');
+      if (perms.canViewAllEmployeeData) topics.push('team');
+      if (perms.canViewCommissions) topics.push('commissions');
+      if (perms.canViewPayroll) topics.push('payroll', 'time clock');
+      if (perms.canViewBankAccounts) topics.push('bank accounts');
+      return `I can help you with: ${topics.join(', ')}. Just ask me straight up.`;
     }
 
     // Summary
     if (q.includes('summary') || q.includes('overview') || q.includes('status') || q.includes('dashboard')) {
       const inStock = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale');
-      const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
-      const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
-      return `Alright, here's the rundown: ${inStock.length} cars on the lot, ${activeLoans.length} BHPH loans worth $${fmt(totalOwed)}, ${(deals || []).length} deals closed, ${(employees || []).filter(e => e.active).length} on the team. We're movin'. (For deeper numbers, I need the AI online)`;
+      let summary = `Alright, here's the rundown: ${inStock.length} cars on the lot, ${(deals || []).length} deals done.`;
+      if (perms.canViewFinancials) {
+        const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
+        const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+        summary += ` ${activeLoans.length} BHPH loans worth $${fmt(totalOwed)}.`;
+      }
+      if (perms.canViewAllEmployeeData) {
+        summary += ` ${(employees || []).filter(e => e.active).length} on the team.`;
+      }
+      return summary + " We're movin'. (For deeper numbers, I need the AI online)";
     }
 
     // Default
@@ -638,8 +704,8 @@ export default function AIAssistant({ isOpen, onClose }) {
 
   const quickQueries = [
     { label: '📊 Inventory Stats', query: 'Give me a quick inventory summary' },
-    { label: '💰 BHPH Status', query: 'How are my BHPH loans doing?' },
-    { label: '👥 Team', query: 'Who is on my team?' },
+    ...(perms.canViewFinancials ? [{ label: '💰 BHPH Status', query: 'How are my BHPH loans doing?' }] : []),
+    ...(perms.canViewAllEmployeeData ? [{ label: '👥 Team', query: 'Who is on my team?' }] : []),
     { label: '🚗 For Sale', query: 'What cars do I have for sale?' }
   ];
 
