@@ -484,7 +484,7 @@ export default function AIAssistant({ isOpen, onClose }) {
         return `Listen, we got ${inStock.length} rides on the lot. That's $${fmt(totalValue)} in iron sittin' there. Capisce?`;
       }
       if (q.includes('value') || q.includes('worth')) {
-        return `The inventory's worth about $${fmt(totalValue)}. That's ${inStock.length} vehicles, family. Good metal.`;
+        return `Yeee gawds, the inventory's worth about $${fmt(totalValue)}. That's ${inStock.length} vehicles, family. Good metal.`;
       }
       if (q.includes('list') || q.includes('show') || q.includes('what')) {
         const list = inStock.slice(0, 5).map(v => `${v.year} ${v.make} ${v.model}`).join(', ');
@@ -514,7 +514,7 @@ export default function AIAssistant({ isOpen, onClose }) {
       const monthly = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
 
       if (activeLoans.length === 0) return "No BHPH deals active right now. Clean slate.";
-      return `Got ${activeLoans.length} BHPH loans out there. People owe us $${fmt(totalOwed)}. That's $${fmt(monthly)} comin' in monthly. They better pay up.`;
+      return `Yeee gawds, got ${activeLoans.length} BHPH loans out there. People owe us $${fmt(totalOwed)}. That's $${fmt(monthly)} comin' in monthly. They better pay up.`;
     }
 
     // Deals / Sales
@@ -522,7 +522,7 @@ export default function AIAssistant({ isOpen, onClose }) {
       const allDeals = deals || [];
       const totalRevenue = allDeals.reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0);
       if (allDeals.length === 0) return "No deals closed yet. We gotta move some metal.";
-      return `${allDeals.length} deals done, $${fmt(totalRevenue)} in revenue. Keep that energy, family.`;
+      return `Yeee gawds, ${allDeals.length} deals done, $${fmt(totalRevenue)} in revenue! Keep that energy, family.`;
     }
 
     // Customers
@@ -561,9 +561,20 @@ export default function AIAssistant({ isOpen, onClose }) {
       return "Bank data needs the AI online. I'll pull it when connected.";
     }
 
+    // Singing
+    if (q.includes('sing') || q.includes('song') || q.includes('music')) {
+      return "Yeee gawds, you want me to sing?! Alright, here we go...\n\n🎵 Yo quiero mi rancho grande... donde vivia mi abuela... 🎵\n\nFreddy Fender style, baby! That's the OG right there. Now quit messin' around, what you really need?";
+    }
+
     // Greetings
     if (q.includes('hello') || q.includes('hey') || q.includes('hi') || q.includes('what\'s up') || q.includes('yo')) {
-      return "Ay, what's good? O.G. Arnie here. What you need?";
+      const greetings = [
+        "Ay, what's good? O.G. Arnie here. What you need?",
+        "Yeee gawds, what's poppin'? Arnie's in the building. Talk to me.",
+        "Ay yo! O.G. Arnie, at your service. What we workin' on?",
+        "Yeee gawds! You caught me at a good time. What's the word, family?",
+      ];
+      return greetings[Math.floor(Math.random() * greetings.length)];
     }
 
     // Help
