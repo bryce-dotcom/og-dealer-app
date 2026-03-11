@@ -58,12 +58,12 @@ export default function InvestorLogin() {
         return;
       }
 
-      // If there's a pool, load it
+      // If there's a pool, load it with pool_type info
       let poolData = null;
       if (foundInvestor.parsedNotes.pool_id) {
         const { data: pool } = await supabase
           .from('investment_pools')
-          .select('pool_name, description, status')
+          .select('pool_name, description, status, pool_type, annual_return_rate, payout_frequency, investor_profit_share, platform_fee_share, dealer_profit_share')
           .eq('id', foundInvestor.parsedNotes.pool_id)
           .single();
         poolData = pool;
@@ -161,7 +161,6 @@ export default function InvestorLogin() {
 
         // If there's a pool, create the pool share record
         if (inviteData.investor.parsedNotes?.pool_id) {
-          const terms = inviteData.terms || {};
           const { error: shareError } = await supabase
             .from('investor_pool_shares')
             .insert({
@@ -218,6 +217,26 @@ export default function InvestorLogin() {
     }).format(amount || 0);
   }
 
+  function getPayoutLabel(freq) {
+    switch (freq) {
+      case 'monthly': return 'Monthly';
+      case 'quarterly': return 'Quarterly';
+      case 'annually': return 'Annually';
+      default: return freq || 'N/A';
+    }
+  }
+
+  function calcFixedReturnPreview(investment, rate, frequency) {
+    const inv = Number(investment) || 10000;
+    const r = Number(rate) || 0;
+    const annual = inv * (r / 100);
+    let per = annual;
+    let label = 'year';
+    if (frequency === 'monthly') { per = annual / 12; label = 'month'; }
+    else if (frequency === 'quarterly') { per = annual / 4; label = 'quarter'; }
+    return { annual, per, label };
+  }
+
   // Invite onboarding flow
   if (mode === 'invite') {
     if (inviteLoading) {
@@ -255,6 +274,8 @@ export default function InvestorLogin() {
 
     if (inviteStep === 'welcome' && inviteData) {
       const terms = inviteData.terms;
+      const poolType = terms.pool_type || inviteData.pool?.pool_type || 'profit_share';
+      const isFixedReturn = poolType === 'fixed_return';
 
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900/80 to-slate-900">
@@ -269,7 +290,9 @@ export default function InvestorLogin() {
                 Invest with<br />OG DiX Motor Club
               </h1>
               <p className="text-xl text-blue-200 max-w-xl mx-auto leading-relaxed">
-                Think of it like opening a joint bank account. You fund it, we buy and sell vehicles, you earn profit.
+                {isFixedReturn
+                  ? 'Earn a guaranteed fixed return on your investment, paid out on a regular schedule.'
+                  : 'Think of it like opening a joint bank account. You fund it, we buy and sell vehicles, you earn profit.'}
               </p>
             </div>
           </div>
@@ -309,7 +332,9 @@ export default function InvestorLogin() {
                   </div>
                   <h3 className="text-white font-bold text-lg mb-2">You Earn</h3>
                   <p className="text-slate-400 text-sm leading-relaxed">
-                    You receive {terms.investor_profit_share || 60}% of every profit. Track returns in real-time on your dashboard.
+                    {isFixedReturn
+                      ? `You earn ${terms.annual_return_rate || inviteData.pool?.annual_return_rate || 0}% annually, paid out ${getPayoutLabel(terms.payout_frequency || inviteData.pool?.payout_frequency).toLowerCase()}. Track returns in real-time on your dashboard.`
+                      : `You receive ${terms.investor_profit_share || 60}% of every vehicle transaction profit. Track returns in real-time on your dashboard.`}
                   </p>
                 </div>
               </div>
@@ -317,25 +342,74 @@ export default function InvestorLogin() {
 
             {/* Terms Card */}
             <div className="bg-white/5 backdrop-blur-lg rounded-2xl border border-white/10 p-8 mb-8">
-              <h2 className="text-xl font-bold text-white mb-6 text-center">Your Investment Terms</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-blue-400 mb-1">{terms.investor_profit_share || 60}%</div>
-                  <div className="text-slate-400 text-sm">Your Profit Share</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-amber-400 mb-1">{terms.platform_fee_share || 20}%</div>
-                  <div className="text-slate-400 text-sm">Platform Fee</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-green-400 mb-1">{terms.dealer_profit_share || 20}%</div>
-                  <div className="text-slate-400 text-sm">Dealer Share</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-3xl font-bold text-white mb-1">{formatCurrency(terms.min_investment || 10000)}</div>
-                  <div className="text-slate-400 text-sm">Minimum Investment</div>
-                </div>
+              <div className="flex items-center justify-center gap-3 mb-6">
+                <h2 className="text-xl font-bold text-white">Your Investment Terms</h2>
+                <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                  isFixedReturn
+                    ? 'text-emerald-400 bg-emerald-500/20'
+                    : 'text-violet-400 bg-violet-500/20'
+                }`}>
+                  {isFixedReturn ? 'Fixed Return' : 'Profit Share'}
+                </span>
               </div>
+
+              {isFixedReturn ? (
+                <>
+                  {(() => {
+                    const rate = terms.annual_return_rate || inviteData.pool?.annual_return_rate || 0;
+                    const freq = terms.payout_frequency || inviteData.pool?.payout_frequency || 'quarterly';
+                    const minInv = terms.min_investment || 10000;
+                    const preview = calcFixedReturnPreview(minInv, rate, freq);
+                    return (
+                      <>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-emerald-400 mb-1">{rate}%</div>
+                            <div className="text-slate-400 text-sm">Annual Return</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-blue-400 mb-1">{getPayoutLabel(freq)}</div>
+                            <div className="text-slate-400 text-sm">Payout Schedule</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-green-400 mb-1">{formatCurrency(preview.per)}</div>
+                            <div className="text-slate-400 text-sm">Per {preview.label}</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-white mb-1">{formatCurrency(minInv)}</div>
+                            <div className="text-slate-400 text-sm">Minimum Investment</div>
+                          </div>
+                        </div>
+                        <div className="mt-6 pt-4 border-t border-white/10 text-center">
+                          <p className="text-slate-300 text-sm">
+                            {formatCurrency(minInv)} invested = {formatCurrency(preview.annual)}/year = {formatCurrency(preview.per)}/{preview.label}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-blue-400 mb-1">{terms.investor_profit_share || 60}%</div>
+                    <div className="text-slate-400 text-sm">Your Profit Share</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-amber-400 mb-1">{terms.platform_fee_share || 20}%</div>
+                    <div className="text-slate-400 text-sm">Platform Fee</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-green-400 mb-1">{terms.dealer_profit_share || 20}%</div>
+                    <div className="text-slate-400 text-sm">Dealer Share</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-white mb-1">{formatCurrency(terms.min_investment || 10000)}</div>
+                    <div className="text-slate-400 text-sm">Minimum Investment</div>
+                  </div>
+                </div>
+              )}
+
               {inviteData.pool && (
                 <div className="mt-6 pt-6 border-t border-white/10 text-center">
                   <div className="text-slate-400 text-sm">Investment Pool</div>
@@ -567,7 +641,7 @@ export default function InvestorLogin() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder="--------"
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
                   required
                 />

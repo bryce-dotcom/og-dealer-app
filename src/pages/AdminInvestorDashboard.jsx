@@ -32,6 +32,22 @@ export default function AdminInvestorDashboard() {
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
 
+  // Create Pool form state
+  const [poolForm, setPoolForm] = useState({
+    pool_name: '',
+    pool_type: 'profit_share',
+    description: '',
+    investor_profit_share: 60,
+    platform_fee_share: 20,
+    dealer_profit_share: 20,
+    annual_return_rate: 8.5,
+    payout_frequency: 'quarterly',
+    min_investment: 10000,
+    max_investment: '',
+  });
+  const [creatingPool, setCreatingPool] = useState(false);
+  const [showCreatePool, setShowCreatePool] = useState(false);
+
   useEffect(() => {
     loadAdminData();
   }, []);
@@ -200,6 +216,66 @@ export default function AdminInvestorDashboard() {
     }
   }
 
+  async function handleCreatePool() {
+    if (!poolForm.pool_name) {
+      alert('Please enter a pool name.');
+      return;
+    }
+
+    try {
+      setCreatingPool(true);
+
+      const insertData = {
+        pool_name: poolForm.pool_name,
+        pool_type: poolForm.pool_type,
+        description: poolForm.description || null,
+        min_investment: Number(poolForm.min_investment) || 10000,
+        max_investment: poolForm.max_investment ? Number(poolForm.max_investment) : null,
+      };
+
+      if (poolForm.pool_type === 'profit_share') {
+        insertData.investor_profit_share = Number(poolForm.investor_profit_share) || 60;
+        insertData.platform_fee_share = Number(poolForm.platform_fee_share) || 20;
+        insertData.dealer_profit_share = Number(poolForm.dealer_profit_share) || 20;
+        insertData.annual_return_rate = null;
+        insertData.payout_frequency = null;
+      } else {
+        insertData.annual_return_rate = Number(poolForm.annual_return_rate) || 8.5;
+        insertData.payout_frequency = poolForm.payout_frequency || 'quarterly';
+        insertData.investor_profit_share = 0;
+        insertData.platform_fee_share = 0;
+        insertData.dealer_profit_share = 0;
+      }
+
+      const { error } = await supabase
+        .from('investment_pools')
+        .insert(insertData);
+
+      if (error) throw error;
+
+      alert('Pool created successfully!');
+      setShowCreatePool(false);
+      setPoolForm({
+        pool_name: '',
+        pool_type: 'profit_share',
+        description: '',
+        investor_profit_share: 60,
+        platform_fee_share: 20,
+        dealer_profit_share: 20,
+        annual_return_rate: 8.5,
+        payout_frequency: 'quarterly',
+        min_investment: 10000,
+        max_investment: '',
+      });
+      loadAdminData();
+    } catch (error) {
+      console.error('Error creating pool:', error);
+      alert('Failed to create pool: ' + error.message);
+    } finally {
+      setCreatingPool(false);
+    }
+  }
+
   async function handleSendInvite() {
     if (!inviteForm.full_name || !inviteForm.email) {
       alert('Please enter at least a name and email.');
@@ -210,15 +286,27 @@ export default function AdminInvestorDashboard() {
       setInviteSending(true);
       const inviteToken = crypto.randomUUID();
 
+      const selectedPool = inviteForm.pool_id ? pools.find(p => p.id === inviteForm.pool_id) : null;
+      const poolType = selectedPool?.pool_type || 'profit_share';
+
+      const customTerms = {
+        pool_type: poolType,
+        min_investment: Number(inviteForm.min_investment) || 10000,
+      };
+
+      if (poolType === 'profit_share') {
+        customTerms.investor_profit_share = Number(inviteForm.investor_profit_share) || 60;
+        customTerms.platform_fee_share = Number(inviteForm.platform_fee_share) || 20;
+        customTerms.dealer_profit_share = Number(inviteForm.dealer_profit_share) || 20;
+      } else {
+        customTerms.annual_return_rate = selectedPool?.annual_return_rate || 0;
+        customTerms.payout_frequency = selectedPool?.payout_frequency || 'quarterly';
+      }
+
       const inviteNotes = JSON.stringify({
         invite_token: inviteToken,
         pool_id: inviteForm.pool_id || null,
-        custom_terms: {
-          investor_profit_share: Number(inviteForm.investor_profit_share) || 60,
-          platform_fee_share: Number(inviteForm.platform_fee_share) || 20,
-          dealer_profit_share: Number(inviteForm.dealer_profit_share) || 20,
-          min_investment: Number(inviteForm.min_investment) || 10000,
-        },
+        custom_terms: customTerms,
         special_notes: inviteForm.notes || '',
         invited_at: new Date().toISOString(),
       });
@@ -293,6 +381,39 @@ export default function AdminInvestorDashboard() {
       case 'closed': return 'text-slate-400 bg-slate-500/20';
       default: return 'text-slate-400 bg-slate-500/20';
     }
+  }
+
+  function getPoolTypeBadge(poolType) {
+    if (poolType === 'fixed_return') {
+      return 'text-emerald-400 bg-emerald-500/20';
+    }
+    return 'text-violet-400 bg-violet-500/20';
+  }
+
+  function getPoolTypeLabel(poolType) {
+    if (poolType === 'fixed_return') return 'Fixed Return';
+    return 'Profit Share';
+  }
+
+  function getPayoutLabel(freq) {
+    switch (freq) {
+      case 'monthly': return 'Monthly';
+      case 'quarterly': return 'Quarterly';
+      case 'annually': return 'Annually';
+      default: return freq || 'N/A';
+    }
+  }
+
+  function calcFixedReturnPreview(investment, rate, frequency) {
+    const inv = Number(investment) || 10000;
+    const r = Number(rate) || 0;
+    const annual = inv * (r / 100);
+    let per = annual;
+    let label = 'year';
+    if (frequency === 'monthly') { per = annual / 12; label = 'month'; }
+    else if (frequency === 'quarterly') { per = annual / 4; label = 'quarter'; }
+    else { label = 'year'; }
+    return { annual, per, label };
   }
 
   function getSelectedPoolForPreview() {
@@ -416,7 +537,12 @@ export default function AdminInvestorDashboard() {
                 {pools.map(pool => (
                   <div key={pool.id} className="bg-slate-700/50 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-bold text-white">{pool.pool_name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-white">{pool.pool_name}</h3>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${getPoolTypeBadge(pool.pool_type)}`}>
+                          {getPoolTypeLabel(pool.pool_type)}
+                        </span>
+                      </div>
                       <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(pool.status)}`}>
                         {pool.status}
                       </span>
@@ -436,8 +562,12 @@ export default function AdminInvestorDashboard() {
                       </div>
                     </div>
                     <div className="mt-3 pt-3 border-t border-slate-600 text-xs text-slate-400">
+                      {pool.pool_type === 'fixed_return' ? (
+                        <div>Rate: {pool.annual_return_rate}% annually | Payout: {getPayoutLabel(pool.payout_frequency)}</div>
+                      ) : (
+                        <div>Split: {pool.investor_profit_share}/{pool.platform_fee_share}/{pool.dealer_profit_share} (Investor/Platform/Dealer)</div>
+                      )}
                       <div>Vehicles: {pool.total_vehicles_funded || 0} funded, {pool.total_vehicles_sold || 0} sold</div>
-                      <div>ROI: {pool.lifetime_roi?.toFixed(2) || 0}% &bull; Avg Days: {pool.avg_days_to_sell?.toFixed(0) || 0}</div>
                     </div>
                   </div>
                 ))}
@@ -550,34 +680,81 @@ export default function AdminInvestorDashboard() {
                       </div>
                     </div>
 
-                    {/* Terms */}
-                    <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
-                      <h3 className="text-white font-bold text-lg mb-4">Your Investment Terms</h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div>
-                          <div className="text-slate-400 text-sm">Your Profit Share</div>
-                          <div className="text-2xl font-bold text-blue-400">{inviteForm.investor_profit_share || 60}%</div>
+                    {/* Terms - adapt based on pool type */}
+                    {(() => {
+                      const previewPool = getSelectedPoolForPreview();
+                      const pType = previewPool?.pool_type || 'profit_share';
+
+                      if (pType === 'fixed_return') {
+                        const preview = calcFixedReturnPreview(
+                          inviteForm.min_investment || 10000,
+                          previewPool?.annual_return_rate || 0,
+                          previewPool?.payout_frequency || 'quarterly'
+                        );
+                        return (
+                          <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                            <div className="flex items-center gap-2 mb-4">
+                              <h3 className="text-white font-bold text-lg">Your Investment Terms</h3>
+                              <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-emerald-400 bg-emerald-500/20">Fixed Return</span>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div>
+                                <div className="text-slate-400 text-sm">Annual Return</div>
+                                <div className="text-2xl font-bold text-emerald-400">{previewPool?.annual_return_rate || 0}%</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400 text-sm">Payout Schedule</div>
+                                <div className="text-2xl font-bold text-blue-400">{getPayoutLabel(previewPool?.payout_frequency)}</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400 text-sm">Per {preview.label}</div>
+                                <div className="text-2xl font-bold text-green-400">{formatCurrency(preview.per)}</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400 text-sm">Min. Investment</div>
+                                <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
+                              </div>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-slate-700 text-sm text-slate-400">
+                              {formatCurrency(inviteForm.min_investment || 10000)} invested = {formatCurrency(preview.annual)}/year = {formatCurrency(preview.per)}/{preview.label}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                          <div className="flex items-center gap-2 mb-4">
+                            <h3 className="text-white font-bold text-lg">Your Investment Terms</h3>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-violet-400 bg-violet-500/20">Profit Share</span>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div>
+                              <div className="text-slate-400 text-sm">Your Profit Share</div>
+                              <div className="text-2xl font-bold text-blue-400">{inviteForm.investor_profit_share || 60}%</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-400 text-sm">Platform Fee</div>
+                              <div className="text-2xl font-bold text-amber-400">{inviteForm.platform_fee_share || 20}%</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-400 text-sm">Dealer Share</div>
+                              <div className="text-2xl font-bold text-green-400">{inviteForm.dealer_profit_share || 20}%</div>
+                            </div>
+                            <div>
+                              <div className="text-slate-400 text-sm">Min. Investment</div>
+                              <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
+                            </div>
+                          </div>
+                          {previewPool && (
+                            <div className="mt-4 pt-4 border-t border-slate-700">
+                              <div className="text-slate-400 text-sm">Investment Pool</div>
+                              <div className="text-white font-semibold">{previewPool.pool_name}</div>
+                            </div>
+                          )}
                         </div>
-                        <div>
-                          <div className="text-slate-400 text-sm">Platform Fee</div>
-                          <div className="text-2xl font-bold text-amber-400">{inviteForm.platform_fee_share || 20}%</div>
-                        </div>
-                        <div>
-                          <div className="text-slate-400 text-sm">Dealer Share</div>
-                          <div className="text-2xl font-bold text-green-400">{inviteForm.dealer_profit_share || 20}%</div>
-                        </div>
-                        <div>
-                          <div className="text-slate-400 text-sm">Min. Investment</div>
-                          <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
-                        </div>
-                      </div>
-                      {getSelectedPoolForPreview() && (
-                        <div className="mt-4 pt-4 border-t border-slate-700">
-                          <div className="text-slate-400 text-sm">Investment Pool</div>
-                          <div className="text-white font-semibold">{getSelectedPoolForPreview().pool_name}</div>
-                        </div>
-                      )}
-                    </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -651,7 +828,7 @@ export default function AdminInvestorDashboard() {
                           <option value="">Select a pool...</option>
                           {pools.map(pool => (
                             <option key={pool.id} value={pool.id}>
-                              {pool.pool_name} ({pool.status})
+                              {pool.pool_name} ({getPoolTypeLabel(pool.pool_type)}) - {pool.status}
                             </option>
                           ))}
                         </select>
@@ -659,70 +836,148 @@ export default function AdminInvestorDashboard() {
                     </div>
                   </div>
 
-                  {/* Custom Terms */}
-                  <div>
-                    <h3 className="text-white font-semibold mb-4 text-lg">Custom Terms</h3>
-                    <p className="text-slate-400 text-sm mb-4">
-                      These are pre-filled from the selected pool defaults. Adjust as needed for this investor.
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      <div>
-                        <label className="block text-slate-300 text-sm font-semibold mb-2">Investor Profit %</label>
-                        <input
-                          type="number"
-                          value={inviteForm.investor_profit_share}
-                          onChange={e => setInviteForm(prev => ({ ...prev, investor_profit_share: e.target.value }))}
-                          placeholder="60"
-                          min="0"
-                          max="100"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
-                        />
+                  {/* Pool type indicator */}
+                  {inviteForm.pool_id && (() => {
+                    const selPool = pools.find(p => p.id === inviteForm.pool_id);
+                    if (!selPool) return null;
+                    return (
+                      <div className={`rounded-lg p-4 border ${
+                        selPool.pool_type === 'fixed_return'
+                          ? 'bg-emerald-500/10 border-emerald-500/30'
+                          : 'bg-violet-500/10 border-violet-500/30'
+                      }`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${getPoolTypeBadge(selPool.pool_type)}`}>
+                            {getPoolTypeLabel(selPool.pool_type)}
+                          </span>
+                          <span className="text-white font-semibold text-sm">{selPool.pool_name}</span>
+                        </div>
+                        {selPool.pool_type === 'fixed_return' ? (
+                          <p className="text-slate-300 text-sm">
+                            This pool pays a fixed {selPool.annual_return_rate}% annual return, distributed {getPayoutLabel(selPool.payout_frequency).toLowerCase()}.
+                          </p>
+                        ) : (
+                          <p className="text-slate-300 text-sm">
+                            This pool uses a profit-share model: {selPool.investor_profit_share}% investor / {selPool.platform_fee_share}% platform / {selPool.dealer_profit_share}% dealer.
+                          </p>
+                        )}
                       </div>
-                      <div>
-                        <label className="block text-slate-300 text-sm font-semibold mb-2">Platform Fee %</label>
-                        <input
-                          type="number"
-                          value={inviteForm.platform_fee_share}
-                          onChange={e => setInviteForm(prev => ({ ...prev, platform_fee_share: e.target.value }))}
-                          placeholder="20"
-                          min="0"
-                          max="100"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 text-sm font-semibold mb-2">Dealer Share %</label>
-                        <input
-                          type="number"
-                          value={inviteForm.dealer_profit_share}
-                          onChange={e => setInviteForm(prev => ({ ...prev, dealer_profit_share: e.target.value }))}
-                          placeholder="20"
-                          min="0"
-                          max="100"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 text-sm font-semibold mb-2">Min Investment ($)</label>
-                        <input
-                          type="number"
-                          value={inviteForm.min_investment}
-                          onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
-                          placeholder="10000"
-                          min="0"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
-                        />
-                      </div>
-                    </div>
+                    );
+                  })()}
 
-                    {/* Percentage validation */}
-                    {(Number(inviteForm.investor_profit_share || 0) + Number(inviteForm.platform_fee_share || 0) + Number(inviteForm.dealer_profit_share || 0)) !== 100 &&
-                      inviteForm.investor_profit_share !== '' && (
-                      <div className="mt-3 text-amber-400 text-sm">
-                        Note: Profit shares total {Number(inviteForm.investor_profit_share || 0) + Number(inviteForm.platform_fee_share || 0) + Number(inviteForm.dealer_profit_share || 0)}% (should be 100%)
+                  {/* Custom Terms - only show profit share fields for profit_share pools */}
+                  {(() => {
+                    const selPool = inviteForm.pool_id ? pools.find(p => p.id === inviteForm.pool_id) : null;
+                    const pType = selPool?.pool_type || 'profit_share';
+
+                    if (pType === 'fixed_return') {
+                      // Fixed return pools: show read-only rate info + min investment override
+                      const preview = calcFixedReturnPreview(
+                        inviteForm.min_investment || selPool?.min_investment || 10000,
+                        selPool?.annual_return_rate || 0,
+                        selPool?.payout_frequency || 'quarterly'
+                      );
+                      return (
+                        <div>
+                          <h3 className="text-white font-semibold mb-4 text-lg">Fixed Return Terms</h3>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <div className="bg-slate-700/50 rounded-lg p-4">
+                              <div className="text-slate-400 text-sm mb-1">Annual Return Rate</div>
+                              <div className="text-2xl font-bold text-emerald-400">{selPool?.annual_return_rate || 0}%</div>
+                            </div>
+                            <div className="bg-slate-700/50 rounded-lg p-4">
+                              <div className="text-slate-400 text-sm mb-1">Payout Frequency</div>
+                              <div className="text-2xl font-bold text-blue-400">{getPayoutLabel(selPool?.payout_frequency)}</div>
+                            </div>
+                            <div>
+                              <label className="block text-slate-300 text-sm font-semibold mb-2">Min Investment ($)</label>
+                              <input
+                                type="number"
+                                value={inviteForm.min_investment}
+                                onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
+                                placeholder="10000"
+                                min="0"
+                                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                              />
+                            </div>
+                          </div>
+                          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-sm">
+                            <div className="text-emerald-300 font-semibold mb-1">Investor Earnings Preview</div>
+                            <div className="text-slate-300">
+                              {formatCurrency(inviteForm.min_investment || selPool?.min_investment || 10000)} invested = {formatCurrency(preview.annual)}/year = {formatCurrency(preview.per)}/{preview.label}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Profit share pool or no pool selected
+                    return (
+                      <div>
+                        <h3 className="text-white font-semibold mb-4 text-lg">Custom Terms</h3>
+                        <p className="text-slate-400 text-sm mb-4">
+                          These are pre-filled from the selected pool defaults. Adjust as needed for this investor.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div>
+                            <label className="block text-slate-300 text-sm font-semibold mb-2">Investor Profit %</label>
+                            <input
+                              type="number"
+                              value={inviteForm.investor_profit_share}
+                              onChange={e => setInviteForm(prev => ({ ...prev, investor_profit_share: e.target.value }))}
+                              placeholder="60"
+                              min="0"
+                              max="100"
+                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-300 text-sm font-semibold mb-2">Platform Fee %</label>
+                            <input
+                              type="number"
+                              value={inviteForm.platform_fee_share}
+                              onChange={e => setInviteForm(prev => ({ ...prev, platform_fee_share: e.target.value }))}
+                              placeholder="20"
+                              min="0"
+                              max="100"
+                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-300 text-sm font-semibold mb-2">Dealer Share %</label>
+                            <input
+                              type="number"
+                              value={inviteForm.dealer_profit_share}
+                              onChange={e => setInviteForm(prev => ({ ...prev, dealer_profit_share: e.target.value }))}
+                              placeholder="20"
+                              min="0"
+                              max="100"
+                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-300 text-sm font-semibold mb-2">Min Investment ($)</label>
+                            <input
+                              type="number"
+                              value={inviteForm.min_investment}
+                              onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
+                              placeholder="10000"
+                              min="0"
+                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Percentage validation */}
+                        {(Number(inviteForm.investor_profit_share || 0) + Number(inviteForm.platform_fee_share || 0) + Number(inviteForm.dealer_profit_share || 0)) !== 100 &&
+                          inviteForm.investor_profit_share !== '' && (
+                          <div className="mt-3 text-amber-400 text-sm">
+                            Note: Profit shares total {Number(inviteForm.investor_profit_share || 0) + Number(inviteForm.platform_fee_share || 0) + Number(inviteForm.dealer_profit_share || 0)}% (should be 100%)
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    );
+                  })()}
 
                   {/* Notes */}
                   <div>
@@ -857,12 +1112,307 @@ export default function AdminInvestorDashboard() {
         {/* Pools Tab */}
         {activeTab === 'pools' && (
           <div className="space-y-6">
+            {/* Create Pool Button / Form */}
+            {showCreatePool ? (
+              <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                <div className="p-6 border-b border-slate-700 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white mb-1">Create New Pool</h2>
+                    <p className="text-slate-400">Set up a new investment pool for your investors.</p>
+                  </div>
+                  <button
+                    onClick={() => setShowCreatePool(false)}
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-semibold transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {/* Pool Name and Description */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-slate-300 text-sm font-semibold mb-2">Pool Name *</label>
+                      <input
+                        type="text"
+                        value={poolForm.pool_name}
+                        onChange={e => setPoolForm(prev => ({ ...prev, pool_name: e.target.value }))}
+                        placeholder="e.g. Growth Fund Q1 2026"
+                        className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-sm font-semibold mb-2">Description</label>
+                      <input
+                        type="text"
+                        value={poolForm.description}
+                        onChange={e => setPoolForm(prev => ({ ...prev, description: e.target.value }))}
+                        placeholder="Brief description of this pool..."
+                        className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Pool Type Toggle */}
+                  <div>
+                    <label className="block text-slate-300 text-sm font-semibold mb-3">Pool Type</label>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setPoolForm(prev => ({ ...prev, pool_type: 'profit_share' }))}
+                        className={`flex-1 px-6 py-4 rounded-xl border-2 transition font-semibold text-left ${
+                          poolForm.pool_type === 'profit_share'
+                            ? 'border-violet-500 bg-violet-500/10 text-white'
+                            : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                            poolForm.pool_type === 'profit_share' ? 'border-violet-400' : 'border-slate-500'
+                          }`}>
+                            {poolForm.pool_type === 'profit_share' && <div className="w-2 h-2 rounded-full bg-violet-400"></div>}
+                          </div>
+                          <span className="font-bold">Profit Share</span>
+                        </div>
+                        <p className="text-xs text-slate-400 ml-6">Investors earn a percentage of each vehicle transaction profit</p>
+                      </button>
+                      <button
+                        onClick={() => setPoolForm(prev => ({ ...prev, pool_type: 'fixed_return' }))}
+                        className={`flex-1 px-6 py-4 rounded-xl border-2 transition font-semibold text-left ${
+                          poolForm.pool_type === 'fixed_return'
+                            ? 'border-emerald-500 bg-emerald-500/10 text-white'
+                            : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                            poolForm.pool_type === 'fixed_return' ? 'border-emerald-400' : 'border-slate-500'
+                          }`}>
+                            {poolForm.pool_type === 'fixed_return' && <div className="w-2 h-2 rounded-full bg-emerald-400"></div>}
+                          </div>
+                          <span className="font-bold">Fixed Return</span>
+                        </div>
+                        <p className="text-xs text-slate-400 ml-6">Investors earn a fixed annual percentage, paid on a schedule</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Pool-type specific fields */}
+                  {poolForm.pool_type === 'profit_share' ? (
+                    <div>
+                      <h3 className="text-white font-semibold mb-4 text-lg">Profit Split</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div>
+                          <label className="block text-slate-300 text-sm font-semibold mb-2">Investor Share %</label>
+                          <input
+                            type="number"
+                            value={poolForm.investor_profit_share}
+                            onChange={e => setPoolForm(prev => ({ ...prev, investor_profit_share: e.target.value }))}
+                            placeholder="60"
+                            min="0"
+                            max="100"
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 text-sm font-semibold mb-2">Platform Fee %</label>
+                          <input
+                            type="number"
+                            value={poolForm.platform_fee_share}
+                            onChange={e => setPoolForm(prev => ({ ...prev, platform_fee_share: e.target.value }))}
+                            placeholder="20"
+                            min="0"
+                            max="100"
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 text-sm font-semibold mb-2">Dealer Share %</label>
+                          <input
+                            type="number"
+                            value={poolForm.dealer_profit_share}
+                            onChange={e => setPoolForm(prev => ({ ...prev, dealer_profit_share: e.target.value }))}
+                            placeholder="20"
+                            min="0"
+                            max="100"
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Visual split preview */}
+                      <div className="bg-slate-700/30 rounded-lg p-4">
+                        <div className="text-slate-400 text-sm mb-3">Per-Transaction Profit Split</div>
+                        <div className="flex h-8 rounded-lg overflow-hidden mb-3">
+                          <div
+                            className="bg-violet-500 flex items-center justify-center text-white text-xs font-bold transition-all"
+                            style={{ width: `${Number(poolForm.investor_profit_share) || 0}%` }}
+                          >
+                            {Number(poolForm.investor_profit_share) > 10 ? `${poolForm.investor_profit_share}%` : ''}
+                          </div>
+                          <div
+                            className="bg-amber-500 flex items-center justify-center text-white text-xs font-bold transition-all"
+                            style={{ width: `${Number(poolForm.platform_fee_share) || 0}%` }}
+                          >
+                            {Number(poolForm.platform_fee_share) > 10 ? `${poolForm.platform_fee_share}%` : ''}
+                          </div>
+                          <div
+                            className="bg-green-500 flex items-center justify-center text-white text-xs font-bold transition-all"
+                            style={{ width: `${Number(poolForm.dealer_profit_share) || 0}%` }}
+                          >
+                            {Number(poolForm.dealer_profit_share) > 10 ? `${poolForm.dealer_profit_share}%` : ''}
+                          </div>
+                        </div>
+                        <div className="flex gap-4 text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-3 h-3 rounded bg-violet-500"></div>
+                            <span className="text-slate-300">Investor {poolForm.investor_profit_share}%</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-3 h-3 rounded bg-amber-500"></div>
+                            <span className="text-slate-300">Platform {poolForm.platform_fee_share}%</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-3 h-3 rounded bg-green-500"></div>
+                            <span className="text-slate-300">Dealer {poolForm.dealer_profit_share}%</span>
+                          </div>
+                        </div>
+                        {(Number(poolForm.investor_profit_share || 0) + Number(poolForm.platform_fee_share || 0) + Number(poolForm.dealer_profit_share || 0)) !== 100 && (
+                          <div className="mt-2 text-amber-400 text-xs">
+                            Total: {Number(poolForm.investor_profit_share || 0) + Number(poolForm.platform_fee_share || 0) + Number(poolForm.dealer_profit_share || 0)}% (should be 100%)
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <h3 className="text-white font-semibold mb-4 text-lg">Fixed Return Terms</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-slate-300 text-sm font-semibold mb-2">Annual Return Rate %</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={poolForm.annual_return_rate}
+                            onChange={e => setPoolForm(prev => ({ ...prev, annual_return_rate: e.target.value }))}
+                            placeholder="8.50"
+                            min="0"
+                            max="100"
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 text-sm font-semibold mb-2">Payout Frequency</label>
+                          <select
+                            value={poolForm.payout_frequency}
+                            onChange={e => setPoolForm(prev => ({ ...prev, payout_frequency: e.target.value }))}
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          >
+                            <option value="monthly">Monthly</option>
+                            <option value="quarterly">Quarterly</option>
+                            <option value="annually">Annually</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Earnings preview */}
+                      {(() => {
+                        const preview = calcFixedReturnPreview(
+                          poolForm.min_investment || 10000,
+                          poolForm.annual_return_rate,
+                          poolForm.payout_frequency
+                        );
+                        return (
+                          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4">
+                            <div className="text-emerald-300 font-semibold mb-2">Investor Earnings Preview</div>
+                            <div className="grid grid-cols-3 gap-4 text-center">
+                              <div>
+                                <div className="text-2xl font-bold text-white">{formatCurrency(poolForm.min_investment || 10000)}</div>
+                                <div className="text-slate-400 text-xs">Investment</div>
+                              </div>
+                              <div>
+                                <div className="text-2xl font-bold text-emerald-400">{formatCurrency(preview.annual)}</div>
+                                <div className="text-slate-400 text-xs">Per Year</div>
+                              </div>
+                              <div>
+                                <div className="text-2xl font-bold text-blue-400">{formatCurrency(preview.per)}</div>
+                                <div className="text-slate-400 text-xs">Per {preview.label}</div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Investment Limits */}
+                  <div>
+                    <h3 className="text-white font-semibold mb-4 text-lg">Investment Limits</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Min Investment ($) *</label>
+                        <input
+                          type="number"
+                          value={poolForm.min_investment}
+                          onChange={e => setPoolForm(prev => ({ ...prev, min_investment: e.target.value }))}
+                          placeholder="10000"
+                          min="0"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 text-sm font-semibold mb-2">Max Investment ($) (optional)</label>
+                        <input
+                          type="number"
+                          value={poolForm.max_investment}
+                          onChange={e => setPoolForm(prev => ({ ...prev, max_investment: e.target.value }))}
+                          placeholder="No limit"
+                          min="0"
+                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Create Pool button */}
+                  <div className="pt-4 border-t border-slate-700">
+                    <button
+                      onClick={handleCreatePool}
+                      disabled={creatingPool || !poolForm.pool_name}
+                      className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-lg font-bold text-lg transition"
+                    >
+                      {creatingPool ? 'Creating Pool...' : 'Create Pool'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setShowCreatePool(true)}
+                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Create New Pool
+                </button>
+              </div>
+            )}
+
+            {/* Existing pools list */}
             {pools.map(pool => (
               <div key={pool.id} className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                 <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="text-2xl font-bold text-white">{pool.pool_name}</h2>
-                    <p className="text-slate-400">{pool.description}</p>
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h2 className="text-2xl font-bold text-white">{pool.pool_name}</h2>
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${getPoolTypeBadge(pool.pool_type)}`}>
+                          {getPoolTypeLabel(pool.pool_type)}
+                        </span>
+                      </div>
+                      <p className="text-slate-400">{pool.description}</p>
+                    </div>
                   </div>
                   <span className={`text-sm px-3 py-1 rounded-full font-semibold ${getStatusColor(pool.status)}`}>
                     {pool.status}
@@ -907,22 +1457,53 @@ export default function AdminInvestorDashboard() {
                   </div>
                 </div>
 
+                {/* Terms section - adapts to pool type */}
                 <div className="bg-slate-700/30 rounded-lg p-4 mb-6">
-                  <h3 className="text-white font-semibold mb-3">Profit Split Terms</h3>
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <div className="text-slate-400">Investor Share</div>
-                      <div className="text-blue-400 font-bold text-lg">{pool.investor_profit_share}%</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-400">Platform Fee</div>
-                      <div className="text-amber-400 font-bold text-lg">{pool.platform_fee_share}%</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-400">Dealer Share</div>
-                      <div className="text-green-400 font-bold text-lg">{pool.dealer_profit_share}%</div>
-                    </div>
-                  </div>
+                  {pool.pool_type === 'fixed_return' ? (
+                    <>
+                      <h3 className="text-white font-semibold mb-3">Fixed Return Terms</h3>
+                      <div className="grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <div className="text-slate-400">Annual Return Rate</div>
+                          <div className="text-emerald-400 font-bold text-lg">{pool.annual_return_rate}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Payout Frequency</div>
+                          <div className="text-blue-400 font-bold text-lg">{getPayoutLabel(pool.payout_frequency)}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Min Investment</div>
+                          <div className="text-white font-bold text-lg">{formatCurrency(pool.min_investment)}</div>
+                        </div>
+                      </div>
+                      {(() => {
+                        const preview = calcFixedReturnPreview(pool.min_investment || 10000, pool.annual_return_rate, pool.payout_frequency);
+                        return (
+                          <div className="mt-3 pt-3 border-t border-slate-600 text-sm text-slate-400">
+                            Example: {formatCurrency(pool.min_investment || 10000)} invested = {formatCurrency(preview.annual)}/year = {formatCurrency(preview.per)}/{preview.label}
+                          </div>
+                        );
+                      })()}
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-white font-semibold mb-3">Profit Split Terms</h3>
+                      <div className="grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <div className="text-slate-400">Investor Share</div>
+                          <div className="text-blue-400 font-bold text-lg">{pool.investor_profit_share}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Platform Fee</div>
+                          <div className="text-amber-400 font-bold text-lg">{pool.platform_fee_share}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Dealer Share</div>
+                          <div className="text-green-400 font-bold text-lg">{pool.dealer_profit_share}%</div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="bg-slate-700/30 rounded-lg p-4">

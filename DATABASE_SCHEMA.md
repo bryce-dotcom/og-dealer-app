@@ -2039,6 +2039,9 @@
 | `dealer_profit_share` | numeric(5,2) | YES | 20.00 |
 | `min_investment` | numeric(12,2) | YES | 10000.00 |
 | `max_investment` | numeric(12,2) | YES | |
+| `pool_type` | text | NO | profit_share |
+| `annual_return_rate` | numeric(5,2) | YES | |
+| `payout_frequency` | text | YES | |
 | `bank_account_name` | text | YES | |
 | `bank_account_number` | text | YES | |
 | `bank_routing_number` | text | YES | |
