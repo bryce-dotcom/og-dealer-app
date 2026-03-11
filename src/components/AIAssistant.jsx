@@ -147,7 +147,7 @@ export default function AIAssistant({ isOpen, onClose }) {
     
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.voice = selectedVoice;
-    utterance.rate = 0.9; // Slightly slower, deliberate like a wise old gangster
+    utterance.rate = 1.4; // Fast-talking gangster grandpa
     utterance.pitch = 0.75; // Deep, gruff gangster grandpa voice
     utterance.volume = 1.0;
     
