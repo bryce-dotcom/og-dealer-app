@@ -274,8 +274,9 @@ export default function InvestorLogin() {
 
     if (inviteStep === 'welcome' && inviteData) {
       const terms = inviteData.terms;
-      const poolType = terms.pool_type || inviteData.pool?.pool_type || 'profit_share';
+      const poolType = terms.pool_type || inviteData.pool?.pool_type || 'merchant_rate';
       const isFixedReturn = poolType === 'fixed_return';
+      const isMerchantRate = poolType === 'merchant_rate';
 
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900/80 to-slate-900">
@@ -292,6 +293,8 @@ export default function InvestorLogin() {
               <p className="text-xl text-blue-200 max-w-xl mx-auto leading-relaxed">
                 {isFixedReturn
                   ? 'Earn a guaranteed fixed return on your investment, paid out on a regular schedule.'
+                  : isMerchantRate
+                  ? 'You fund the account, and every time we use your money for a transaction, you automatically earn a percentage. Like a merchant, but you get paid.'
                   : 'Think of it like opening a joint bank account. You fund it, we buy and sell vehicles, you earn profit.'}
               </p>
             </div>
@@ -334,6 +337,8 @@ export default function InvestorLogin() {
                   <p className="text-slate-400 text-sm leading-relaxed">
                     {isFixedReturn
                       ? `You earn ${terms.annual_return_rate || inviteData.pool?.annual_return_rate || 0}% annually, paid out ${getPayoutLabel(terms.payout_frequency || inviteData.pool?.payout_frequency).toLowerCase()}. Track returns in real-time on your dashboard.`
+                      : isMerchantRate
+                      ? `You automatically earn ${terms.investor_profit_share || 3}% every time your capital is used in a transaction. No waiting for profit splits - you get paid per deal.`
                       : `You receive ${terms.investor_profit_share || 60}% of every vehicle transaction profit. Track returns in real-time on your dashboard.`}
                   </p>
                 </div>
@@ -347,13 +352,37 @@ export default function InvestorLogin() {
                 <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
                   isFixedReturn
                     ? 'text-emerald-400 bg-emerald-500/20'
+                    : isMerchantRate
+                    ? 'text-orange-400 bg-orange-500/20'
                     : 'text-violet-400 bg-violet-500/20'
                 }`}>
-                  {isFixedReturn ? 'Fixed Return' : 'Profit Share'}
+                  {isFixedReturn ? 'Fixed Return' : isMerchantRate ? 'Merchant Rate' : 'Profit Share'}
                 </span>
               </div>
 
-              {isFixedReturn ? (
+              {isMerchantRate ? (
+                <div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-6 mb-6">
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-orange-400 mb-1">{terms.investor_profit_share || 3}%</div>
+                      <div className="text-slate-400 text-sm">Per Transaction</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-green-400 mb-1">${((15000 * (terms.investor_profit_share || 3)) / 100).toLocaleString()}</div>
+                      <div className="text-slate-400 text-sm">Example on $15k</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-white mb-1">{formatCurrency(terms.min_investment || 10000)}</div>
+                      <div className="text-slate-400 text-sm">Min. Investment</div>
+                    </div>
+                  </div>
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 text-center">
+                    <p className="text-slate-300 text-sm">
+                      Every time we use your capital for a transaction, you earn <span className="text-orange-400 font-bold">{terms.investor_profit_share || 3}%</span> automatically. The more transactions, the more you earn.
+                    </p>
+                  </div>
+                </div>
+              ) : isFixedReturn ? (
                 <>
                   {(() => {
                     const rate = terms.annual_return_rate || inviteData.pool?.annual_return_rate || 0;

@@ -35,11 +35,11 @@ export default function AdminInvestorDashboard() {
   // Create Pool form state
   const [poolForm, setPoolForm] = useState({
     pool_name: '',
-    pool_type: 'profit_share',
+    pool_type: 'merchant_rate',
     description: '',
-    investor_profit_share: 60,
-    platform_fee_share: 20,
-    dealer_profit_share: 20,
+    investor_profit_share: 3,
+    platform_fee_share: 0,
+    dealer_profit_share: 0,
     annual_return_rate: 8.5,
     payout_frequency: 'quarterly',
     min_investment: 10000,
@@ -233,7 +233,13 @@ export default function AdminInvestorDashboard() {
         max_investment: poolForm.max_investment ? Number(poolForm.max_investment) : null,
       };
 
-      if (poolForm.pool_type === 'profit_share') {
+      if (poolForm.pool_type === 'merchant_rate') {
+        insertData.investor_profit_share = Number(poolForm.investor_profit_share) || 3;
+        insertData.platform_fee_share = 0;
+        insertData.dealer_profit_share = 0;
+        insertData.annual_return_rate = null;
+        insertData.payout_frequency = null;
+      } else if (poolForm.pool_type === 'profit_share') {
         insertData.investor_profit_share = Number(poolForm.investor_profit_share) || 60;
         insertData.platform_fee_share = Number(poolForm.platform_fee_share) || 20;
         insertData.dealer_profit_share = Number(poolForm.dealer_profit_share) || 20;
@@ -257,11 +263,11 @@ export default function AdminInvestorDashboard() {
       setShowCreatePool(false);
       setPoolForm({
         pool_name: '',
-        pool_type: 'profit_share',
+        pool_type: 'merchant_rate',
         description: '',
-        investor_profit_share: 60,
-        platform_fee_share: 20,
-        dealer_profit_share: 20,
+        investor_profit_share: 3,
+        platform_fee_share: 0,
+        dealer_profit_share: 0,
         annual_return_rate: 8.5,
         payout_frequency: 'quarterly',
         min_investment: 10000,
@@ -384,14 +390,14 @@ export default function AdminInvestorDashboard() {
   }
 
   function getPoolTypeBadge(poolType) {
-    if (poolType === 'fixed_return') {
-      return 'text-emerald-400 bg-emerald-500/20';
-    }
+    if (poolType === 'fixed_return') return 'text-emerald-400 bg-emerald-500/20';
+    if (poolType === 'merchant_rate') return 'text-orange-400 bg-orange-500/20';
     return 'text-violet-400 bg-violet-500/20';
   }
 
   function getPoolTypeLabel(poolType) {
     if (poolType === 'fixed_return') return 'Fixed Return';
+    if (poolType === 'merchant_rate') return 'Merchant Rate';
     return 'Profit Share';
   }
 
@@ -683,7 +689,36 @@ export default function AdminInvestorDashboard() {
                     {/* Terms - adapt based on pool type */}
                     {(() => {
                       const previewPool = getSelectedPoolForPreview();
-                      const pType = previewPool?.pool_type || 'profit_share';
+                      const pType = previewPool?.pool_type || 'merchant_rate';
+
+                      if (pType === 'merchant_rate') {
+                        const rate = previewPool?.investor_profit_share || inviteForm.investor_profit_share || 3;
+                        return (
+                          <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                            <div className="flex items-center gap-2 mb-4">
+                              <h3 className="text-white font-bold text-lg">Your Investment Terms</h3>
+                              <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-orange-400 bg-orange-500/20">Merchant Rate</span>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                              <div>
+                                <div className="text-slate-400 text-sm">Per Transaction Rate</div>
+                                <div className="text-2xl font-bold text-orange-400">{rate}%</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400 text-sm">Example on $15,000</div>
+                                <div className="text-2xl font-bold text-green-400">+${((15000 * rate) / 100).toLocaleString()}</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400 text-sm">Min. Investment</div>
+                                <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
+                              </div>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-slate-700 text-sm text-slate-400">
+                              You earn {rate}% every time your capital is used for a transaction. Like a merchant fee, but you're the one getting paid.
+                            </div>
+                          </div>
+                        );
+                      }
 
                       if (pType === 'fixed_return') {
                         const preview = calcFixedReturnPreview(
@@ -856,6 +891,10 @@ export default function AdminInvestorDashboard() {
                           <p className="text-slate-300 text-sm">
                             This pool pays a fixed {selPool.annual_return_rate}% annual return, distributed {getPayoutLabel(selPool.payout_frequency).toLowerCase()}.
                           </p>
+                        ) : selPool.pool_type === 'merchant_rate' ? (
+                          <p className="text-slate-300 text-sm">
+                            This pool pays <span className="text-orange-400 font-bold">{selPool.investor_profit_share}%</span> per transaction automatically when capital is used.
+                          </p>
                         ) : (
                           <p className="text-slate-300 text-sm">
                             This pool uses a profit-share model: {selPool.investor_profit_share}% investor / {selPool.platform_fee_share}% platform / {selPool.dealer_profit_share}% dealer.
@@ -868,7 +907,39 @@ export default function AdminInvestorDashboard() {
                   {/* Custom Terms - only show profit share fields for profit_share pools */}
                   {(() => {
                     const selPool = inviteForm.pool_id ? pools.find(p => p.id === inviteForm.pool_id) : null;
-                    const pType = selPool?.pool_type || 'profit_share';
+                    const pType = selPool?.pool_type || 'merchant_rate';
+
+                    if (pType === 'merchant_rate') {
+                      return (
+                        <div>
+                          <h3 className="text-white font-semibold mb-4 text-lg">Merchant Rate Terms</h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div className="bg-slate-700/50 rounded-lg p-4">
+                              <div className="text-slate-400 text-sm mb-1">Rate Per Transaction</div>
+                              <div className="text-2xl font-bold text-orange-400">{selPool?.investor_profit_share || 3}%</div>
+                              <div className="text-slate-400 text-xs mt-1">Earned automatically on every transaction</div>
+                            </div>
+                            <div>
+                              <label className="block text-slate-300 text-sm font-semibold mb-2">Min Investment ($)</label>
+                              <input
+                                type="number"
+                                value={inviteForm.min_investment}
+                                onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
+                                placeholder="10000"
+                                min="0"
+                                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                              />
+                            </div>
+                          </div>
+                          <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 text-sm">
+                            <div className="text-orange-300 font-semibold mb-1">Example</div>
+                            <div className="text-slate-300">
+                              Dealer uses ${(inviteForm.min_investment || 10000).toLocaleString()} to buy a vehicle → Investor earns <span className="text-green-400 font-bold">${((Number(inviteForm.min_investment || 10000) * (selPool?.investor_profit_share || 3)) / 100).toLocaleString()}</span> automatically
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
 
                     if (pType === 'fixed_return') {
                       // Fixed return pools: show read-only rate info + min investment override
@@ -1156,10 +1227,28 @@ export default function AdminInvestorDashboard() {
                   {/* Pool Type Toggle */}
                   <div>
                     <label className="block text-slate-300 text-sm font-semibold mb-3">Pool Type</label>
-                    <div className="flex gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <button
-                        onClick={() => setPoolForm(prev => ({ ...prev, pool_type: 'profit_share' }))}
-                        className={`flex-1 px-6 py-4 rounded-xl border-2 transition font-semibold text-left ${
+                        onClick={() => setPoolForm(prev => ({ ...prev, pool_type: 'merchant_rate', investor_profit_share: 3, platform_fee_share: 0, dealer_profit_share: 0 }))}
+                        className={`px-5 py-4 rounded-xl border-2 transition font-semibold text-left ${
+                          poolForm.pool_type === 'merchant_rate'
+                            ? 'border-orange-500 bg-orange-500/10 text-white'
+                            : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                            poolForm.pool_type === 'merchant_rate' ? 'border-orange-400' : 'border-slate-500'
+                          }`}>
+                            {poolForm.pool_type === 'merchant_rate' && <div className="w-2 h-2 rounded-full bg-orange-400"></div>}
+                          </div>
+                          <span className="font-bold">Merchant Rate</span>
+                        </div>
+                        <p className="text-xs text-slate-400 ml-6">Flat % earned per transaction when their capital is used</p>
+                      </button>
+                      <button
+                        onClick={() => setPoolForm(prev => ({ ...prev, pool_type: 'profit_share', investor_profit_share: 60, platform_fee_share: 20, dealer_profit_share: 20 }))}
+                        className={`px-5 py-4 rounded-xl border-2 transition font-semibold text-left ${
                           poolForm.pool_type === 'profit_share'
                             ? 'border-violet-500 bg-violet-500/10 text-white'
                             : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
@@ -1173,11 +1262,11 @@ export default function AdminInvestorDashboard() {
                           </div>
                           <span className="font-bold">Profit Share</span>
                         </div>
-                        <p className="text-xs text-slate-400 ml-6">Investors earn a percentage of each vehicle transaction profit</p>
+                        <p className="text-xs text-slate-400 ml-6">Split vehicle transaction profit between investor, platform & dealer</p>
                       </button>
                       <button
                         onClick={() => setPoolForm(prev => ({ ...prev, pool_type: 'fixed_return' }))}
-                        className={`flex-1 px-6 py-4 rounded-xl border-2 transition font-semibold text-left ${
+                        className={`px-5 py-4 rounded-xl border-2 transition font-semibold text-left ${
                           poolForm.pool_type === 'fixed_return'
                             ? 'border-emerald-500 bg-emerald-500/10 text-white'
                             : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
@@ -1191,13 +1280,58 @@ export default function AdminInvestorDashboard() {
                           </div>
                           <span className="font-bold">Fixed Return</span>
                         </div>
-                        <p className="text-xs text-slate-400 ml-6">Investors earn a fixed annual percentage, paid on a schedule</p>
+                        <p className="text-xs text-slate-400 ml-6">Fixed annual %, paid on a schedule (monthly, quarterly, annually)</p>
                       </button>
                     </div>
                   </div>
 
                   {/* Pool-type specific fields */}
-                  {poolForm.pool_type === 'profit_share' ? (
+                  {poolForm.pool_type === 'merchant_rate' ? (
+                    <div>
+                      <h3 className="text-white font-semibold mb-4 text-lg">Merchant Rate</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-slate-300 text-sm font-semibold mb-2">Rate Per Transaction %</label>
+                          <input
+                            type="number"
+                            value={poolForm.investor_profit_share}
+                            onChange={e => setPoolForm(prev => ({ ...prev, investor_profit_share: e.target.value }))}
+                            placeholder="3"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 outline-none text-2xl font-bold"
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <div className="bg-slate-700/30 rounded-lg p-4 w-full">
+                            <div className="text-slate-400 text-sm mb-1">How it works</div>
+                            <div className="text-white text-sm">
+                              Every time the dealer uses investor capital for a transaction, the investor automatically earns <span className="text-orange-400 font-bold">{poolForm.investor_profit_share || 3}%</span> of the transaction amount.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Example calculator */}
+                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4">
+                        <div className="text-orange-400 text-sm font-semibold mb-2">Example</div>
+                        <div className="grid grid-cols-3 gap-4 text-center">
+                          <div>
+                            <div className="text-slate-400 text-xs">Transaction</div>
+                            <div className="text-white font-bold text-lg">$15,000</div>
+                          </div>
+                          <div>
+                            <div className="text-slate-400 text-xs">Rate</div>
+                            <div className="text-orange-400 font-bold text-lg">{poolForm.investor_profit_share || 3}%</div>
+                          </div>
+                          <div>
+                            <div className="text-slate-400 text-xs">Investor Earns</div>
+                            <div className="text-green-400 font-bold text-lg">${((15000 * (Number(poolForm.investor_profit_share) || 3)) / 100).toLocaleString()}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : poolForm.pool_type === 'profit_share' ? (
                     <div>
                       <h3 className="text-white font-semibold mb-4 text-lg">Profit Split</h3>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -1484,6 +1618,21 @@ export default function AdminInvestorDashboard() {
                           </div>
                         );
                       })()}
+                    </>
+                  ) : pool.pool_type === 'merchant_rate' ? (
+                    <>
+                      <h3 className="text-white font-semibold mb-3">Merchant Rate Terms</h3>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-slate-400">Rate Per Transaction</div>
+                          <div className="text-orange-400 font-bold text-2xl">{pool.investor_profit_share}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Example on $15,000</div>
+                          <div className="text-green-400 font-bold text-lg">+${((15000 * (pool.investor_profit_share || 3)) / 100).toLocaleString()}</div>
+                          <div className="text-slate-500 text-xs">earned per transaction</div>
+                        </div>
+                      </div>
                     </>
                   ) : (
                     <>
