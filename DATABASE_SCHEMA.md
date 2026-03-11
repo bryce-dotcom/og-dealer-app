@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-03-10 (updated with Phase 9 features)
+> **Last Updated:** 2026-03-10 (updated with Phase 10 features)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 101
+> **Total Tables:** 110
 
 ---
 
@@ -149,6 +149,25 @@
 
 ### Deal Timeline (Phase 9)
 - [`deal_timeline`](#deal_timeline) *
+
+### Floor Plan (Phase 10)
+- [`floor_plan_lenders`](#floor_plan_lenders) *
+- [`floor_plan_vehicles`](#floor_plan_vehicles) *
+
+### F&I Products (Phase 10)
+- [`fi_products`](#fi_products) *
+- [`fi_deal_products`](#fi_deal_products) *
+
+### Auction & Wholesale (Phase 10)
+- [`auction_accounts`](#auction_accounts) *
+- [`auction_transactions`](#auction_transactions) *
+- [`wholesale_buyers`](#wholesale_buyers) *
+
+### Photos (Phase 10)
+- [`vehicle_photos`](#vehicle_photos) *
+
+### Title & Registration (Phase 10)
+- [`title_tracking`](#title_tracking) *
 
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
@@ -2703,3 +2722,273 @@
 | `employee_id` | integer | YES | |
 | `employee_name` | text | YES | |
 | `created_at` | timestamptz | YES | now() |
+
+---
+
+# Floor Plan (Phase 10)
+
+## floor_plan_lenders (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `lender_name` | text | NO | |
+| `contact_name` | text | YES | |
+| `contact_phone` | text | YES | |
+| `contact_email` | text | YES | |
+| `account_number` | text | YES | |
+| `interest_rate` | numeric(5,3) | YES | |
+| `max_days` | integer | YES | 90 |
+| `curtailment_schedule` | jsonb | YES | |
+| `max_advance_percent` | numeric(5,2) | YES | 100 |
+| `credit_line` | numeric(12,2) | YES | |
+| `current_balance` | numeric(12,2) | YES | 0 |
+| `available_credit` | numeric(12,2) | YES | |
+| `active` | boolean | YES | true |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## floor_plan_vehicles (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `lender_id` | uuid | NO | |
+| `advance_amount` | numeric(10,2) | NO | |
+| `interest_rate` | numeric(5,3) | YES | |
+| `funded_date` | date | NO | |
+| `maturity_date` | date | YES | |
+| `curtailment_1_date` | date | YES | |
+| `curtailment_1_amount` | numeric(10,2) | YES | |
+| `curtailment_1_paid` | boolean | YES | false |
+| `curtailment_2_date` | date | YES | |
+| `curtailment_2_amount` | numeric(10,2) | YES | |
+| `curtailment_2_paid` | boolean | YES | false |
+| `curtailment_3_date` | date | YES | |
+| `curtailment_3_amount` | numeric(10,2) | YES | |
+| `curtailment_3_paid` | boolean | YES | false |
+| `accrued_interest` | numeric(10,2) | YES | 0 |
+| `interest_paid` | numeric(10,2) | YES | 0 |
+| `payoff_amount` | numeric(10,2) | YES | |
+| `paid_off` | boolean | YES | false |
+| `paid_off_date` | date | YES | |
+| `paid_off_amount` | numeric(10,2) | YES | |
+| `status` | text | YES | active (active, curtailed, paid_off, defaulted) |
+| `days_on_plan` | integer | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+---
+
+# F&I Products (Phase 10)
+
+## fi_products (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `product_type` | text | NO | (gap, warranty, service_contract, tire_wheel, paint_protection, theft_deterrent, key_replacement, dent_repair, windshield, maintenance_plan, credit_life, disability, custom) |
+| `name` | text | NO | |
+| `provider` | text | YES | |
+| `description` | text | YES | |
+| `dealer_cost` | numeric(10,2) | YES | 0 |
+| `retail_price` | numeric(10,2) | YES | 0 |
+| `profit` | numeric(10,2) | YES | 0 |
+| `term_months` | integer | YES | |
+| `mileage_limit` | integer | YES | |
+| `deductible` | numeric(10,2) | YES | |
+| `coverage_details` | jsonb | YES | |
+| `active` | boolean | YES | true |
+| `sort_order` | integer | YES | 0 |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## fi_deal_products (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `deal_id` | integer | NO | |
+| `product_id` | uuid | YES | |
+| `vehicle_id` | text | YES | |
+| `product_type` | text | NO | |
+| `product_name` | text | NO | |
+| `dealer_cost` | numeric(10,2) | YES | 0 |
+| `sell_price` | numeric(10,2) | YES | 0 |
+| `profit` | numeric(10,2) | YES | 0 |
+| `term_months` | integer | YES | |
+| `mileage_limit` | integer | YES | |
+| `deductible` | numeric(10,2) | YES | |
+| `contract_number` | text | YES | |
+| `provider` | text | YES | |
+| `effective_date` | date | YES | |
+| `expiration_date` | date | YES | |
+| `status` | text | YES | active (active, cancelled, claimed, expired) |
+| `cancelled_date` | date | YES | |
+| `refund_amount` | numeric(10,2) | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+---
+
+# Auction & Wholesale (Phase 10)
+
+## auction_accounts (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `auction_name` | text | NO | |
+| `location` | text | YES | |
+| `contact_name` | text | YES | |
+| `contact_phone` | text | YES | |
+| `contact_email` | text | YES | |
+| `account_number` | text | YES | |
+| `buyer_number` | text | YES | |
+| `buy_fee` | numeric(10,2) | YES | 0 |
+| `sell_fee` | numeric(10,2) | YES | 0 |
+| `registration_fee` | numeric(10,2) | YES | 0 |
+| `active` | boolean | YES | true |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## auction_transactions (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `auction_id` | uuid | NO | |
+| `vehicle_id` | text | YES | |
+| `transaction_type` | text | NO | (buy, sell) |
+| `transaction_date` | date | NO | |
+| `run_number` | text | YES | |
+| `lane` | text | YES | |
+| `vin` | text | YES | |
+| `year` | integer | YES | |
+| `make` | text | YES | |
+| `model` | text | YES | |
+| `mileage` | integer | YES | |
+| `condition_grade` | text | YES | |
+| `bid_amount` | numeric(10,2) | YES | |
+| `hammer_price` | numeric(10,2) | YES | |
+| `buy_fee` | numeric(10,2) | YES | 0 |
+| `sell_fee` | numeric(10,2) | YES | 0 |
+| `transport_cost` | numeric(10,2) | YES | 0 |
+| `total_cost` | numeric(10,2) | YES | |
+| `total_proceeds` | numeric(10,2) | YES | |
+| `arbitration_status` | text | YES | none (none, filed, pending, won, lost, settled) |
+| `arbitration_reason` | text | YES | |
+| `arbitration_amount` | numeric(10,2) | YES | |
+| `arbitration_resolved_at` | timestamptz | YES | |
+| `status` | text | YES | completed (pending, completed, cancelled, arbitration) |
+| `payment_status` | text | YES | unpaid (unpaid, paid, partial) |
+| `payment_date` | date | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## wholesale_buyers (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `name` | text | NO | |
+| `company` | text | YES | |
+| `phone` | text | YES | |
+| `email` | text | YES | |
+| `dealer_license` | text | YES | |
+| `tax_id` | text | YES | |
+| `preferred_makes` | jsonb | YES | |
+| `preferred_types` | jsonb | YES | |
+| `price_range_min` | numeric(10,2) | YES | |
+| `price_range_max` | numeric(10,2) | YES | |
+| `total_purchases` | integer | YES | 0 |
+| `total_spent` | numeric(12,2) | YES | 0 |
+| `last_purchase_date` | date | YES | |
+| `active` | boolean | YES | true |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+---
+
+# Photos (Phase 10)
+
+## vehicle_photos (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `url` | text | NO | |
+| `storage_path` | text | YES | |
+| `thumbnail_url` | text | YES | |
+| `photo_type` | text | YES | exterior (exterior, interior, engine, trunk, wheel, damage, vin_plate, odometer, document, other) |
+| `caption` | text | YES | |
+| `sort_order` | integer | YES | 0 |
+| `is_primary` | boolean | YES | false |
+| `width` | integer | YES | |
+| `height` | integer | YES | |
+| `file_size` | integer | YES | |
+| `file_name` | text | YES | |
+| `watermarked` | boolean | YES | false |
+| `watermarked_url` | text | YES | |
+| `background_removed` | boolean | YES | false |
+| `uploaded_by` | integer | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+---
+
+# Title & Registration (Phase 10)
+
+## title_tracking (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `deal_id` | integer | YES | |
+| `customer_id` | integer | YES | |
+| `title_number` | text | YES | |
+| `title_state` | text | YES | |
+| `title_status` | text | YES | pending (pending, received, at_dmv, processing, issued, mailed, delivered, held, problem) |
+| `title_received_date` | date | YES | |
+| `sent_to_dmv_date` | date | YES | |
+| `new_title_issued_date` | date | YES | |
+| `mailed_to_customer_date` | date | YES | |
+| `delivered_date` | date | YES | |
+| `lien_holder` | text | YES | |
+| `lien_release_received` | boolean | YES | false |
+| `lien_release_date` | date | YES | |
+| `registration_status` | text | YES | pending (pending, submitted, processing, completed, expired) |
+| `registration_expiry` | date | YES | |
+| `plate_number` | text | YES | |
+| `plate_type` | text | YES | |
+| `temp_tag_number` | text | YES | |
+| `temp_tag_issued` | date | YES | |
+| `temp_tag_expiry` | date | YES | |
+| `temp_tag_extensions` | integer | YES | 0 |
+| `title_fee` | numeric(10,2) | YES | |
+| `registration_fee` | numeric(10,2) | YES | |
+| `plate_fee` | numeric(10,2) | YES | |
+| `sales_tax` | numeric(10,2) | YES | |
+| `total_fees` | numeric(10,2) | YES | |
+| `fees_paid` | boolean | YES | false |
+| `problem_description` | text | YES | |
+| `problem_resolved` | boolean | YES | false |
+| `assigned_to` | integer | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |

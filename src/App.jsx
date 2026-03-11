@@ -52,6 +52,11 @@ import VehicleTrackingPage from './pages/VehicleTrackingPage';
 import TradeInsPage from './pages/TradeInsPage';
 import DealTimelinePage from './pages/DealTimelinePage';
 import VehicleDetailPage from './pages/VehicleDetailPage';
+import FloorPlanPage from './pages/FloorPlanPage';
+import FIProductsPage from './pages/FIProductsPage';
+import AuctionPage from './pages/AuctionPage';
+import PhotoManagementPage from './pages/PhotoManagementPage';
+import TitleTrackingPage from './pages/TitleTrackingPage';
 
 export default function App() {
   return (
@@ -115,6 +120,11 @@ export default function App() {
           <Route path="/trade-ins" element={<TradeInsPage />} />
           <Route path="/deal-timeline" element={<DealTimelinePage />} />
           <Route path="/vehicle/:id" element={<VehicleDetailPage />} />
+          <Route path="/floor-plan" element={<FloorPlanPage />} />
+          <Route path="/fi-products" element={<FIProductsPage />} />
+          <Route path="/auctions" element={<AuctionPage />} />
+          <Route path="/photos" element={<PhotoManagementPage />} />
+          <Route path="/titles" element={<TitleTrackingPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
