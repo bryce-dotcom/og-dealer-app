@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-03-10 (updated with Phase 10 features)
+> **Last Updated:** 2026-03-10 (updated with Phase 11 features)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 110
+> **Total Tables:** 117
 
 ---
 
@@ -168,6 +168,23 @@
 
 ### Title & Registration (Phase 10)
 - [`title_tracking`](#title_tracking) *
+
+### Vendors (Phase 11)
+- [`vendors`](#vendors) *
+- [`vendor_payments`](#vendor_payments) *
+
+### Test Drives (Phase 11)
+- [`test_drives`](#test_drives) *
+
+### Key & Lot Tracking (Phase 11)
+- [`key_tracking`](#key_tracking) *
+- [`lot_positions`](#lot_positions) *
+
+### Warranty Claims (Phase 11)
+- [`warranty_claims`](#warranty_claims) *
+
+### Tasks (Phase 11)
+- [`dealer_tasks`](#dealer_tasks) *
 
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
@@ -2989,6 +3006,195 @@
 | `problem_description` | text | YES | |
 | `problem_resolved` | boolean | YES | false |
 | `assigned_to` | integer | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## vendors (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `name` | text | NO | |
+| `company` | text | YES | |
+| `vendor_type` | text | YES | general (mechanic, body_shop, detail, parts, tires, glass, electrical, transport, auction, general) |
+| `phone` | text | YES | |
+| `email` | text | YES | |
+| `address` | text | YES | |
+| `city` | text | YES | |
+| `state` | text | YES | |
+| `zip` | text | YES | |
+| `payment_terms` | text | YES | |
+| `tax_id` | text | YES | |
+| `w9_on_file` | boolean | YES | false |
+| `total_paid` | numeric(12,2) | YES | 0 |
+| `total_jobs` | integer | YES | 0 |
+| `avg_rating` | numeric(3,1) | YES | |
+| `last_used_at` | timestamptz | YES | |
+| `active` | boolean | YES | true |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## vendor_payments (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vendor_id` | uuid | NO | |
+| `vehicle_id` | text | YES | |
+| `description` | text | NO | |
+| `amount` | numeric(10,2) | NO | |
+| `payment_date` | date | NO | |
+| `payment_method` | text | YES | (check, cash, card, ach, other) |
+| `reference_number` | text | YES | |
+| `category` | text | YES | |
+| `invoice_number` | text | YES | |
+| `invoice_date` | date | YES | |
+| `due_date` | date | YES | |
+| `status` | text | YES | paid (pending, paid, overdue, cancelled) |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## test_drives (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `customer_id` | integer | YES | |
+| `customer_name` | text | NO | |
+| `customer_phone` | text | YES | |
+| `customer_email` | text | YES | |
+| `license_number` | text | YES | |
+| `license_state` | text | YES | |
+| `license_expiry` | date | YES | |
+| `license_verified` | boolean | YES | false |
+| `license_photo_url` | text | YES | |
+| `insurance_company` | text | YES | |
+| `insurance_policy` | text | YES | |
+| `insurance_verified` | boolean | YES | false |
+| `salesperson_id` | integer | YES | |
+| `salesperson_name` | text | YES | |
+| `started_at` | timestamptz | NO | now() |
+| `ended_at` | timestamptz | YES | |
+| `duration_minutes` | integer | YES | |
+| `mileage_out` | integer | YES | |
+| `mileage_in` | integer | YES | |
+| `route_notes` | text | YES | |
+| `outcome` | text | YES | pending (pending, interested, not_interested, follow_up, sold, no_show) |
+| `feedback` | text | YES | |
+| `follow_up_date` | date | YES | |
+| `status` | text | YES | active (scheduled, active, completed, cancelled) |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## key_tracking (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `key_count` | integer | YES | 1 |
+| `key_type` | text | YES | standard (standard, fob, smart, proximity, valet, spare) |
+| `has_spare` | boolean | YES | false |
+| `hook_number` | text | YES | |
+| `current_location` | text | YES | key_board (key_board, salesperson, service, customer, detail, office, lost, other) |
+| `checked_out_to` | integer | YES | |
+| `checked_out_name` | text | YES | |
+| `checked_out_at` | timestamptz | YES | |
+| `checked_out_reason` | text | YES | |
+| `last_verified_at` | timestamptz | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## lot_positions (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | YES | |
+| `lot_name` | text | YES | Main |
+| `row_label` | text | YES | |
+| `spot_number` | text | YES | |
+| `position_label` | text | YES | |
+| `zone` | text | YES | |
+| `occupied` | boolean | YES | false |
+| `reserved` | boolean | YES | false |
+| `reserved_for` | text | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## warranty_claims (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `deal_id` | integer | YES | |
+| `customer_id` | integer | YES | |
+| `fi_product_id` | uuid | YES | |
+| `claim_number` | text | YES | |
+| `claim_type` | text | YES | warranty (warranty, goodwill, recall, service_contract, gap) |
+| `provider` | text | YES | |
+| `provider_claim_number` | text | YES | |
+| `mileage_at_claim` | integer | YES | |
+| `complaint` | text | NO | |
+| `cause` | text | YES | |
+| `correction` | text | YES | |
+| `parts_used` | jsonb | YES | |
+| `parts_cost` | numeric(10,2) | YES | 0 |
+| `labor_cost` | numeric(10,2) | YES | 0 |
+| `total_cost` | numeric(10,2) | YES | 0 |
+| `deductible` | numeric(10,2) | YES | 0 |
+| `approved_amount` | numeric(10,2) | YES | |
+| `paid_amount` | numeric(10,2) | YES | |
+| `dealer_responsibility` | numeric(10,2) | YES | 0 |
+| `submitted_at` | timestamptz | YES | now() |
+| `approved_at` | timestamptz | YES | |
+| `denied_at` | timestamptz | YES | |
+| `paid_at` | timestamptz | YES | |
+| `completed_at` | timestamptz | YES | |
+| `status` | text | YES | draft (draft, submitted, under_review, approved, denied, paid, completed, appealed) |
+| `denial_reason` | text | YES | |
+| `appeal_notes` | text | YES | |
+| `assigned_to` | integer | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## dealer_tasks (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `title` | text | NO | |
+| `description` | text | YES | |
+| `category` | text | YES | general (general, sales, finance, service, admin, compliance, marketing, inventory, customer, other) |
+| `priority` | text | YES | normal (low, normal, high, urgent) |
+| `assigned_to` | integer | YES | |
+| `assigned_name` | text | YES | |
+| `created_by` | integer | YES | |
+| `created_by_name` | text | YES | |
+| `due_date` | date | YES | |
+| `started_at` | timestamptz | YES | |
+| `completed_at` | timestamptz | YES | |
+| `status` | text | YES | todo (todo, in_progress, review, completed, cancelled) |
+| `vehicle_id` | text | YES | |
+| `deal_id` | integer | YES | |
+| `customer_id` | integer | YES | |
+| `checklist` | jsonb | YES | |
+| `tags` | jsonb | YES | |
+| `sort_order` | integer | YES | 0 |
 | `notes` | text | YES | |
 | `created_at` | timestamptz | YES | now() |
 | `updated_at` | timestamptz | YES | now() |

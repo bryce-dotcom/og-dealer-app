@@ -57,6 +57,11 @@ import FIProductsPage from './pages/FIProductsPage';
 import AuctionPage from './pages/AuctionPage';
 import PhotoManagementPage from './pages/PhotoManagementPage';
 import TitleTrackingPage from './pages/TitleTrackingPage';
+import VendorManagementPage from './pages/VendorManagementPage';
+import TestDrivePage from './pages/TestDrivePage';
+import KeyTrackingPage from './pages/KeyTrackingPage';
+import WarrantyClaimsPage from './pages/WarrantyClaimsPage';
+import TaskManagementPage from './pages/TaskManagementPage';
 
 export default function App() {
   return (
@@ -125,6 +130,11 @@ export default function App() {
           <Route path="/auctions" element={<AuctionPage />} />
           <Route path="/photos" element={<PhotoManagementPage />} />
           <Route path="/titles" element={<TitleTrackingPage />} />
+          <Route path="/vendors" element={<VendorManagementPage />} />
+          <Route path="/test-drives" element={<TestDrivePage />} />
+          <Route path="/keys" element={<KeyTrackingPage />} />
+          <Route path="/warranty-claims" element={<WarrantyClaimsPage />} />
+          <Route path="/tasks" element={<TaskManagementPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
