@@ -62,6 +62,11 @@ import TestDrivePage from './pages/TestDrivePage';
 import KeyTrackingPage from './pages/KeyTrackingPage';
 import WarrantyClaimsPage from './pages/WarrantyClaimsPage';
 import TaskManagementPage from './pages/TaskManagementPage';
+import ServiceOrdersPage from './pages/ServiceOrdersPage';
+import LenderManagementPage from './pages/LenderManagementPage';
+import DealJacketPage from './pages/DealJacketPage';
+import VehicleInspectionsPage from './pages/VehicleInspectionsPage';
+import CustomerReviewsPage from './pages/CustomerReviewsPage';
 
 export default function App() {
   return (
@@ -135,6 +140,11 @@ export default function App() {
           <Route path="/keys" element={<KeyTrackingPage />} />
           <Route path="/warranty-claims" element={<WarrantyClaimsPage />} />
           <Route path="/tasks" element={<TaskManagementPage />} />
+          <Route path="/service-orders" element={<ServiceOrdersPage />} />
+          <Route path="/lenders" element={<LenderManagementPage />} />
+          <Route path="/deal-jackets" element={<DealJacketPage />} />
+          <Route path="/inspections" element={<VehicleInspectionsPage />} />
+          <Route path="/reviews" element={<CustomerReviewsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

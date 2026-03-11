@@ -1,13 +1,13 @@
 # OGDealer Database Schema
 
-> **Last Updated:** 2026-03-10 (updated with Phase 11 features)
+> **Last Updated:** 2026-03-10 (updated with Phase 12 features)
 >
 > **Source:** `https://rlzudfinlxonpbwacxpt.supabase.co/rest/v1/` OpenAPI endpoint
 >
 > **IMPORTANT:** Reference this file before writing ANY Supabase query.
 > Column names, types, and nullability are authoritative. If a column is not listed here, it does NOT exist.
 >
-> **Total Tables:** 117
+> **Total Tables:** 125
 
 ---
 
@@ -185,6 +185,24 @@
 
 ### Tasks (Phase 11)
 - [`dealer_tasks`](#dealer_tasks) *
+
+### Service (Phase 12)
+- [`service_orders`](#service_orders) *
+- [`service_line_items`](#service_line_items) *
+
+### Lenders (Phase 12)
+- [`lenders`](#lenders) *
+- [`lender_submissions`](#lender_submissions) *
+
+### Deal Jackets (Phase 12)
+- [`deal_jackets`](#deal_jackets) *
+- [`deal_jacket_documents`](#deal_jacket_documents) *
+
+### Inspections (Phase 12)
+- [`vehicle_inspections`](#vehicle_inspections) *
+
+### Reviews (Phase 12)
+- [`customer_reviews`](#customer_reviews) *
 
 ### AI & Research
 - [`ai_conversations`](#ai_conversations)
@@ -3195,6 +3213,242 @@
 | `checklist` | jsonb | YES | |
 | `tags` | jsonb | YES | |
 | `sort_order` | integer | YES | 0 |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## service_orders (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | YES | |
+| `customer_id` | integer | YES | |
+| `order_number` | text | YES | |
+| `order_type` | text | YES | repair (repair, maintenance, detail, inspection, warranty, recall, internal, customer_pay) |
+| `priority` | text | YES | normal (low, normal, high, urgent) |
+| `mileage_in` | integer | YES | |
+| `mileage_out` | integer | YES | |
+| `customer_concern` | text | YES | |
+| `diagnosis` | text | YES | |
+| `recommendation` | text | YES | |
+| `technician_id` | integer | YES | |
+| `technician_name` | text | YES | |
+| `advisor_id` | integer | YES | |
+| `advisor_name` | text | YES | |
+| `parts_cost` | numeric(10,2) | YES | 0 |
+| `labor_cost` | numeric(10,2) | YES | 0 |
+| `sublet_cost` | numeric(10,2) | YES | 0 |
+| `tax` | numeric(10,2) | YES | 0 |
+| `discount` | numeric(10,2) | YES | 0 |
+| `total` | numeric(10,2) | YES | 0 |
+| `payment_method` | text | YES | (cash, check, card, warranty, internal, other) |
+| `paid` | boolean | YES | false |
+| `paid_at` | timestamptz | YES | |
+| `invoice_number` | text | YES | |
+| `promised_date` | date | YES | |
+| `started_at` | timestamptz | YES | |
+| `completed_at` | timestamptz | YES | |
+| `status` | text | YES | open (estimate, open, in_progress, waiting_parts, waiting_approval, completed, invoiced, closed, cancelled) |
+| `vendor_id` | uuid | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## service_line_items (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `service_order_id` | uuid | NO | |
+| `dealer_id` | integer | NO | |
+| `line_type` | text | YES | labor (labor, parts, sublet, fee, discount) |
+| `description` | text | NO | |
+| `quantity` | numeric(10,2) | YES | 1 |
+| `unit_price` | numeric(10,2) | YES | 0 |
+| `total` | numeric(10,2) | YES | 0 |
+| `part_number` | text | YES | |
+| `part_source` | text | YES | |
+| `labor_hours` | numeric(6,2) | YES | |
+| `labor_rate` | numeric(10,2) | YES | |
+| `sort_order` | integer | YES | 0 |
+| `created_at` | timestamptz | YES | now() |
+
+## lenders (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `name` | text | NO | |
+| `contact_name` | text | YES | |
+| `phone` | text | YES | |
+| `email` | text | YES | |
+| `fax` | text | YES | |
+| `website` | text | YES | |
+| `address` | text | YES | |
+| `city` | text | YES | |
+| `state` | text | YES | |
+| `zip` | text | YES | |
+| `lender_type` | text | YES | bank (bank, credit_union, captive, subprime, bhph, online, other) |
+| `min_credit_score` | integer | YES | |
+| `max_ltv` | numeric(5,2) | YES | |
+| `min_amount` | numeric(10,2) | YES | |
+| `max_amount` | numeric(10,2) | YES | |
+| `flat_fee` | numeric(10,2) | YES | |
+| `reserve_flat` | numeric(10,2) | YES | |
+| `reserve_percent` | numeric(5,2) | YES | |
+| `base_rate` | numeric(5,2) | YES | |
+| `max_rate` | numeric(5,2) | YES | |
+| `max_term_new` | integer | YES | |
+| `max_term_used` | integer | YES | |
+| `max_vehicle_age` | integer | YES | |
+| `max_vehicle_miles` | integer | YES | |
+| `dealer_number` | text | YES | |
+| `portal_url` | text | YES | |
+| `portal_username` | text | YES | |
+| `submission_method` | text | YES | (dealertrack, routeone, cudl, manual, portal, email, fax) |
+| `total_funded` | integer | YES | 0 |
+| `total_funded_amount` | numeric(12,2) | YES | 0 |
+| `avg_approval_days` | numeric(4,1) | YES | |
+| `approval_rate` | numeric(5,2) | YES | |
+| `last_funded_at` | timestamptz | YES | |
+| `active` | boolean | YES | true |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## lender_submissions (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `lender_id` | uuid | NO | |
+| `deal_id` | integer | YES | |
+| `customer_id` | integer | YES | |
+| `vehicle_id` | text | YES | |
+| `submitted_at` | timestamptz | YES | now() |
+| `submitted_by` | integer | YES | |
+| `submission_method` | text | YES | |
+| `amount_requested` | numeric(10,2) | YES | |
+| `term_requested` | integer | YES | |
+| `rate_requested` | numeric(5,2) | YES | |
+| `status` | text | YES | pending (pending, approved, conditional, countered, declined, expired, funded) |
+| `approved_amount` | numeric(10,2) | YES | |
+| `approved_rate` | numeric(5,2) | YES | |
+| `approved_term` | integer | YES | |
+| `buy_rate` | numeric(5,2) | YES | |
+| `reserve_amount` | numeric(10,2) | YES | |
+| `conditions` | text | YES | |
+| `stipulations` | jsonb | YES | |
+| `decline_reason` | text | YES | |
+| `funded_at` | timestamptz | YES | |
+| `funded_amount` | numeric(10,2) | YES | |
+| `funding_delay_days` | integer | YES | |
+| `response_at` | timestamptz | YES | |
+| `expires_at` | timestamptz | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+
+## deal_jackets (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `deal_id` | integer | NO | |
+| `status` | text | YES | incomplete (incomplete, complete, archived) |
+| `completion_percent` | numeric(5,2) | YES | 0 |
+| `reviewed_by` | integer | YES | |
+| `reviewed_at` | timestamptz | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## deal_jacket_documents (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `deal_jacket_id` | uuid | NO | |
+| `dealer_id` | integer | NO | |
+| `document_name` | text | NO | |
+| `document_type` | text | YES | other (buyers_guide, bill_of_sale, title, registration, insurance, credit_app, contract, addendum, disclosure, warranty, trade_title, payoff_letter, stip, id_copy, proof_income, proof_residence, power_of_attorney, odometer, lien_release, other) |
+| `required` | boolean | YES | false |
+| `received` | boolean | YES | false |
+| `received_at` | timestamptz | YES | |
+| `verified` | boolean | YES | false |
+| `verified_by` | integer | YES | |
+| `verified_at` | timestamptz | YES | |
+| `file_url` | text | YES | |
+| `file_name` | text | YES | |
+| `file_size` | integer | YES | |
+| `expiry_date` | date | YES | |
+| `notes` | text | YES | |
+| `sort_order` | integer | YES | 0 |
+| `created_at` | timestamptz | YES | now() |
+
+## vehicle_inspections (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `vehicle_id` | text | NO | |
+| `inspection_type` | text | YES | purchase (purchase, trade_in, delivery, safety, emissions, recon, custom) |
+| `inspector_id` | integer | YES | |
+| `inspector_name` | text | YES | |
+| `overall_condition` | text | YES | (excellent, good, fair, poor, salvage) |
+| `pass` | boolean | YES | |
+| `score` | numeric(5,1) | YES | |
+| `exterior` | jsonb | YES | |
+| `interior` | jsonb | YES | |
+| `mechanical` | jsonb | YES | |
+| `electrical` | jsonb | YES | |
+| `tires_brakes` | jsonb | YES | |
+| `underbody` | jsonb | YES | |
+| `fluids` | jsonb | YES | |
+| `issues_found` | integer | YES | 0 |
+| `critical_issues` | integer | YES | 0 |
+| `estimated_repair_cost` | numeric(10,2) | YES | 0 |
+| `inspected_at` | timestamptz | YES | now() |
+| `expires_at` | date | YES | |
+| `mileage` | integer | YES | |
+| `photos` | jsonb | YES | |
+| `notes` | text | YES | |
+| `created_at` | timestamptz | YES | now() |
+| `updated_at` | timestamptz | YES | now() |
+
+## customer_reviews (ACTIVE)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | uuid | NO | gen_random_uuid() |
+| `dealer_id` | integer | NO | |
+| `customer_id` | integer | YES | |
+| `deal_id` | integer | YES | |
+| `salesperson_id` | integer | YES | |
+| `platform` | text | YES | internal (google, facebook, yelp, cars_com, autotrader, dealerrater, carfax, bbb, internal, other) |
+| `external_review_id` | text | YES | |
+| `external_url` | text | YES | |
+| `reviewer_name` | text | NO | |
+| `rating` | integer | NO | |
+| `title` | text | YES | |
+| `review_text` | text | YES | |
+| `review_date` | date | NO | CURRENT_DATE |
+| `responded` | boolean | YES | false |
+| `response_text` | text | YES | |
+| `responded_by` | integer | YES | |
+| `responded_at` | timestamptz | YES | |
+| `flagged` | boolean | YES | false |
+| `flag_reason` | text | YES | |
+| `verified_purchase` | boolean | YES | false |
+| `featured` | boolean | YES | false |
+| `visible` | boolean | YES | true |
+| `sentiment` | text | YES | (positive, neutral, negative) |
+| `tags` | jsonb | YES | |
 | `notes` | text | YES | |
 | `created_at` | timestamptz | YES | now() |
 | `updated_at` | timestamptz | YES | now() |
