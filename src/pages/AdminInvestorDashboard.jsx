@@ -48,6 +48,11 @@ export default function AdminInvestorDashboard() {
   const [creatingPool, setCreatingPool] = useState(false);
   const [showCreatePool, setShowCreatePool] = useState(false);
 
+  // Edit/Delete investor state
+  const [editingInvestor, setEditingInvestor] = useState(null);
+  const [editForm, setEditForm] = useState({ full_name: '', email: '', phone: '', status: '' });
+  const [deletingInvestor, setDeletingInvestor] = useState(null);
+
   useEffect(() => {
     loadAdminData();
   }, []);
@@ -391,6 +396,57 @@ export default function AdminInvestorDashboard() {
     setShowPreview(false);
     setInviteLink('');
     setInviteCopied(false);
+  }
+
+  function openEditInvestor(inv) {
+    setEditingInvestor(inv);
+    setEditForm({
+      full_name: inv.full_name || '',
+      email: inv.email || '',
+      phone: inv.phone || '',
+      status: inv.status || 'active',
+    });
+  }
+
+  async function handleUpdateInvestor() {
+    if (!editingInvestor) return;
+    try {
+      const { error } = await supabase
+        .from('investors')
+        .update({
+          full_name: editForm.full_name,
+          email: editForm.email,
+          phone: editForm.phone || null,
+          status: editForm.status,
+        })
+        .eq('id', editingInvestor.id);
+      if (error) throw error;
+      setEditingInvestor(null);
+      loadAdminData();
+    } catch (error) {
+      alert('Failed to update investor: ' + error.message);
+    }
+  }
+
+  async function handleDeleteInvestor() {
+    if (!deletingInvestor) return;
+    try {
+      // Delete related records first (pool shares, capital, distributions)
+      await supabase.from('investor_pool_shares').delete().eq('investor_id', deletingInvestor.id);
+      await supabase.from('investor_capital').delete().eq('investor_id', deletingInvestor.id);
+      await supabase.from('investor_distributions').delete().eq('investor_id', deletingInvestor.id);
+      await supabase.from('investor_documents').delete().eq('investor_id', deletingInvestor.id);
+
+      const { error } = await supabase
+        .from('investors')
+        .delete()
+        .eq('id', deletingInvestor.id);
+      if (error) throw error;
+      setDeletingInvestor(null);
+      loadAdminData();
+    } catch (error) {
+      alert('Failed to delete investor: ' + error.message);
+    }
   }
 
   function formatCurrency(amount) {
@@ -1131,6 +1187,7 @@ export default function AdminInvestorDashboard() {
                     <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">ROI</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Status</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Bank Linked</th>
+                    <th className="px-6 py-4 text-right text-xs font-semibold text-slate-300 uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700">
@@ -1154,10 +1211,126 @@ export default function AdminInvestorDashboard() {
                           <span className="text-slate-400">Not linked</span>
                         )}
                       </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => openEditInvestor(investor)}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => setDeletingInvestor(investor)}
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Investor Modal */}
+        {editingInvestor && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setEditingInvestor(null)}>
+            <div className="bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+              <h3 className="text-xl font-bold text-white mb-4">Edit Investor</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-slate-300 text-sm font-semibold mb-1">Full Name</label>
+                  <input
+                    type="text" value={editForm.full_name}
+                    onChange={e => setEditForm(prev => ({ ...prev, full_name: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 text-sm font-semibold mb-1">Email</label>
+                  <input
+                    type="email" value={editForm.email}
+                    onChange={e => setEditForm(prev => ({ ...prev, email: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 text-sm font-semibold mb-1">Phone</label>
+                  <input
+                    type="text" value={editForm.phone}
+                    onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                    placeholder="Optional"
+                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 text-sm font-semibold mb-1">Status</label>
+                  <select
+                    value={editForm.status}
+                    onChange={e => setEditForm(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="invited">Invited</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleUpdateInvestor}
+                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold transition"
+                >
+                  Save Changes
+                </button>
+                <button
+                  onClick={() => setEditingInvestor(null)}
+                  className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Investor Confirmation Modal */}
+        {deletingInvestor && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDeletingInvestor(null)}>
+            <div className="bg-slate-800 border border-red-600/50 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <h3 className="text-xl font-bold text-white">Delete Investor</h3>
+              </div>
+              <p className="text-slate-300 mb-2">
+                Are you sure you want to permanently delete <strong className="text-white">{deletingInvestor.full_name}</strong>?
+              </p>
+              <p className="text-red-400 text-sm mb-6">
+                This will remove all their pool shares, capital records, distributions, and documents. This action cannot be undone.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleDeleteInvestor}
+                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-lg font-semibold transition"
+                >
+                  Yes, Delete Permanently
+                </button>
+                <button
+                  onClick={() => setDeletingInvestor(null)}
+                  className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         )}
