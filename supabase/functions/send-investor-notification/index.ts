@@ -7,7 +7,16 @@ const FROM_EMAIL = Deno.env.get('FROM_EMAIL') || 'noreply@ogdealer.com';
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
 serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+
   try {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -20,7 +29,7 @@ serve(async (req) => {
     if (!notification_type) {
       return new Response(
         JSON.stringify({ success: false, error: 'Missing notification_type' }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -38,14 +47,14 @@ serve(async (req) => {
       if (investorError || !inv) {
         return new Response(
           JSON.stringify({ success: false, error: 'Investor not found' }),
-          { headers: { 'Content-Type': 'application/json' }, status: 404 }
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
         );
       }
       investor = inv;
     } else {
       return new Response(
         JSON.stringify({ success: false, error: 'Missing investor_id or data.email' }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -55,7 +64,7 @@ serve(async (req) => {
     if (!email) {
       return new Response(
         JSON.stringify({ success: false, error: 'Unknown notification type' }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -80,20 +89,20 @@ serve(async (req) => {
       console.error('Failed to send email:', emailData);
       return new Response(
         JSON.stringify({ success: false, error: 'Failed to send email', details: emailData }),
-        { headers: { 'Content-Type': 'application/json' }, status: 500 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       );
     }
 
     return new Response(
       JSON.stringify({ success: true, email_id: emailData.id }),
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     console.error('Error sending notification:', error);
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
-      { headers: { 'Content-Type': 'application/json' }, status: 500 }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     );
   }
 });
