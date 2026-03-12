@@ -17,24 +17,35 @@ serve(async (req) => {
       data
     } = await req.json();
 
-    if (!investor_id || !notification_type) {
+    if (!notification_type) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Missing required fields' }),
+        JSON.stringify({ success: false, error: 'Missing notification_type' }),
         { headers: { 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
-    // Get investor details
-    const { data: investor, error: investorError } = await supabase
-      .from('investors')
-      .select('*')
-      .eq('id', investor_id)
-      .single();
+    // For invite notifications, investor_id may be null - use data.email/full_name directly
+    let investor: any;
+    if (notification_type === 'invite' && !investor_id && data?.email) {
+      investor = { email: data.email, full_name: data.full_name || 'Investor' };
+    } else if (investor_id) {
+      const { data: inv, error: investorError } = await supabase
+        .from('investors')
+        .select('*')
+        .eq('id', investor_id)
+        .single();
 
-    if (investorError || !investor) {
+      if (investorError || !inv) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Investor not found' }),
+          { headers: { 'Content-Type': 'application/json' }, status: 404 }
+        );
+      }
+      investor = inv;
+    } else {
       return new Response(
-        JSON.stringify({ success: false, error: 'Investor not found' }),
-        { headers: { 'Content-Type': 'application/json' }, status: 404 }
+        JSON.stringify({ success: false, error: 'Missing investor_id or data.email' }),
+        { headers: { 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -277,6 +288,81 @@ function generateEmailContent(type: string, investor: any, data: any): any {
               <div class="footer">
                 <p>OG Dealer Investor Portal</p>
                 <p>Need help? Email support@ogdealer.com or call (555) 123-4567</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      };
+
+    case 'invite':
+      return {
+        subject: `You're Invited to Invest with OG DiX`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; }
+              .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+              .header { background: linear-gradient(135deg, #1e40af 0%, #7c3aed 100%); color: white; padding: 30px; text-align: center; }
+              .header h1 { margin: 0; font-size: 28px; }
+              .content { padding: 30px; color: #1e293b; }
+              .highlight-box { background: linear-gradient(135deg, #eff6ff, #f5f3ff); border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center; }
+              .highlight-box .rate { font-size: 36px; font-weight: bold; color: #1e40af; }
+              .highlight-box .label { color: #64748b; font-size: 14px; }
+              .button { display: inline-block; background: linear-gradient(135deg, #1e40af, #7c3aed); color: white; padding: 16px 32px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 18px; margin: 20px 0; }
+              .steps { background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0; }
+              .step { display: flex; margin: 12px 0; }
+              .step-num { background: #3b82f6; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; margin-right: 12px; flex-shrink: 0; }
+              .footer { background: #f8fafc; padding: 20px; text-align: center; color: #64748b; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>You're Invited to Invest</h1>
+                <p style="margin: 8px 0 0; opacity: 0.9;">OG DiX Dealer Investment Portal</p>
+              </div>
+              <div class="content">
+                <p>Hi ${firstName},</p>
+                <p>You've been personally invited to join our investor program. ${
+                  data.pool_type === 'merchant_rate'
+                    ? 'Every time we use your capital for a transaction, you automatically earn a percentage.'
+                    : data.pool_type === 'fixed_return'
+                    ? 'You\'ll earn a guaranteed fixed return on your investment, paid out on a regular schedule.'
+                    : 'You\'ll earn a share of the profit on every vehicle transaction funded by your capital.'
+                }</p>
+
+                <div class="highlight-box">
+                  ${data.pool_type === 'merchant_rate' ? `
+                    <div class="rate">${data.rate || 3}% per transaction</div>
+                    <div class="label">Earned automatically on every deal</div>
+                  ` : data.pool_type === 'fixed_return' ? `
+                    <div class="rate">${data.rate || 8.5}% annual return</div>
+                    <div class="label">Paid ${data.payout_frequency || 'quarterly'}</div>
+                  ` : `
+                    <div class="rate">${data.rate || 60}% profit share</div>
+                    <div class="label">Your share of every vehicle sale</div>
+                  `}
+                </div>
+
+                <div class="steps">
+                  <p style="font-weight: 600; margin-top: 0;">Getting started is easy:</p>
+                  <div class="step"><div class="step-num">1</div><div>Click the button below to open your portal</div></div>
+                  <div class="step"><div class="step-num">2</div><div>Review the investment terms</div></div>
+                  <div class="step"><div class="step-num">3</div><div>Create your account & link your bank</div></div>
+                </div>
+
+                <div style="text-align: center;">
+                  <a href="${data.invite_link}" class="button">Open Your Investor Portal</a>
+                </div>
+
+                <p style="color: #64748b; font-size: 13px;">This invitation was sent to ${investor.email}. If you didn't expect this, you can safely ignore it.</p>
+              </div>
+              <div class="footer">
+                <p>OG DiX Dealer Software</p>
+                <p>Questions? Reply to this email or contact support.</p>
               </div>
             </div>
           </body>

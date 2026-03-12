@@ -334,6 +334,32 @@ export default function AdminInvestorDashboard() {
       setInviteLink(link);
       setShowPreview(false);
 
+      // Send invite email via edge function
+      try {
+        const { data: fnData, error: fnError } = await supabase.functions.invoke('send-investor-notification', {
+          body: {
+            investor_id: null, // We don't have the ID yet, pass email directly
+            notification_type: 'invite',
+            data: {
+              email: inviteForm.email,
+              full_name: inviteForm.full_name,
+              invite_link: link,
+              pool_name: selectedPool?.name || 'Investment Pool',
+              pool_type: poolType,
+              rate: poolType === 'profit_share'
+                ? (Number(inviteForm.investor_profit_share) || 60)
+                : (selectedPool?.annual_return_rate || 0),
+              payout_frequency: selectedPool?.payout_frequency || 'quarterly',
+              min_investment: Number(inviteForm.min_investment) || 10000,
+            },
+          },
+        });
+        if (fnError) console.error('Email send error:', fnError);
+      } catch (emailErr) {
+        console.error('Failed to send invite email:', emailErr);
+        // Don't block the flow - invite was created, email is best-effort
+      }
+
       // Reload data
       loadAdminData();
     } catch (error) {
