@@ -449,6 +449,71 @@ export default function AdminInvestorDashboard() {
     }
   }
 
+  async function handleResendInvite(inv) {
+    try {
+      let inviteToken;
+      let poolId = null;
+      let poolType = 'profit_share';
+      let rate = 0;
+      let payoutFrequency = 'quarterly';
+      let minInvestment = 10000;
+
+      // Parse existing invite data from notes
+      try {
+        const notes = JSON.parse(inv.notes || '{}');
+        inviteToken = notes.invite_token;
+        poolId = notes.pool_id;
+        if (notes.custom_terms) {
+          poolType = notes.custom_terms.pool_type || poolType;
+          rate = notes.custom_terms.annual_return_rate || notes.custom_terms.investor_profit_share || rate;
+          payoutFrequency = notes.custom_terms.payout_frequency || payoutFrequency;
+          minInvestment = notes.custom_terms.min_investment || minInvestment;
+        }
+      } catch { /* notes not JSON */ }
+
+      if (!inviteToken) {
+        // No existing token — generate a new one and update the record
+        inviteToken = crypto.randomUUID();
+        const existingNotes = (() => { try { return JSON.parse(inv.notes || '{}'); } catch { return {}; } })();
+        existingNotes.invite_token = inviteToken;
+        existingNotes.invited_at = new Date().toISOString();
+        await supabase.from('investors').update({ notes: JSON.stringify(existingNotes) }).eq('id', inv.id);
+      }
+
+      const link = `${window.location.origin}/investor/login?invite=${inviteToken}`;
+
+      // Look up pool name if we have a pool_id
+      let poolName = 'Investment Pool';
+      if (poolId) {
+        const { data: pool } = await supabase.from('investment_pools').select('pool_name').eq('id', poolId).single();
+        if (pool) poolName = pool.pool_name;
+      }
+
+      const { error: fnError } = await supabase.functions.invoke('send-investor-notification', {
+        body: {
+          investor_id: null,
+          notification_type: 'invite',
+          data: {
+            email: inv.email,
+            full_name: inv.full_name,
+            invite_link: link,
+            pool_name: poolName,
+            pool_type: poolType,
+            rate,
+            payout_frequency: payoutFrequency,
+            min_investment: minInvestment,
+          },
+        },
+      });
+
+      if (fnError) throw fnError;
+      alert(`Invite resent to ${inv.email}`);
+    } catch (error) {
+      console.error('Resend invite error:', error);
+      alert('Failed to resend invite: ' + error.message);
+    }
+  }
+
   function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -1213,6 +1278,14 @@ export default function AdminInvestorDashboard() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          {investor.status === 'invited' && (
+                            <button
+                              onClick={() => handleResendInvite(investor)}
+                              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold transition"
+                            >
+                              Resend
+                            </button>
+                          )}
                           <button
                             onClick={() => openEditInvestor(investor)}
                             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition"
