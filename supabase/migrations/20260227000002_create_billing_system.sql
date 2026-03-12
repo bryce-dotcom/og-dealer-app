@@ -4,7 +4,7 @@
 -- ================================================================
 -- SUBSCRIPTIONS TABLE (Main billing state)
 -- ================================================================
-CREATE TABLE subscriptions (
+CREATE TABLE IF NOT EXISTS subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   dealer_id INTEGER NOT NULL UNIQUE REFERENCES dealer_settings(id) ON DELETE CASCADE,
   stripe_customer_id TEXT UNIQUE,
@@ -32,9 +32,9 @@ CREATE TABLE subscriptions (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_subscriptions_dealer_id ON subscriptions(dealer_id);
-CREATE INDEX idx_subscriptions_stripe_customer_id ON subscriptions(stripe_customer_id);
-CREATE INDEX idx_subscriptions_next_billing ON subscriptions(next_billing_date) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_subscriptions_dealer_id ON subscriptions(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer_id ON subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_next_billing ON subscriptions(next_billing_date) WHERE status = 'active';
 
 COMMENT ON TABLE subscriptions IS 'Dealer subscription and credit balance tracking';
 COMMENT ON COLUMN subscriptions.plan_tier IS 'free (10 credits), pro (500), dealer (1500), unlimited (999999)';
@@ -43,7 +43,7 @@ COMMENT ON COLUMN subscriptions.bonus_credits IS 'Credits from one-time credit p
 -- ================================================================
 -- CREDIT USAGE LOG (Audit trail)
 -- ================================================================
-CREATE TABLE credit_usage_log (
+CREATE TABLE IF NOT EXISTS credit_usage_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   dealer_id INTEGER NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   subscription_id UUID REFERENCES subscriptions(id) ON DELETE SET NULL,
@@ -59,9 +59,9 @@ CREATE TABLE credit_usage_log (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_credit_usage_dealer_id ON credit_usage_log(dealer_id);
-CREATE INDEX idx_credit_usage_feature ON credit_usage_log(feature_type);
-CREATE INDEX idx_credit_usage_created ON credit_usage_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_credit_usage_dealer_id ON credit_usage_log(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_credit_usage_feature ON credit_usage_log(feature_type);
+CREATE INDEX IF NOT EXISTS idx_credit_usage_created ON credit_usage_log(created_at DESC);
 
 COMMENT ON TABLE credit_usage_log IS 'Audit log of all credit consumption';
 COMMENT ON COLUMN credit_usage_log.credits_used IS '0 for unlimited tier, actual cost for others';
@@ -69,7 +69,7 @@ COMMENT ON COLUMN credit_usage_log.credits_used IS '0 for unlimited tier, actual
 -- ================================================================
 -- CREDIT PACKS (One-time purchases)
 -- ================================================================
-CREATE TABLE credit_packs (
+CREATE TABLE IF NOT EXISTS credit_packs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   dealer_id INTEGER NOT NULL REFERENCES dealer_settings(id) ON DELETE CASCADE,
   stripe_payment_intent_id TEXT UNIQUE NOT NULL,
@@ -79,14 +79,14 @@ CREATE TABLE credit_packs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_credit_packs_dealer_id ON credit_packs(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_credit_packs_dealer_id ON credit_packs(dealer_id);
 
 COMMENT ON TABLE credit_packs IS 'One-time credit pack purchases (100/$25, 500/$100, 1000/$175)';
 
 -- ================================================================
 -- WEBHOOK EVENTS (Stripe webhook idempotency)
 -- ================================================================
-CREATE TABLE webhook_events (
+CREATE TABLE IF NOT EXISTS webhook_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stripe_event_id TEXT UNIQUE NOT NULL,
   event_type TEXT NOT NULL,
@@ -97,8 +97,8 @@ CREATE TABLE webhook_events (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_webhook_events_stripe_id ON webhook_events(stripe_event_id);
-CREATE INDEX idx_webhook_events_processed ON webhook_events(processed) WHERE processed = FALSE;
+CREATE INDEX IF NOT EXISTS idx_webhook_events_stripe_id ON webhook_events(stripe_event_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_processed ON webhook_events(processed) WHERE processed = FALSE;
 
 COMMENT ON TABLE webhook_events IS 'Stripe webhook event log for idempotency and debugging';
 
@@ -109,7 +109,7 @@ ALTER TABLE dealer_settings
   ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id),
   ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
 
-CREATE INDEX idx_dealer_settings_subscription ON dealer_settings(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_dealer_settings_subscription ON dealer_settings(subscription_id);
 
 -- ================================================================
 -- MIGRATE EXISTING DEALERS TO FREE TIER

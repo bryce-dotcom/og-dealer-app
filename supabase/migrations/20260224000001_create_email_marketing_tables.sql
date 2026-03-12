@@ -157,35 +157,42 @@ ALTER TABLE customer_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_automations ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies (allow viewing system templates with NULL dealer_id)
+DROP POLICY IF EXISTS "Dealers can manage their email templates" ON email_templates;
 CREATE POLICY "Dealers can manage their email templates"
   ON email_templates FOR ALL
   USING (dealer_id IS NULL OR dealer_id IN (SELECT id FROM dealer_settings))
   WITH CHECK (dealer_id IN (SELECT id FROM dealer_settings));
 
+DROP POLICY IF EXISTS "Dealers can manage their customer segments" ON customer_segments;
 CREATE POLICY "Dealers can manage their customer segments"
   ON customer_segments FOR ALL
   USING (dealer_id IN (SELECT id FROM dealer_settings))
   WITH CHECK (dealer_id IN (SELECT id FROM dealer_settings));
 
+DROP POLICY IF EXISTS "Dealers can manage their email campaigns" ON email_campaigns;
 CREATE POLICY "Dealers can manage their email campaigns"
   ON email_campaigns FOR ALL
   USING (dealer_id IN (SELECT id FROM dealer_settings))
   WITH CHECK (dealer_id IN (SELECT id FROM dealer_settings));
 
+DROP POLICY IF EXISTS "Dealers can view their email logs" ON email_logs;
 CREATE POLICY "Dealers can view their email logs"
   ON email_logs FOR ALL
   USING (dealer_id IN (SELECT id FROM dealer_settings))
   WITH CHECK (dealer_id IN (SELECT id FROM dealer_settings));
 
+DROP POLICY IF EXISTS "Dealers can view their email clicks" ON email_clicks;
 CREATE POLICY "Dealers can view their email clicks"
   ON email_clicks FOR SELECT
   USING (campaign_id IN (SELECT id FROM email_campaigns WHERE dealer_id IN (SELECT id FROM dealer_settings)));
 
+DROP POLICY IF EXISTS "Dealers can manage customer preferences" ON customer_preferences;
 CREATE POLICY "Dealers can manage customer preferences"
   ON customer_preferences FOR ALL
   USING (dealer_id IN (SELECT id FROM dealer_settings))
   WITH CHECK (dealer_id IN (SELECT id FROM dealer_settings));
 
+DROP POLICY IF EXISTS "Dealers can manage their email automations" ON email_automations;
 CREATE POLICY "Dealers can manage their email automations"
   ON email_automations FOR ALL
   USING (dealer_id IN (SELECT id FROM dealer_settings))

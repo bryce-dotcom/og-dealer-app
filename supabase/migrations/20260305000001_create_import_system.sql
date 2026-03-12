@@ -79,10 +79,12 @@ ALTER TABLE import_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dealer_import_mappings ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Dealers can only see their own import sessions
+DROP POLICY IF EXISTS import_sessions_dealer_isolation ON import_sessions;
 CREATE POLICY import_sessions_dealer_isolation ON import_sessions
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id', true)::integer);
 
 -- Policy: Dealers can only see their own import mappings
+DROP POLICY IF EXISTS dealer_import_mappings_dealer_isolation ON dealer_import_mappings;
 CREATE POLICY dealer_import_mappings_dealer_isolation ON dealer_import_mappings
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id', true)::integer);
 

@@ -64,22 +64,26 @@ BEGIN
       );
 
       -- Create indexes
-      CREATE INDEX idx_saved_searches_dealer ON saved_vehicle_searches(dealer_id);
-      CREATE INDEX idx_saved_searches_active ON saved_vehicle_searches(dealer_id, active) WHERE active = true;
+      CREATE INDEX IF NOT EXISTS idx_saved_searches_dealer ON saved_vehicle_searches(dealer_id);
+      CREATE INDEX IF NOT EXISTS idx_saved_searches_active ON saved_vehicle_searches(dealer_id, active) WHERE active = true;
 
       -- Enable RLS
       ALTER TABLE saved_vehicle_searches ENABLE ROW LEVEL SECURITY;
 
       -- Create RLS policies
+DROP POLICY IF EXISTS saved_searches_select ON saved_vehicle_searches;
       CREATE POLICY saved_searches_select ON saved_vehicle_searches
         FOR SELECT USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS saved_searches_insert ON saved_vehicle_searches;
       CREATE POLICY saved_searches_insert ON saved_vehicle_searches
         FOR INSERT WITH CHECK (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS saved_searches_update ON saved_vehicle_searches;
       CREATE POLICY saved_searches_update ON saved_vehicle_searches
         FOR UPDATE USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS saved_searches_delete ON saved_vehicle_searches;
       CREATE POLICY saved_searches_delete ON saved_vehicle_searches
         FOR DELETE USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
@@ -143,20 +147,24 @@ BEGIN
       CONSTRAINT valid_radius CHECK (radius_miles > 0 AND radius_miles <= 500)
     );
 
-    CREATE INDEX idx_saved_searches_dealer ON saved_vehicle_searches(dealer_id);
-    CREATE INDEX idx_saved_searches_active ON saved_vehicle_searches(dealer_id, active) WHERE active = true;
+    CREATE INDEX IF NOT EXISTS idx_saved_searches_dealer ON saved_vehicle_searches(dealer_id);
+    CREATE INDEX IF NOT EXISTS idx_saved_searches_active ON saved_vehicle_searches(dealer_id, active) WHERE active = true;
 
     ALTER TABLE saved_vehicle_searches ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS saved_searches_select ON saved_vehicle_searches;
     CREATE POLICY saved_searches_select ON saved_vehicle_searches
       FOR SELECT USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS saved_searches_insert ON saved_vehicle_searches;
     CREATE POLICY saved_searches_insert ON saved_vehicle_searches
       FOR INSERT WITH CHECK (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS saved_searches_update ON saved_vehicle_searches;
     CREATE POLICY saved_searches_update ON saved_vehicle_searches
       FOR UPDATE USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS saved_searches_delete ON saved_vehicle_searches;
     CREATE POLICY saved_searches_delete ON saved_vehicle_searches
       FOR DELETE USING (dealer_id = current_setting('app.current_dealer_id')::integer);
   END IF;
@@ -227,23 +235,27 @@ BEGIN
         CONSTRAINT valid_status CHECK (status IN ('new', 'viewed', 'interested', 'passed', 'purchased'))
       );
 
-      CREATE INDEX idx_deal_alerts_dealer ON deal_alerts(dealer_id);
-      CREATE INDEX idx_deal_alerts_search ON deal_alerts(search_id);
-      CREATE INDEX idx_deal_alerts_status ON deal_alerts(dealer_id, status);
-      CREATE INDEX idx_deal_alerts_created ON deal_alerts(created_at DESC);
-      CREATE INDEX idx_deal_alerts_new ON deal_alerts(dealer_id, created_at DESC) WHERE status = 'new';
+      CREATE INDEX IF NOT EXISTS idx_deal_alerts_dealer ON deal_alerts(dealer_id);
+      CREATE INDEX IF NOT EXISTS idx_deal_alerts_search ON deal_alerts(search_id);
+      CREATE INDEX IF NOT EXISTS idx_deal_alerts_status ON deal_alerts(dealer_id, status);
+      CREATE INDEX IF NOT EXISTS idx_deal_alerts_created ON deal_alerts(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_deal_alerts_new ON deal_alerts(dealer_id, created_at DESC) WHERE status = 'new';
 
       ALTER TABLE deal_alerts ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS deal_alerts_select ON deal_alerts;
       CREATE POLICY deal_alerts_select ON deal_alerts
         FOR SELECT USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS deal_alerts_insert ON deal_alerts;
       CREATE POLICY deal_alerts_insert ON deal_alerts
         FOR INSERT WITH CHECK (true); -- Service role inserts
 
+DROP POLICY IF EXISTS deal_alerts_update ON deal_alerts;
       CREATE POLICY deal_alerts_update ON deal_alerts
         FOR UPDATE USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS deal_alerts_delete ON deal_alerts;
       CREATE POLICY deal_alerts_delete ON deal_alerts
         FOR DELETE USING (dealer_id = current_setting('app.current_dealer_id')::integer);
     END IF;

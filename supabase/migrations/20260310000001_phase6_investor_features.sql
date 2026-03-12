@@ -100,20 +100,24 @@ ALTER TABLE investor_notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE investor_documents ENABLE ROW LEVEL SECURITY;
 
 -- Notifications: Investors see their own
+DROP POLICY IF EXISTS "Investors can view their own notifications" ON investor_notifications;
 CREATE POLICY "Investors can view their own notifications" ON investor_notifications
   FOR SELECT TO authenticated
   USING (investor_id IN (SELECT id FROM investors WHERE user_id = auth.uid()));
 
+DROP POLICY IF EXISTS "Investors can update their own notifications" ON investor_notifications;
 CREATE POLICY "Investors can update their own notifications" ON investor_notifications
   FOR UPDATE TO authenticated
   USING (investor_id IN (SELECT id FROM investors WHERE user_id = auth.uid()))
   WITH CHECK (investor_id IN (SELECT id FROM investors WHERE user_id = auth.uid()));
 
 -- Documents: Investors see their own, can upload
+DROP POLICY IF EXISTS "Investors can view their own documents" ON investor_documents;
 CREATE POLICY "Investors can view their own documents" ON investor_documents
   FOR SELECT TO authenticated
   USING (investor_id IN (SELECT id FROM investors WHERE user_id = auth.uid()));
 
+DROP POLICY IF EXISTS "Investors can upload documents" ON investor_documents;
 CREATE POLICY "Investors can upload documents" ON investor_documents
   FOR INSERT TO authenticated
   WITH CHECK (investor_id IN (SELECT id FROM investors WHERE user_id = auth.uid()));
@@ -340,6 +344,7 @@ VALUES ('investor-documents', 'investor-documents', false)
 ON CONFLICT (id) DO NOTHING;
 
 -- RLS for investor-documents bucket
+DROP POLICY IF EXISTS "Investors can upload their own docs" ON storage.objects;
 CREATE POLICY "Investors can upload their own docs" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -349,6 +354,7 @@ CREATE POLICY "Investors can upload their own docs" ON storage.objects
     )
   );
 
+DROP POLICY IF EXISTS "Investors can view their own docs" ON storage.objects;
 CREATE POLICY "Investors can view their own docs" ON storage.objects
   FOR SELECT TO authenticated
   USING (

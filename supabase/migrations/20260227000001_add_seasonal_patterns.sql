@@ -20,14 +20,10 @@ CREATE TABLE IF NOT EXISTS seasonal_vehicle_patterns (
 ALTER TABLE seasonal_vehicle_patterns ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policy
+DROP POLICY IF EXISTS seasonal_vehicle_patterns_policy ON seasonal_vehicle_patterns;
 CREATE POLICY seasonal_vehicle_patterns_policy ON seasonal_vehicle_patterns
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
 -- Indexes
-CREATE INDEX idx_seasonal_vehicle_patterns_dealer_id ON seasonal_vehicle_patterns(dealer_id);
-CREATE INDEX idx_seasonal_vehicle_patterns_make_model ON seasonal_vehicle_patterns(dealer_id, make, model);
-
--- Verify table created
-SELECT
-  'seasonal_vehicle_patterns' as table_name,
-  EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'seasonal_vehicle_patterns') as exists;
+CREATE INDEX IF NOT EXISTS idx_seasonal_vehicle_patterns_dealer_id ON seasonal_vehicle_patterns(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_seasonal_vehicle_patterns_make_model ON seasonal_vehicle_patterns(dealer_id, make, model);

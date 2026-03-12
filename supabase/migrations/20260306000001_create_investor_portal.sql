@@ -380,16 +380,19 @@ ALTER TABLE investor_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pool_transactions ENABLE ROW LEVEL SECURITY;
 
 -- Investors: Can only see their own profile
+DROP POLICY IF EXISTS "Investors can view their own profile" ON investors;
 CREATE POLICY "Investors can view their own profile" ON investors
   FOR SELECT TO authenticated
   USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Investors can update their own profile" ON investors;
 CREATE POLICY "Investors can update their own profile" ON investors
   FOR UPDATE TO authenticated
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
 -- Investment Pools: Investors can view pools they're invested in
+DROP POLICY IF EXISTS "Investors can view pools they're in" ON investment_pools;
 CREATE POLICY "Investors can view pools they're in" ON investment_pools
   FOR SELECT TO authenticated
   USING (
@@ -402,6 +405,7 @@ CREATE POLICY "Investors can view pools they're in" ON investment_pools
   );
 
 -- Pool Shares: Investors can view their own shares
+DROP POLICY IF EXISTS "Investors can view their own shares" ON investor_pool_shares;
 CREATE POLICY "Investors can view their own shares" ON investor_pool_shares
   FOR SELECT TO authenticated
   USING (
@@ -411,6 +415,7 @@ CREATE POLICY "Investors can view their own shares" ON investor_pool_shares
   );
 
 -- Capital: Investors can view their own transactions
+DROP POLICY IF EXISTS "Investors can view their own capital transactions" ON investor_capital;
 CREATE POLICY "Investors can view their own capital transactions" ON investor_capital
   FOR SELECT TO authenticated
   USING (
@@ -419,6 +424,7 @@ CREATE POLICY "Investors can view their own capital transactions" ON investor_ca
     )
   );
 
+DROP POLICY IF EXISTS "Investors can create capital transactions" ON investor_capital;
 CREATE POLICY "Investors can create capital transactions" ON investor_capital
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -428,6 +434,7 @@ CREATE POLICY "Investors can create capital transactions" ON investor_capital
   );
 
 -- Vehicles: Investors can view vehicles in their pools
+DROP POLICY IF EXISTS "Investors can view vehicles in their pools" ON investor_vehicles;
 CREATE POLICY "Investors can view vehicles in their pools" ON investor_vehicles
   FOR SELECT TO authenticated
   USING (
@@ -440,6 +447,7 @@ CREATE POLICY "Investors can view vehicles in their pools" ON investor_vehicles
   );
 
 -- Distributions: Investors can view their own distributions
+DROP POLICY IF EXISTS "Investors can view their own distributions" ON investor_distributions;
 CREATE POLICY "Investors can view their own distributions" ON investor_distributions
   FOR SELECT TO authenticated
   USING (
@@ -449,6 +457,7 @@ CREATE POLICY "Investors can view their own distributions" ON investor_distribut
   );
 
 -- Reports: Investors can view their own reports
+DROP POLICY IF EXISTS "Investors can view their own reports" ON investor_reports;
 CREATE POLICY "Investors can view their own reports" ON investor_reports
   FOR SELECT TO authenticated
   USING (
@@ -458,6 +467,7 @@ CREATE POLICY "Investors can view their own reports" ON investor_reports
   );
 
 -- Pool Transactions: Investors can view transactions for their pools
+DROP POLICY IF EXISTS "Investors can view transactions for their pools" ON pool_transactions;
 CREATE POLICY "Investors can view transactions for their pools" ON pool_transactions
   FOR SELECT TO authenticated
   USING (
@@ -489,15 +499,19 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_investors_updated_at ON investors;
 CREATE TRIGGER update_investors_updated_at BEFORE UPDATE ON investors
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_investment_pools_updated_at ON investment_pools;
 CREATE TRIGGER update_investment_pools_updated_at BEFORE UPDATE ON investment_pools
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_investor_pool_shares_updated_at ON investor_pool_shares;
 CREATE TRIGGER update_investor_pool_shares_updated_at BEFORE UPDATE ON investor_pool_shares
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_investor_vehicles_updated_at ON investor_vehicles;
 CREATE TRIGGER update_investor_vehicles_updated_at BEFORE UPDATE ON investor_vehicles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -527,12 +541,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER calculate_ownership_on_insert
-  BEFORE INSERT ON investor_pool_shares
+DROP TRIGGER IF EXISTS calculate_ownership_on_insert ON investor_pool_shares;
+CREATE TRIGGER calculate_ownership_on_insert BEFORE INSERT ON investor_pool_shares
   FOR EACH ROW EXECUTE FUNCTION calculate_pool_ownership();
 
-CREATE TRIGGER calculate_ownership_on_update
-  BEFORE UPDATE ON investor_pool_shares
+DROP TRIGGER IF EXISTS calculate_ownership_on_update ON investor_pool_shares;
+CREATE TRIGGER calculate_ownership_on_update BEFORE UPDATE ON investor_pool_shares
   FOR EACH ROW EXECUTE FUNCTION calculate_pool_ownership();
 
 -- Calculate days held when vehicle is marked as sold
@@ -546,8 +560,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER calculate_days_held_on_sale
-  BEFORE UPDATE ON investor_vehicles
+DROP TRIGGER IF EXISTS calculate_days_held_on_sale ON investor_vehicles;
+CREATE TRIGGER calculate_days_held_on_sale BEFORE UPDATE ON investor_vehicles
   FOR EACH ROW
   WHEN (NEW.status = 'sold' AND OLD.status != 'sold')
   EXECUTE FUNCTION calculate_vehicle_days_held();

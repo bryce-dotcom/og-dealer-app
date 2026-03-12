@@ -15,56 +15,64 @@ DROP POLICY IF EXISTS deal_alerts_delete ON deal_alerts;
 
 -- Create new policies that work with auth.uid()
 -- saved_vehicle_searches policies
+DROP POLICY IF EXISTS saved_searches_select ON saved_vehicle_searches;
 CREATE POLICY saved_searches_select ON saved_vehicle_searches
   FOR SELECT USING (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 
+DROP POLICY IF EXISTS saved_searches_insert ON saved_vehicle_searches;
 CREATE POLICY saved_searches_insert ON saved_vehicle_searches
   FOR INSERT WITH CHECK (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 
+DROP POLICY IF EXISTS saved_searches_update ON saved_vehicle_searches;
 CREATE POLICY saved_searches_update ON saved_vehicle_searches
   FOR UPDATE USING (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 
+DROP POLICY IF EXISTS saved_searches_delete ON saved_vehicle_searches;
 CREATE POLICY saved_searches_delete ON saved_vehicle_searches
   FOR DELETE USING (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 
 -- deal_alerts policies
+DROP POLICY IF EXISTS deal_alerts_select ON deal_alerts;
 CREATE POLICY deal_alerts_select ON deal_alerts
   FOR SELECT USING (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 
+DROP POLICY IF EXISTS deal_alerts_insert ON deal_alerts;
 CREATE POLICY deal_alerts_insert ON deal_alerts
   FOR INSERT WITH CHECK (true); -- Service role inserts from Edge Functions
 
+DROP POLICY IF EXISTS deal_alerts_update ON deal_alerts;
 CREATE POLICY deal_alerts_update ON deal_alerts
   FOR UPDATE USING (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 
+DROP POLICY IF EXISTS deal_alerts_delete ON deal_alerts;
 CREATE POLICY deal_alerts_delete ON deal_alerts
   FOR DELETE USING (
     dealer_id IN (
-      SELECT id FROM dealer_settings WHERE user_id = auth.uid()
+      SELECT id FROM dealer_settings WHERE owner_user_id = auth.uid()
     )
   );
 

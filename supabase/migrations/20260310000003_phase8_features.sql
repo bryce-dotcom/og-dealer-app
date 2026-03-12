@@ -326,7 +326,7 @@ CREATE INDEX IF NOT EXISTS idx_checklist_category ON compliance_checklist_items(
 
 -- Marketplace Listings
 CREATE INDEX IF NOT EXISTS idx_mktplace_dealer ON marketplace_listings(dealer_id);
-CREATE INDEX IF NOT EXISTS idx_mktplace_vehicle ON marketplace_listings(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_mktplace_vehicle ON marketplace_listings(inventory_id);
 CREATE INDEX IF NOT EXISTS idx_mktplace_status ON marketplace_listings(status);
 CREATE INDEX IF NOT EXISTS idx_mktplace_marketplace ON marketplace_listings(marketplace);
 

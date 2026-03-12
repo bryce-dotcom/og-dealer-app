@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS system_config (
 ALTER TABLE system_config ENABLE ROW LEVEL SECURITY;
 
 -- Allow all operations for authenticated users (we'll control access in app layer)
+DROP POLICY IF EXISTS "Allow all operations for authenticated users" ON system_config;
 CREATE POLICY "Allow all operations for authenticated users" ON system_config
   FOR ALL
   TO authenticated
@@ -36,6 +37,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create trigger
+DROP TRIGGER IF EXISTS update_system_config_updated_at ON system_config;
 CREATE TRIGGER update_system_config_updated_at
   BEFORE UPDATE ON system_config
   FOR EACH ROW

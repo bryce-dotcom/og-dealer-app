@@ -112,12 +112,15 @@ ALTER TABLE marketplace_listings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE marketplace_sync_log ENABLE ROW LEVEL SECURITY;
 
 -- Dealers can only see their own marketplace data
+DROP POLICY IF EXISTS marketplace_settings_dealer_isolation ON marketplace_settings;
 CREATE POLICY marketplace_settings_dealer_isolation ON marketplace_settings
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id', true)::integer);
 
+DROP POLICY IF EXISTS marketplace_listings_dealer_isolation ON marketplace_listings;
 CREATE POLICY marketplace_listings_dealer_isolation ON marketplace_listings
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id', true)::integer);
 
+DROP POLICY IF EXISTS marketplace_sync_log_dealer_isolation ON marketplace_sync_log;
 CREATE POLICY marketplace_sync_log_dealer_isolation ON marketplace_sync_log
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id', true)::integer);
 

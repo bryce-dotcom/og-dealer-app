@@ -3,7 +3,7 @@
 
 -- Table: dealer_vehicle_preferences
 -- Stores historical performance data for make/model combinations
-CREATE TABLE dealer_vehicle_preferences (
+CREATE TABLE IF NOT EXISTS dealer_vehicle_preferences (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   dealer_id integer NOT NULL REFERENCES dealer_settings(id),
   make text NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE dealer_vehicle_preferences (
 
 -- Table: vehicle_ai_analysis
 -- Stores AI analysis results (cached to save credits)
-CREATE TABLE vehicle_ai_analysis (
+CREATE TABLE IF NOT EXISTS vehicle_ai_analysis (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   dealer_id integer NOT NULL REFERENCES dealer_settings(id),
   vin text,
@@ -44,7 +44,7 @@ CREATE TABLE vehicle_ai_analysis (
 
 -- Table: market_intelligence_cache
 -- Caches market intelligence data (24hr TTL)
-CREATE TABLE market_intelligence_cache (
+CREATE TABLE IF NOT EXISTS market_intelligence_cache (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   dealer_id integer NOT NULL REFERENCES dealer_settings(id),
   cache_key text NOT NULL,
@@ -61,23 +61,26 @@ ALTER TABLE vehicle_ai_analysis ENABLE ROW LEVEL SECURITY;
 ALTER TABLE market_intelligence_cache ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
+DROP POLICY IF EXISTS dealer_vehicle_preferences_policy ON dealer_vehicle_preferences;
 CREATE POLICY dealer_vehicle_preferences_policy ON dealer_vehicle_preferences
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS vehicle_ai_analysis_policy ON vehicle_ai_analysis;
 CREATE POLICY vehicle_ai_analysis_policy ON vehicle_ai_analysis
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
+DROP POLICY IF EXISTS market_intelligence_cache_policy ON market_intelligence_cache;
 CREATE POLICY market_intelligence_cache_policy ON market_intelligence_cache
   FOR ALL USING (dealer_id = current_setting('app.current_dealer_id')::integer);
 
 -- Indexes for performance
-CREATE INDEX idx_dealer_vehicle_preferences_dealer_id ON dealer_vehicle_preferences(dealer_id);
-CREATE INDEX idx_dealer_vehicle_preferences_make_model ON dealer_vehicle_preferences(dealer_id, make, model);
+CREATE INDEX IF NOT EXISTS idx_dealer_vehicle_preferences_dealer_id ON dealer_vehicle_preferences(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_dealer_vehicle_preferences_make_model ON dealer_vehicle_preferences(dealer_id, make, model);
 
-CREATE INDEX idx_vehicle_ai_analysis_dealer_id ON vehicle_ai_analysis(dealer_id);
-CREATE INDEX idx_vehicle_ai_analysis_vin ON vehicle_ai_analysis(dealer_id, vin);
-CREATE INDEX idx_vehicle_ai_analysis_make_model ON vehicle_ai_analysis(dealer_id, make, model);
+CREATE INDEX IF NOT EXISTS idx_vehicle_ai_analysis_dealer_id ON vehicle_ai_analysis(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_ai_analysis_vin ON vehicle_ai_analysis(dealer_id, vin);
+CREATE INDEX IF NOT EXISTS idx_vehicle_ai_analysis_make_model ON vehicle_ai_analysis(dealer_id, make, model);
 
-CREATE INDEX idx_market_intelligence_cache_dealer_id ON market_intelligence_cache(dealer_id);
-CREATE INDEX idx_market_intelligence_cache_key ON market_intelligence_cache(dealer_id, cache_key);
-CREATE INDEX idx_market_intelligence_cache_expires ON market_intelligence_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_market_intelligence_cache_dealer_id ON market_intelligence_cache(dealer_id);
+CREATE INDEX IF NOT EXISTS idx_market_intelligence_cache_key ON market_intelligence_cache(dealer_id, cache_key);
+CREATE INDEX IF NOT EXISTS idx_market_intelligence_cache_expires ON market_intelligence_cache(expires_at);
