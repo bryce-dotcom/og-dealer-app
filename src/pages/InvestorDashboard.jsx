@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+const BRAND_SHORT = 'OGDMC';
 
 export default function InvestorDashboard() {
   const navigate = useNavigate();
@@ -12,56 +14,32 @@ export default function InvestorDashboard() {
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [activeVehicles, setActiveVehicles] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
+  useEffect(() => { loadDashboard(); }, []);
 
   async function loadDashboard() {
     try {
       setLoading(true);
-
-      // Get current user
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        navigate('/investor/login');
-        return;
-      }
+      if (!user) { navigate('/investor/login'); return; }
 
-      // Get investor record
       const { data: investorData, error: investorError } = await supabase
-        .from('investors')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
+        .from('investors').select('*').eq('user_id', user.id).single();
       if (investorError) throw investorError;
       setInvestor(investorData);
 
-      // Get dashboard stats
-      const { data: statsData } = await supabase.rpc('get_investor_dashboard_stats', {
-        p_investor_id: investorData.id
-      });
+      const { data: statsData } = await supabase.rpc('get_investor_dashboard_stats', { p_investor_id: investorData.id });
       setStats(statsData);
 
-      // Get active vehicles
       await loadActiveVehicles(investorData.id);
-
-      // Get recent transactions
       await loadRecentTransactions(investorData.id);
-
-      // Generate portfolio chart data (last 6 months)
       generatePortfolioData(investorData.id);
 
-      // Get unread notification count
-      const { data: countData } = await supabase.rpc('get_investor_unread_count', {
-        p_investor_id: investorData.id,
-      });
+      const { data: countData } = await supabase.rpc('get_investor_unread_count', { p_investor_id: investorData.id });
       setUnreadCount(countData || 0);
-
     } catch (error) {
       console.error('Error loading dashboard:', error);
-      alert('Failed to load dashboard: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -70,403 +48,443 @@ export default function InvestorDashboard() {
   async function loadActiveVehicles(investorId) {
     const { data } = await supabase
       .from('investor_vehicles')
-      .select(`
-        *,
-        inventory:inventory(year, make, model, photos)
-      `)
+      .select('*, inventory:inventory(year, make, model, photos)')
       .eq('status', 'active')
-      .in('pool_id',
-        supabase
-          .from('investor_pool_shares')
-          .select('pool_id')
-          .eq('investor_id', investorId)
-      )
+      .in('pool_id', supabase.from('investor_pool_shares').select('pool_id').eq('investor_id', investorId))
       .order('purchase_date', { ascending: false })
       .limit(6);
-
     setActiveVehicles(data || []);
   }
 
   async function loadRecentTransactions(investorId) {
-    // Get recent capital transactions and distributions
-    const { data: capital } = await supabase
-      .from('investor_capital')
-      .select('*')
-      .eq('investor_id', investorId)
-      .order('initiated_at', { ascending: false })
-      .limit(5);
-
-    const { data: distributions } = await supabase
-      .from('investor_distributions')
-      .select('*, vehicle:investor_vehicles(vehicle_info)')
-      .eq('investor_id', investorId)
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    // Combine and sort
+    const { data: capital } = await supabase.from('investor_capital').select('*').eq('investor_id', investorId).order('initiated_at', { ascending: false }).limit(5);
+    const { data: distributions } = await supabase.from('investor_distributions').select('*, vehicle:investor_vehicles(vehicle_info)').eq('investor_id', investorId).order('created_at', { ascending: false }).limit(5);
     const combined = [
       ...(capital || []).map(t => ({ ...t, type: 'capital' })),
       ...(distributions || []).map(t => ({ ...t, type: 'distribution' }))
     ].sort((a, b) => new Date(b.created_at || b.initiated_at) - new Date(a.created_at || a.initiated_at));
-
     setRecentTransactions(combined.slice(0, 10));
   }
 
-  function generatePortfolioData(investorId) {
-    // Mock data for now - in production, query historical data
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-    const data = months.map((month, i) => ({
-      month,
-      invested: 50000 + (i * 10000),
-      returned: 0 + (i * 8000),
-      profit: 0 + (i * 2000)
-    }));
-    setPortfolioData(data);
+  function generatePortfolioData() {
+    const months = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+    setPortfolioData(months.map((month, i) => ({
+      month, invested: 50000 + (i * 10000), returned: i * 8000, profit: i * 2000
+    })));
   }
 
-  function formatCurrency(amount) {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount || 0);
+  function fmt(amount) {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount || 0);
   }
 
-  function formatDate(dateString) {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  function fmtDate(d) {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    navigate('/investor/login');
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+      <div className="min-h-screen bg-[#0B1120] flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-white text-lg">Loading your portfolio...</p>
+          <div className="w-12 h-12 border-2 border-amber-500/30 border-t-amber-400 rounded-full animate-spin mx-auto mb-6" />
+          <p className="text-slate-500 text-sm tracking-wide">Loading your portfolio...</p>
         </div>
       </div>
     );
   }
 
-  if (!investor || !stats) {
+  if (!investor) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-        <div className="text-center text-white">
-          <p className="text-xl">Investor account not found</p>
+      <div className="min-h-screen bg-[#0B1120] flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-slate-400 mb-4">Investor account not found.</p>
+          <button onClick={() => navigate('/investor/login')} className="text-amber-400 text-sm hover:underline">Return to login</button>
         </div>
       </div>
     );
   }
 
-  const roiColor = stats.lifetime_roi >= 0 ? '#00D96F' : '#FF3B3B';
+  const s = stats || {};
+  const roiPositive = (s.lifetime_roi || 0) >= 0;
+
+  const navItems = [
+    { label: 'Dashboard', path: '/investor/dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+    { label: 'Portfolio', path: '/investor/portfolio', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
+    { label: 'Capital', path: '/investor/capital', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { label: 'Analytics', path: '/investor/analytics', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+    { label: 'Reports', path: '/investor/reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    { label: 'Bank Account', path: '/investor/bank-account', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
+    { label: 'Accreditation', path: '/investor/accreditation', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    { label: 'Settings', path: '/investor/settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z' },
+  ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-6">
-      <div className="max-w-7xl mx-auto">
-
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-white mb-2">
-              Welcome back, {investor.full_name?.split(' ')[0]}
-            </h1>
-            <p className="text-blue-200">Your investment portfolio at a glance</p>
-          </div>
-          <div className="flex gap-3 items-center">
-            <button
-              onClick={() => navigate('/investor/notifications')}
-              className="relative p-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition"
-              title="Notifications"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => navigate('/investor/capital')}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
-            >
-              Deposit Funds
-            </button>
-            <button
-              onClick={() => navigate('/investor/settings')}
-              className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
-            >
-              Settings
-            </button>
+    <div className="min-h-screen bg-[#0B1120] flex">
+      {/* Sidebar - Desktop */}
+      <aside className="hidden lg:flex flex-col w-64 border-r border-white/[0.06] bg-[#080D1A]">
+        {/* Brand */}
+        <div className="px-6 py-6 border-b border-white/[0.06]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 border border-amber-500/30 bg-amber-500/10 flex items-center justify-center">
+              <span className="font-serif text-[10px] font-bold tracking-widest text-amber-400">{BRAND_SHORT}</span>
+            </div>
+            <div>
+              <div className="text-white text-sm font-medium tracking-wide">Investor Portal</div>
+              <div className="text-slate-600 text-[10px] tracking-wider uppercase">Private Access</div>
+            </div>
           </div>
         </div>
 
-        {/* Hero Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-blue-200 text-sm font-medium">Total Invested</span>
-              <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z" />
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="text-3xl font-bold text-white mb-1">
-              {formatCurrency(stats.total_invested)}
-            </div>
-            <div className="text-green-400 text-sm">+${((stats.total_invested || 0) * 0.05).toFixed(0)} this month</div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-blue-200 text-sm font-medium">Total Returns</span>
-              <svg className="w-6 h-6 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="text-3xl font-bold text-white mb-1">
-              {formatCurrency(stats.total_returned)}
-            </div>
-            <div className="text-blue-300 text-sm">Principal + Profit</div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-blue-200 text-sm font-medium">Lifetime ROI</span>
-              <svg className="w-6 h-6 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="text-3xl font-bold text-white mb-1" style={{ color: roiColor }}>
-              {(stats.lifetime_roi || 0).toFixed(1)}%
-            </div>
-            <div className="text-blue-300 text-sm">
-              ~{((stats.lifetime_roi || 0) * 6).toFixed(0)}% annualized
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-blue-200 text-sm font-medium">Available Balance</span>
-              <svg className="w-6 h-6 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" />
-                <path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="text-3xl font-bold text-white mb-1">
-              {formatCurrency(stats.available_balance)}
-            </div>
-            <div className="text-blue-300 text-sm">Ready to withdraw</div>
-          </div>
-        </div>
-
-        {/* Charts Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-
-          {/* Portfolio Growth Chart */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-xl font-bold text-white mb-4">Portfolio Growth</h2>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={portfolioData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
-                <XAxis dataKey="month" stroke="#ffffff80" />
-                <YAxis stroke="#ffffff80" />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
-                  labelStyle={{ color: '#ffffff' }}
-                />
-                <Legend />
-                <Line type="monotone" dataKey="invested" stroke="#3b82f6" strokeWidth={2} name="Invested" />
-                <Line type="monotone" dataKey="returned" stroke="#00D96F" strokeWidth={2} name="Returned" />
-                <Line type="monotone" dataKey="profit" stroke="#fbbf24" strokeWidth={2} name="Profit" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Active vs Sold Vehicles */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-xl font-bold text-white mb-4">Investment Status</h2>
-            <div className="grid grid-cols-3 gap-4 mt-8">
-              <div className="text-center">
-                <div className="text-4xl font-bold text-blue-400 mb-2">{stats.active_vehicles}</div>
-                <div className="text-blue-200 text-sm">Active Vehicles</div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-green-400 mb-2">{stats.vehicles_sold_30d}</div>
-                <div className="text-blue-200 text-sm">Sold (30d)</div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-amber-400 mb-2">
-                  {formatCurrency(stats.pending_distributions)}
-                </div>
-                <div className="text-blue-200 text-sm">Pending Payout</div>
-              </div>
-            </div>
-            <div className="mt-6 p-4 bg-blue-900/30 rounded-lg border border-blue-500/30">
-              <div className="flex items-center gap-2 text-blue-200 text-sm">
-                <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+        {/* Nav */}
+        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+          {navItems.map(item => {
+            const active = location.pathname === item.path;
+            return (
+              <button
+                key={item.path}
+                onClick={() => navigate(item.path)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-sm text-sm transition ${
+                  active
+                    ? 'bg-amber-500/10 text-amber-400 border-l-2 border-amber-400'
+                    : 'text-slate-400 hover:text-white hover:bg-white/[0.03]'
+                }`}
+              >
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
                 </svg>
-                <span>Your capital is deployed in {stats.active_vehicles} actively listed vehicles</span>
+                <span className="tracking-wide">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* User */}
+        <div className="px-4 py-4 border-t border-white/[0.06]">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-600/20 border border-amber-500/30 flex items-center justify-center">
+              <span className="text-amber-400 text-xs font-semibold">{investor.full_name?.[0]}</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-white text-xs font-medium truncate">{investor.full_name}</div>
+              <div className="text-slate-600 text-[10px] truncate">{investor.email}</div>
+            </div>
+          </div>
+          <button onClick={handleSignOut} className="w-full text-left text-slate-500 hover:text-red-400 text-xs tracking-wide transition">
+            Sign Out
+          </button>
+        </div>
+      </aside>
+
+      {/* Mobile header */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[#080D1A]/95 backdrop-blur-xl">
+        <div className="flex items-center justify-between px-4 py-3">
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-slate-400 p-1">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+          <span className="font-serif text-xs tracking-widest text-amber-400">{BRAND_SHORT}</span>
+          <button onClick={() => navigate('/investor/notifications')} className="relative text-slate-400 p-1">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+            </svg>
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-amber-500 text-black text-[9px] rounded-full flex items-center justify-center font-bold">{unreadCount > 9 ? '9+' : unreadCount}</span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div className="lg:hidden fixed inset-0 z-40">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-64 bg-[#080D1A] border-r border-white/[0.06] overflow-y-auto">
+            <div className="px-6 py-6 border-b border-white/[0.06] flex items-center justify-between">
+              <span className="font-serif text-sm tracking-widest text-amber-400">{BRAND_SHORT}</span>
+              <button onClick={() => setSidebarOpen(false)} className="text-slate-500">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <nav className="px-3 py-4 space-y-0.5">
+              {navItems.map(item => (
+                <button
+                  key={item.path}
+                  onClick={() => { navigate(item.path); setSidebarOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-sm text-sm text-slate-400 hover:text-white hover:bg-white/[0.03] transition"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d={item.icon} /></svg>
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="px-4 py-4 border-t border-white/[0.06]">
+              <button onClick={handleSignOut} className="text-slate-500 hover:text-red-400 text-xs">Sign Out</button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto lg:pt-0 pt-14">
+        <div className="max-w-6xl mx-auto px-6 py-8">
+
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-4">
+            <div>
+              <div className="text-[10px] tracking-[0.3em] text-amber-500/60 uppercase mb-2">Welcome back</div>
+              <h1 className="text-3xl font-serif font-light text-white tracking-wide">
+                {investor.full_name}
+              </h1>
+              <p className="text-slate-500 text-sm mt-1">Portfolio overview as of {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => navigate('/investor/notifications')}
+                className="relative px-4 py-2.5 border border-white/[0.08] hover:border-white/[0.15] text-slate-400 hover:text-white rounded-sm text-xs tracking-wide transition hidden md:flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                </svg>
+                Alerts
+                {unreadCount > 0 && <span className="w-4 h-4 bg-amber-500 text-black text-[9px] rounded-full flex items-center justify-center font-bold">{unreadCount}</span>}
+              </button>
+              <button
+                onClick={() => navigate('/investor/capital')}
+                className="px-5 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-semibold rounded-sm text-xs tracking-wide uppercase transition shadow-lg shadow-amber-500/10"
+              >
+                Fund Account
+              </button>
+            </div>
+          </div>
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { label: 'Total Invested', value: fmt(s.total_invested), sub: 'Capital deployed', color: 'text-white' },
+              { label: 'Total Returns', value: fmt(s.total_returned), sub: 'Distributions received', color: 'text-emerald-400' },
+              { label: 'Lifetime ROI', value: `${(s.lifetime_roi || 0).toFixed(1)}%`, sub: `~${((s.lifetime_roi || 0) * 6).toFixed(0)}% annualized`, color: roiPositive ? 'text-emerald-400' : 'text-red-400' },
+              { label: 'Available Balance', value: fmt(s.available_balance), sub: 'Ready to withdraw', color: 'text-white' },
+            ].map((stat, i) => (
+              <div key={i} className="bg-white/[0.02] border border-white/[0.06] rounded-lg p-5">
+                <div className="text-[10px] tracking-[0.15em] text-slate-500 uppercase mb-3">{stat.label}</div>
+                <div className={`text-2xl lg:text-3xl font-light font-serif ${stat.color} mb-1`}>{stat.value}</div>
+                <div className="text-slate-600 text-[11px]">{stat.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            {/* Portfolio Growth */}
+            <div className="bg-white/[0.02] border border-white/[0.06] rounded-lg overflow-hidden">
+              <div className="px-6 py-4 border-b border-white/[0.06]">
+                <h2 className="font-serif text-base text-white tracking-wide">Portfolio Growth</h2>
+              </div>
+              <div className="p-6">
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={portfolioData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                    <XAxis dataKey="month" stroke="#475569" tick={{ fontSize: 11 }} />
+                    <YAxis stroke="#475569" tick={{ fontSize: 11 }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '4px', fontSize: '12px' }}
+                      labelStyle={{ color: '#94a3b8' }}
+                      formatter={(v) => [`$${v.toLocaleString()}`, '']}
+                    />
+                    <Line type="monotone" dataKey="invested" stroke="#d4af37" strokeWidth={1.5} dot={false} name="Invested" />
+                    <Line type="monotone" dataKey="returned" stroke="#34d399" strokeWidth={1.5} dot={false} name="Returned" />
+                    <Line type="monotone" dataKey="profit" stroke="#818cf8" strokeWidth={1.5} dot={false} name="Profit" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div className="flex items-center justify-center gap-6 mt-4">
+                  {[{ label: 'Invested', color: '#d4af37' }, { label: 'Returned', color: '#34d399' }, { label: 'Profit', color: '#818cf8' }].map(l => (
+                    <div key={l.label} className="flex items-center gap-2">
+                      <div className="w-2.5 h-0.5 rounded-full" style={{ backgroundColor: l.color }} />
+                      <span className="text-slate-500 text-[10px] tracking-wider uppercase">{l.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Investment Status */}
+            <div className="bg-white/[0.02] border border-white/[0.06] rounded-lg overflow-hidden">
+              <div className="px-6 py-4 border-b border-white/[0.06]">
+                <h2 className="font-serif text-base text-white tracking-wide">Fund Metrics</h2>
+              </div>
+              <div className="p-6">
+                <div className="grid grid-cols-3 gap-6">
+                  {[
+                    { label: 'Active Positions', value: s.active_vehicles || 0, color: 'text-amber-400' },
+                    { label: 'Sold (30d)', value: s.vehicles_sold_30d || 0, color: 'text-emerald-400' },
+                    { label: 'Pending Payout', value: fmt(s.pending_distributions), color: 'text-violet-400' },
+                  ].map(m => (
+                    <div key={m.label} className="text-center">
+                      <div className={`text-3xl font-serif font-light ${m.color} mb-1`}>{m.value}</div>
+                      <div className="text-[10px] tracking-wider text-slate-500 uppercase">{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/[0.06]">
+                  <div className="flex items-center gap-2 text-slate-500 text-xs">
+                    <svg className="w-4 h-4 text-amber-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                    </svg>
+                    <span>Your capital is deployed across {s.active_vehicles || 0} actively listed vehicles</span>
+                  </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="mt-6 grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => navigate('/investor/reports')}
+                    className="px-4 py-3 border border-white/[0.06] hover:border-amber-500/30 rounded-sm text-xs text-slate-400 hover:text-amber-400 tracking-wide transition text-left"
+                  >
+                    <span className="block text-white text-sm mb-0.5">Reports</span>
+                    Statements & K-1s
+                  </button>
+                  <button
+                    onClick={() => navigate('/investor/analytics')}
+                    className="px-4 py-3 border border-white/[0.06] hover:border-amber-500/30 rounded-sm text-xs text-slate-400 hover:text-amber-400 tracking-wide transition text-left"
+                  >
+                    <span className="block text-white text-sm mb-0.5">Analytics</span>
+                    Performance data
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Active Investments Grid */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 mb-8">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-white">Active Investments</h2>
-            <button
-              onClick={() => navigate('/investor/portfolio')}
-              className="text-blue-400 hover:text-blue-300 font-medium text-sm"
-            >
-              View All →
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {activeVehicles.map((vehicle) => {
-              const daysHeld = Math.floor((new Date() - new Date(vehicle.purchase_date)) / (1000 * 60 * 60 * 24));
-              const projectedProfit = (vehicle.purchase_price * 0.15); // Mock 15% profit
-
-              return (
-                <div key={vehicle.id} className="bg-slate-800/50 rounded-xl p-4 border border-slate-700 hover:border-blue-500 transition cursor-pointer">
-                  <div className="aspect-video bg-slate-700 rounded-lg mb-3 overflow-hidden">
-                    {vehicle.inventory?.photos?.[0] ? (
-                      <img src={vehicle.inventory.photos[0]} alt="Vehicle" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-500">No Photo</div>
-                    )}
-                  </div>
-                  <h3 className="text-white font-semibold mb-2">
-                    {vehicle.vehicle_info?.year} {vehicle.vehicle_info?.make} {vehicle.vehicle_info?.model}
-                  </h3>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Your Capital:</span>
-                      <span className="text-white font-medium">{formatCurrency(vehicle.capital_deployed)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Days Held:</span>
-                      <span className="text-blue-400 font-medium">{daysHeld} days</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Projected Profit:</span>
-                      <span className="text-green-400 font-medium">+{formatCurrency(projectedProfit)}</span>
-                    </div>
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-slate-700">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-400">Status:</span>
-                      <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded font-medium">
-                        On Lot
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {activeVehicles.length === 0 && (
-            <div className="text-center py-12 text-slate-400">
-              <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <p>No active investments yet</p>
-              <p className="text-sm mt-2">Your capital will be deployed to purchase vehicles soon</p>
+          {/* Active Investments */}
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-lg overflow-hidden mb-8">
+            <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
+              <h2 className="font-serif text-base text-white tracking-wide">Active Positions</h2>
+              <button onClick={() => navigate('/investor/portfolio')} className="text-amber-500/70 hover:text-amber-400 text-xs tracking-wide transition">
+                View All &rarr;
+              </button>
             </div>
-          )}
-        </div>
 
-        {/* Recent Activity */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-          <h2 className="text-2xl font-bold text-white mb-6">Recent Activity</h2>
-
-          <div className="space-y-3">
-            {recentTransactions.map((tx, i) => {
-              const isCapital = tx.type === 'capital';
-              const isDeposit = isCapital && tx.transaction_type === 'deposit';
-              const isDistribution = tx.type === 'distribution';
-
-              return (
-                <div key={i} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      isDeposit ? 'bg-blue-500/20' :
-                      isDistribution ? 'bg-green-500/20' :
-                      'bg-amber-500/20'
-                    }`}>
-                      {isDeposit ? (
-                        <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
-                        </svg>
-                      ) : isDistribution ? (
-                        <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                        </svg>
-                      ) : (
-                        <svg className="w-5 h-5 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                    </div>
-                    <div>
-                      <div className="text-white font-medium">
-                        {isCapital ? (
-                          tx.transaction_type === 'deposit' ? 'Capital Deposit' : 'Withdrawal'
+            {activeVehicles.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 divide-x divide-y divide-white/[0.04]">
+                {activeVehicles.map(vehicle => {
+                  const daysHeld = Math.floor((new Date() - new Date(vehicle.purchase_date)) / (1000 * 60 * 60 * 24));
+                  return (
+                    <div key={vehicle.id} className="p-5 hover:bg-white/[0.02] transition">
+                      <div className="aspect-[16/10] bg-slate-900 rounded-sm mb-3 overflow-hidden">
+                        {vehicle.inventory?.photos?.[0] ? (
+                          <img src={vehicle.inventory.photos[0]} alt="Vehicle" className="w-full h-full object-cover" />
                         ) : (
-                          `Profit Distribution${tx.vehicle?.vehicle_info ? ` - ${tx.vehicle.vehicle_info.year} ${tx.vehicle.vehicle_info.make} ${tx.vehicle.vehicle_info.model}` : ''}`
+                          <div className="w-full h-full flex items-center justify-center text-slate-700 text-xs">No Image</div>
                         )}
                       </div>
-                      <div className="text-slate-400 text-sm">
-                        {formatDate(tx.created_at || tx.initiated_at)} • {tx.status}
+                      <h3 className="text-white text-sm font-medium mb-2">
+                        {vehicle.vehicle_info?.year} {vehicle.vehicle_info?.make} {vehicle.vehicle_info?.model}
+                      </h3>
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Capital Deployed</span>
+                          <span className="text-white">{fmt(vehicle.capital_deployed)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Days Held</span>
+                          <span className="text-slate-300">{daysHeld}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Status</span>
+                          <span className="text-amber-400/80 text-[10px] tracking-wider uppercase">Active</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className={`text-lg font-bold ${
-                    isDeposit || isDistribution ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {isDeposit || isDistribution ? '+' : '-'}{formatCurrency(Math.abs(tx.amount))}
-                  </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-16 text-center">
+                <div className="w-12 h-12 border border-white/[0.08] rounded-sm flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859" />
+                  </svg>
                 </div>
-              );
-            })}
+                <p className="text-slate-500 text-sm">No active positions</p>
+                <p className="text-slate-600 text-xs mt-1">Your capital will be deployed into vetted inventory shortly.</p>
+              </div>
+            )}
           </div>
 
-          {recentTransactions.length === 0 && (
-            <div className="text-center py-8 text-slate-400">
-              <p>No recent activity</p>
+          {/* Recent Activity */}
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-lg overflow-hidden mb-8">
+            <div className="px-6 py-4 border-b border-white/[0.06]">
+              <h2 className="font-serif text-base text-white tracking-wide">Recent Activity</h2>
             </div>
-          )}
-        </div>
 
-        {/* Quick Navigation */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-          {[
-            { label: 'Analytics', desc: 'Performance metrics', path: '/investor/analytics', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-            { label: 'Reports', desc: 'Statements & tax docs', path: '/investor/reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-            { label: 'Accreditation', desc: 'Verify investor status', path: '/investor/accreditation', icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z' },
-            { label: 'Bank Account', desc: 'Pool transactions', path: '/investor/bank-account', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
-          ].map(nav => (
-            <button
-              key={nav.path}
-              onClick={() => navigate(nav.path)}
-              className="bg-white/5 hover:bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/10 hover:border-blue-500/50 transition text-left"
-            >
-              <svg className="w-6 h-6 text-blue-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={nav.icon} />
-              </svg>
-              <div className="text-white font-semibold">{nav.label}</div>
-              <div className="text-slate-400 text-xs">{nav.desc}</div>
-            </button>
-          ))}
-        </div>
+            {recentTransactions.length > 0 ? (
+              <div className="divide-y divide-white/[0.04]">
+                {recentTransactions.map((tx, i) => {
+                  const isCapital = tx.type === 'capital';
+                  const isDeposit = isCapital && tx.transaction_type === 'deposit';
+                  const isDistribution = tx.type === 'distribution';
+                  const positive = isDeposit || isDistribution;
 
-      </div>
+                  return (
+                    <div key={i} className="flex items-center justify-between px-6 py-4 hover:bg-white/[0.01] transition">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-8 h-8 rounded-sm flex items-center justify-center ${
+                          isDeposit ? 'bg-blue-500/10 border border-blue-500/20' :
+                          isDistribution ? 'bg-emerald-500/10 border border-emerald-500/20' :
+                          'bg-amber-500/10 border border-amber-500/20'
+                        }`}>
+                          <svg className={`w-3.5 h-3.5 ${isDeposit ? 'text-blue-400' : isDistribution ? 'text-emerald-400' : 'text-amber-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                            {positive ? (
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m0 0l6.75-6.75M12 19.5l-6.75-6.75" />
+                            ) : (
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 19.5v-15m0 0l-6.75 6.75M12 4.5l6.75 6.75" />
+                            )}
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-white text-sm">
+                            {isCapital
+                              ? (tx.transaction_type === 'deposit' ? 'Capital Deposit' : 'Withdrawal')
+                              : `Distribution${tx.vehicle?.vehicle_info ? ` — ${tx.vehicle.vehicle_info.year} ${tx.vehicle.vehicle_info.make} ${tx.vehicle.vehicle_info.model}` : ''}`}
+                          </div>
+                          <div className="text-slate-600 text-[11px] mt-0.5">
+                            {fmtDate(tx.created_at || tx.initiated_at)} &middot; <span className="capitalize">{tx.status}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className={`text-sm font-medium font-serif ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {positive ? '+' : '-'}{fmt(Math.abs(tx.amount))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-12 text-center">
+                <p className="text-slate-600 text-sm">No recent activity</p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer Disclaimer */}
+          <div className="border-t border-white/[0.04] pt-6 mt-4">
+            <p className="text-[10px] text-slate-600 leading-relaxed max-w-3xl">
+              <strong className="text-slate-500">Disclaimer:</strong> Portfolio values and returns shown are based on available data and may not reflect real-time market conditions.
+              Past performance is not indicative of future results. All investments involve risk, including the possible loss of principal.
+              This portal is provided for informational purposes only and does not constitute investment advice. Securities offered through
+              private placement under Regulation D, Rule 506(b).
+            </p>
+          </div>
+
+        </div>
+      </main>
     </div>
   );
 }
