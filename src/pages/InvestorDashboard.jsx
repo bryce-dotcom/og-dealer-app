@@ -15,6 +15,17 @@ export default function InvestorDashboard() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Override global dark body styles for investor pages
+  useEffect(() => {
+    const prev = { bg: document.body.style.backgroundColor, color: document.body.style.color };
+    document.body.style.backgroundColor = '#f9fafb';
+    document.body.style.color = '#111827';
+    return () => {
+      document.body.style.backgroundColor = prev.bg;
+      document.body.style.color = prev.color;
+    };
+  }, []);
+
   useEffect(() => { loadDashboard(); }, []);
 
   async function loadDashboard() {

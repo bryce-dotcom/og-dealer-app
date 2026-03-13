@@ -26,6 +26,17 @@ export default function InvestorLogin() {
   const [agreedAccredited, setAgreedAccredited] = useState(false);
   const [showAgreement, setShowAgreement] = useState(false);
 
+  // Override global dark body styles for investor pages
+  useEffect(() => {
+    const prev = { bg: document.body.style.backgroundColor, color: document.body.style.color };
+    document.body.style.backgroundColor = '#f9fafb';
+    document.body.style.color = '#111827';
+    return () => {
+      document.body.style.backgroundColor = prev.bg;
+      document.body.style.color = prev.color;
+    };
+  }, []);
+
   useEffect(() => {
     if (inviteToken) {
       setMode('invite');
@@ -148,10 +159,10 @@ export default function InvestorLogin() {
 
   function PageShell({ children, narrow = false }) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="min-h-screen bg-gray-50 flex flex-col text-gray-900" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>
         {/* Header */}
-        <header className="bg-white border-b border-gray-200">
-          <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-200 w-full" style={{ backgroundColor: '#fff' }}>
+          <div className="w-full max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 bg-gray-900 rounded flex items-center justify-center">
                 <span className="text-white text-xs font-bold">OG</span>
@@ -166,12 +177,12 @@ export default function InvestorLogin() {
             </button>
           </div>
         </header>
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col w-full">
           {children}
         </div>
         {/* Footer */}
-        <footer className="border-t border-gray-200 bg-white">
-          <div className="max-w-3xl mx-auto px-6 py-6">
+        <footer className="border-t border-gray-200 bg-white w-full" style={{ backgroundColor: '#fff' }}>
+          <div className="w-full max-w-3xl mx-auto px-6 py-6">
             <p className="text-[11px] text-gray-400 leading-relaxed">
               <strong className="text-gray-500">Important Disclosures:</strong> Securities offered pursuant to Rule 506(b) of Regulation D
               under the Securities Act of 1933. Not registered with the SEC or any state securities commission.
@@ -202,7 +213,7 @@ export default function InvestorLogin() {
   if (mode === 'invite' && inviteError) {
     return (
       <PageShell narrow>
-        <div className="max-w-lg mx-auto px-6 py-16 text-center">
+        <div className="w-full max-w-lg mx-auto px-6 py-16 text-center">
           <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
@@ -231,7 +242,7 @@ export default function InvestorLogin() {
 
     return (
       <PageShell>
-        <div className="max-w-3xl mx-auto px-6 py-10">
+        <div className="w-full max-w-3xl mx-auto px-6 py-10">
 
           {/* Intro */}
           <div className="text-center mb-10">
@@ -385,20 +396,20 @@ export default function InvestorLogin() {
           </div>
 
           {/* Security */}
-          <div className="grid grid-cols-3 gap-4 mb-8">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }} className="mb-8">
             {[
               { label: 'Bank-Grade Security', desc: '256-bit TLS encryption. Plaid-secured transfers.' },
               { label: 'Full Transparency', desc: 'Real-time access to every transaction in your dashboard.' },
               { label: 'Regulatory Compliance', desc: 'Structured under SEC Regulation D, Rule 506(b).' },
             ].map(item => (
-              <div key={item.label} className="text-center">
-                <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center mx-auto mb-2">
-                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <div key={item.label} style={{ textAlign: 'center' }}>
+                <div style={{ width: '40px', height: '40px', backgroundColor: '#f3f4f6', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>
+                  <svg style={{ width: '20px', height: '20px', color: '#4b5563' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
                   </svg>
                 </div>
-                <div className="text-xs font-medium text-gray-900">{item.label}</div>
-                <div className="text-[11px] text-gray-400 mt-0.5">{item.desc}</div>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: '#111827' }}>{item.label}</div>
+                <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{item.desc}</div>
               </div>
             ))}
           </div>
@@ -428,7 +439,7 @@ export default function InvestorLogin() {
 
     return (
       <PageShell narrow>
-        <div className="max-w-lg mx-auto px-6 py-10">
+        <div className="w-full max-w-lg mx-auto px-6 py-10">
           <div className="text-center mb-8">
             <h1 className="text-xl font-semibold text-gray-900 mb-1">Create Your Investor Account</h1>
             <p className="text-gray-500 text-sm">Review the agreements below and set up your login.</p>
@@ -556,7 +567,7 @@ export default function InvestorLogin() {
 
   return (
     <PageShell narrow>
-      <div className="max-w-sm mx-auto px-6 py-16 flex-1 flex flex-col justify-center">
+      <div className="w-full max-w-sm mx-auto px-6 py-16 flex-1 flex flex-col justify-center">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-gray-900 rounded-lg flex items-center justify-center mx-auto mb-4">
