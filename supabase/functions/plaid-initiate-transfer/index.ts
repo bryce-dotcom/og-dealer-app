@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 const PLAID_CLIENT_ID = Deno.env.get('PLAID_CLIENT_ID');
 const PLAID_SECRET = Deno.env.get('PLAID_SECRET');
 const PLAID_ENV = Deno.env.get('PLAID_ENV') || 'sandbox';
@@ -15,6 +20,10 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
   try {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -31,7 +40,7 @@ serve(async (req) => {
           success: false,
           error: 'Missing required fields: investor_id, amount, transfer_type'
         }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -45,7 +54,7 @@ serve(async (req) => {
     if (investorError || !investor) {
       return new Response(
         JSON.stringify({ success: false, error: 'Investor not found' }),
-        { headers: { 'Content-Type': 'application/json' }, status: 404 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
       );
     }
 
@@ -55,7 +64,7 @@ serve(async (req) => {
           success: false,
           error: 'Bank account not linked. Please link a bank account first.'
         }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -89,7 +98,7 @@ serve(async (req) => {
           error: authData.error_message || 'Failed to authorize transfer',
           details: authData
         }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -122,7 +131,7 @@ serve(async (req) => {
           error: transferData.error_message || 'Failed to create transfer',
           details: transferData
         }),
-        { headers: { 'Content-Type': 'application/json' }, status: 400 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
 
@@ -157,7 +166,7 @@ serve(async (req) => {
           error: 'Transfer created but failed to record in database',
           transfer_id: transfer.id
         }),
-        { headers: { 'Content-Type': 'application/json' }, status: 500 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
       );
     }
 
@@ -197,7 +206,7 @@ serve(async (req) => {
         },
         capital_record_id: capitalRecord.id
       }),
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
@@ -207,7 +216,7 @@ serve(async (req) => {
         success: false,
         error: error.message || 'Internal server error'
       }),
-      { headers: { 'Content-Type': 'application/json' }, status: 500 }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     );
   }
 });

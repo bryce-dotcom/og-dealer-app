@@ -14,6 +14,16 @@ export default function AdminInvestorDashboard() {
   const [transfers, setTransfers] = useState([]);
   const [selectedPool, setSelectedPool] = useState(null);
   const [accreditationDocs, setAccreditationDocs] = useState([]);
+  const [distributions, setDistributions] = useState([]);
+
+  // Distribution form state
+  const [distForm, setDistForm] = useState({
+    investor_id: '',
+    amount: '',
+    distribution_type: 'profit_distribution',
+    notes: '',
+  });
+  const [sendingDist, setSendingDist] = useState(false);
 
   // Invite form state
   const [inviteForm, setInviteForm] = useState({
@@ -117,6 +127,13 @@ export default function AdminInvestorDashboard() {
         .eq('status', 'pending')
         .order('uploaded_at', { ascending: false });
       setAccreditationDocs(docsData || []);
+
+      const { data: distData } = await supabase
+        .from('investor_distributions')
+        .select('*, investors(full_name, email)')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      setDistributions(distData || []);
 
       const totalInvestors = investorsData?.length || 0;
       const totalCapital = poolsData?.reduce((sum, p) => sum + (parseFloat(p.total_capital) || 0), 0) || 0;
@@ -530,6 +547,116 @@ export default function AdminInvestorDashboard() {
     }
   }
 
+  async function handleCreateDistribution() {
+    if (!distForm.investor_id || !distForm.amount) {
+      alert('Please select an investor and enter an amount.');
+      return;
+    }
+
+    const amount = parseFloat(distForm.amount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Please enter a valid amount greater than 0.');
+      return;
+    }
+
+    const inv = investors.find(i => i.id === distForm.investor_id);
+    if (!inv) {
+      alert('Investor not found.');
+      return;
+    }
+
+    if (!confirm(`Send ${formatCurrency(amount)} distribution to ${inv.full_name}?\n\nType: ${distForm.distribution_type.replace(/_/g, ' ')}\n${distForm.notes ? 'Notes: ' + distForm.notes : ''}`)) {
+      return;
+    }
+
+    try {
+      setSendingDist(true);
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // Create the distribution record
+      const { data: dist, error: distError } = await supabase
+        .from('investor_distributions')
+        .insert({
+          investor_id: distForm.investor_id,
+          distribution_type: distForm.distribution_type,
+          amount,
+          status: inv.linked_bank_account ? 'processing' : 'pending',
+          payment_method: inv.linked_bank_account ? 'ach' : 'manual',
+          approved_by: user.id,
+          approved_at: new Date().toISOString(),
+          notes: distForm.notes || null,
+        })
+        .select()
+        .single();
+
+      if (distError) throw distError;
+
+      // If investor has a linked bank account, initiate ACH transfer via Plaid
+      if (inv.linked_bank_account) {
+        try {
+          const { data: txResult, error: txError } = await supabase.functions.invoke('plaid-initiate-transfer', {
+            body: {
+              investor_id: distForm.investor_id,
+              amount,
+              type: 'credit', // credit = send money TO investor
+              description: `Distribution - ${distForm.distribution_type.replace(/_/g, ' ')}`,
+            },
+          });
+
+          if (txError) throw txError;
+
+          if (txResult?.transfer_id) {
+            await supabase
+              .from('investor_distributions')
+              .update({
+                plaid_transfer_id: txResult.transfer_id,
+                status: 'processing',
+              })
+              .eq('id', dist.id);
+          }
+        } catch (achErr) {
+          console.error('ACH transfer failed:', achErr);
+          await supabase
+            .from('investor_distributions')
+            .update({ status: 'pending', error_message: achErr.message })
+            .eq('id', dist.id);
+        }
+      }
+
+      // Update investor's total_returned and available_balance
+      await supabase
+        .from('investors')
+        .update({
+          total_returned: (parseFloat(inv.total_returned) || 0) + amount,
+          available_balance: (parseFloat(inv.available_balance) || 0) + amount,
+        })
+        .eq('id', inv.id);
+
+      // Send notification to investor
+      try {
+        await supabase.rpc('create_investor_notification', {
+          p_investor_id: distForm.investor_id,
+          p_type: 'distribution',
+          p_title: 'Distribution Received',
+          p_message: `A distribution of ${formatCurrency(amount)} has been sent to your account. ${distForm.distribution_type === 'profit_distribution' ? 'This represents your share of vehicle sale profits.' : ''}`,
+          p_action_url: '/investor/capital',
+        });
+      } catch (notifErr) {
+        console.warn('Notification failed:', notifErr);
+      }
+
+      alert(`Distribution of ${formatCurrency(amount)} created for ${inv.full_name}!${inv.linked_bank_account ? '\nACH transfer initiated to their linked bank account.' : '\nInvestor does not have a linked bank account - marked as pending for manual payment.'}`);
+
+      setDistForm({ investor_id: '', amount: '', distribution_type: 'profit_distribution', notes: '' });
+      loadAdminData();
+    } catch (error) {
+      console.error('Error creating distribution:', error);
+      alert('Failed to create distribution: ' + error.message);
+    } finally {
+      setSendingDist(false);
+    }
+  }
+
   function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -651,6 +778,7 @@ export default function AdminInvestorDashboard() {
             { id: 'invite', label: 'Invite Investor', highlight: true },
             { id: 'investors', label: 'Investors' },
             { id: 'transfers', label: 'Transfers' },
+            { id: 'distributions', label: 'Distributions', highlight2: true },
             { id: 'pools', label: 'Investment Pools' },
             { id: 'accreditation', label: `Accreditation (${accreditationDocs.length})` }
           ].map(tab => (
@@ -659,8 +787,8 @@ export default function AdminInvestorDashboard() {
               onClick={() => setActiveTab(tab.id)}
               className={`px-6 py-3 font-semibold transition border-b-2 whitespace-nowrap ${
                 activeTab === tab.id
-                  ? tab.highlight ? 'border-green-500 text-green-400' : 'border-blue-500 text-blue-400'
-                  : tab.highlight ? 'border-transparent text-green-400/60 hover:text-green-400' : 'border-transparent text-slate-400 hover:text-white'
+                  ? tab.highlight ? 'border-green-500 text-green-400' : tab.highlight2 ? 'border-emerald-500 text-emerald-400' : 'border-blue-500 text-blue-400'
+                  : tab.highlight ? 'border-transparent text-green-400/60 hover:text-green-400' : tab.highlight2 ? 'border-transparent text-emerald-400/60 hover:text-emerald-400' : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
               {tab.highlight && (
@@ -1501,6 +1629,271 @@ export default function AdminInvestorDashboard() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Distributions Tab */}
+        {activeTab === 'distributions' && (
+          <div className="space-y-6">
+            {/* Create Distribution */}
+            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+              <div className="p-6 border-b border-slate-700">
+                <h2 className="text-2xl font-bold text-white mb-1">Send Distribution</h2>
+                <p className="text-slate-400">Send profits, returns, or payouts back to an investor's bank account via ACH.</p>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* How it works */}
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-5">
+                  <h3 className="text-emerald-400 font-semibold mb-3">How Distributions Work</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <span className="text-emerald-400 font-bold">1</span>
+                      </div>
+                      <div className="text-white text-sm font-medium">Select Investor</div>
+                      <div className="text-slate-400 text-xs">Choose who to pay</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <span className="text-emerald-400 font-bold">2</span>
+                      </div>
+                      <div className="text-white text-sm font-medium">Enter Amount</div>
+                      <div className="text-slate-400 text-xs">Profit, return, or payout</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <span className="text-emerald-400 font-bold">3</span>
+                      </div>
+                      <div className="text-white text-sm font-medium">Confirm & Send</div>
+                      <div className="text-slate-400 text-xs">Review and approve</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <span className="text-green-400 font-bold">4</span>
+                      </div>
+                      <div className="text-white text-sm font-medium">ACH Transfer</div>
+                      <div className="text-slate-400 text-xs">Money lands in 1-3 days</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-slate-300 text-sm font-semibold mb-2">Select Investor *</label>
+                    <select
+                      value={distForm.investor_id}
+                      onChange={e => setDistForm(prev => ({ ...prev, investor_id: e.target.value }))}
+                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none"
+                    >
+                      <option value="">Choose an investor...</option>
+                      {investors.filter(i => i.status === 'active').map(inv => (
+                        <option key={inv.id} value={inv.id}>
+                          {inv.full_name} ({inv.email}) — Invested: {formatCurrency(inv.total_invested)} {inv.linked_bank_account ? '(Bank Linked)' : '(No Bank)'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 text-sm font-semibold mb-2">Amount ($) *</label>
+                    <input
+                      type="number"
+                      value={distForm.amount}
+                      onChange={e => setDistForm(prev => ({ ...prev, amount: e.target.value }))}
+                      placeholder="0.00"
+                      min="0"
+                      step="0.01"
+                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none text-xl font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 text-sm font-semibold mb-2">Distribution Type</label>
+                    <select
+                      value={distForm.distribution_type}
+                      onChange={e => setDistForm(prev => ({ ...prev, distribution_type: e.target.value }))}
+                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none"
+                    >
+                      <option value="profit_distribution">Profit Distribution</option>
+                      <option value="fixed_return">Fixed Return Payment</option>
+                      <option value="merchant_rate_earning">Merchant Rate Earning</option>
+                      <option value="capital_return">Capital Return (Principal)</option>
+                      <option value="bonus">Bonus / Special Payout</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 text-sm font-semibold mb-2">Notes (optional)</label>
+                    <input
+                      type="text"
+                      value={distForm.notes}
+                      onChange={e => setDistForm(prev => ({ ...prev, notes: e.target.value }))}
+                      placeholder="e.g. Q1 2026 profit share, VIN 1234 sale proceeds..."
+                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Selected investor preview */}
+                {distForm.investor_id && (() => {
+                  const inv = investors.find(i => i.id === distForm.investor_id);
+                  if (!inv) return null;
+                  return (
+                    <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-slate-600 rounded-full flex items-center justify-center">
+                            <span className="text-white font-bold text-lg">{inv.full_name?.[0]}</span>
+                          </div>
+                          <div>
+                            <div className="text-white font-semibold text-lg">{inv.full_name}</div>
+                            <div className="text-slate-400 text-sm">{inv.email}</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-slate-400 text-xs mb-1">Bank Account</div>
+                          {inv.linked_bank_account ? (
+                            <span className="text-green-400 font-semibold text-sm flex items-center gap-1 justify-end">
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                              Linked — ACH enabled
+                            </span>
+                          ) : (
+                            <span className="text-amber-400 font-semibold text-sm">Not linked — manual payout</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-600">
+                        <div>
+                          <div className="text-slate-400 text-xs">Total Invested</div>
+                          <div className="text-blue-400 font-bold">{formatCurrency(inv.total_invested)}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-xs">Total Returned</div>
+                          <div className="text-green-400 font-bold">{formatCurrency(inv.total_returned)}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-xs">Available Balance</div>
+                          <div className="text-amber-400 font-bold">{formatCurrency(inv.available_balance)}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400 text-xs">Lifetime ROI</div>
+                          <div className="text-white font-bold">{inv.lifetime_roi?.toFixed(2) || 0}%</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Send button */}
+                <div className="pt-4 border-t border-slate-700">
+                  <button
+                    onClick={handleCreateDistribution}
+                    disabled={sendingDist || !distForm.investor_id || !distForm.amount}
+                    className="w-full px-6 py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-lg font-bold text-lg transition flex items-center justify-center gap-2"
+                  >
+                    {sendingDist ? (
+                      <>
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                        </svg>
+                        Send Distribution{distForm.amount ? ` — ${formatCurrency(parseFloat(distForm.amount) || 0)}` : ''}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Distribution History */}
+            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+              <div className="p-6 border-b border-slate-700">
+                <h2 className="text-xl font-bold text-white">Distribution History</h2>
+                <p className="text-slate-400 text-sm mt-1">All payouts sent to investors</p>
+              </div>
+              {distributions.length === 0 ? (
+                <div className="p-12 text-center text-slate-400">
+                  <svg className="w-12 h-12 mx-auto mb-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
+                  </svg>
+                  <p className="text-lg font-medium mb-1">No distributions yet</p>
+                  <p className="text-sm">Use the form above to send your first payout to an investor.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-slate-700">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Date</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Investor</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Type</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Amount</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Status</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Method</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-700">
+                      {distributions.map(dist => (
+                        <tr key={dist.id} className="hover:bg-slate-700/30">
+                          <td className="px-6 py-4 text-slate-300 text-sm">
+                            {new Date(dist.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-white font-medium">{dist.investors?.full_name || 'Unknown'}</div>
+                            <div className="text-slate-400 text-xs">{dist.investors?.email}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-slate-300 text-sm capitalize">{(dist.distribution_type || '').replace(/_/g, ' ')}</span>
+                          </td>
+                          <td className="px-6 py-4 text-green-400 font-bold">{formatCurrency(dist.amount)}</td>
+                          <td className="px-6 py-4">
+                            <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(dist.status)}`}>
+                              {dist.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-slate-300 uppercase text-xs">{dist.payment_method || 'ach'}</td>
+                          <td className="px-6 py-4 text-slate-400 text-sm max-w-[200px] truncate">{dist.notes || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Quick stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <div className="text-slate-400 text-sm mb-2">Total Distributed</div>
+                <div className="text-2xl font-bold text-green-400">
+                  {formatCurrency(distributions.filter(d => d.status === 'completed' || d.status === 'processing').reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0))}
+                </div>
+              </div>
+              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <div className="text-slate-400 text-sm mb-2">Pending Payouts</div>
+                <div className="text-2xl font-bold text-amber-400">
+                  {distributions.filter(d => d.status === 'pending').length}
+                </div>
+              </div>
+              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <div className="text-slate-400 text-sm mb-2">Processing</div>
+                <div className="text-2xl font-bold text-blue-400">
+                  {distributions.filter(d => d.status === 'processing').length}
+                </div>
+              </div>
+              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <div className="text-slate-400 text-sm mb-2">Completed</div>
+                <div className="text-2xl font-bold text-green-400">
+                  {distributions.filter(d => d.status === 'completed').length}
+                </div>
+              </div>
             </div>
           </div>
         )}
