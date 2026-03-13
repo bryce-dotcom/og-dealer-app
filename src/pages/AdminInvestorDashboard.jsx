@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import PlaidLinkButton from '../components/PlaidLinkButton';
@@ -52,6 +52,9 @@ export default function AdminInvestorDashboard() {
   const [editingInvestor, setEditingInvestor] = useState(null);
   const [editForm, setEditForm] = useState({ full_name: '', email: '', phone: '', status: '' });
   const [deletingInvestor, setDeletingInvestor] = useState(null);
+  const [resendLinkForId, setResendLinkForId] = useState(null);
+  const [resendLinkUrl, setResendLinkUrl] = useState('');
+  const [resendCopied, setResendCopied] = useState(false);
 
   useEffect(() => {
     loadAdminData();
@@ -513,12 +516,13 @@ export default function AdminInvestorDashboard() {
         console.warn('Email send failed, showing link instead:', e);
       }
 
-      // Show the invite link so admin can copy/share it
+      // Show the invite link inline on that investor row
+      setResendLinkForId(inv.id);
+      setResendLinkUrl(link);
+      setResendCopied(false);
       setInviteLink(link);
       if (emailSent) {
-        alert(`Invite email sent to ${inv.email}`);
-      } else {
-        alert(`Email service unavailable. Copy the invite link below to send manually to ${inv.email}`);
+        alert(`Invite email sent to ${inv.email}! Link also shown below.`);
       }
     } catch (error) {
       console.error('Resend invite error:', error);
@@ -1269,50 +1273,87 @@ export default function AdminInvestorDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-700">
                   {investors.map(investor => (
-                    <tr key={investor.id} className="hover:bg-slate-700/30">
-                      <td className="px-6 py-4 text-white font-medium">{investor.full_name}</td>
-                      <td className="px-6 py-4 text-slate-300">{investor.email}</td>
-                      <td className="px-6 py-4 text-blue-400 font-semibold">{formatCurrency(investor.total_invested)}</td>
-                      <td className="px-6 py-4 text-green-400 font-semibold">{formatCurrency(investor.total_returned)}</td>
-                      <td className="px-6 py-4 text-amber-400 font-semibold">{formatCurrency(investor.available_balance)}</td>
-                      <td className="px-6 py-4 text-white font-semibold">{investor.lifetime_roi?.toFixed(2) || 0}%</td>
-                      <td className="px-6 py-4">
-                        <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(investor.status)}`}>
-                          {investor.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        {investor.linked_bank_account ? (
-                          <span className="text-green-400">Linked</span>
-                        ) : (
-                          <span className="text-slate-400">Not linked</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {investor.status === 'invited' && (
-                            <button
-                              onClick={() => handleResendInvite(investor)}
-                              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold transition"
-                            >
-                              Resend
-                            </button>
+                    <React.Fragment key={investor.id}>
+                      <tr className="hover:bg-slate-700/30">
+                        <td className="px-6 py-4 text-white font-medium">{investor.full_name}</td>
+                        <td className="px-6 py-4 text-slate-300">{investor.email}</td>
+                        <td className="px-6 py-4 text-blue-400 font-semibold">{formatCurrency(investor.total_invested)}</td>
+                        <td className="px-6 py-4 text-green-400 font-semibold">{formatCurrency(investor.total_returned)}</td>
+                        <td className="px-6 py-4 text-amber-400 font-semibold">{formatCurrency(investor.available_balance)}</td>
+                        <td className="px-6 py-4 text-white font-semibold">{investor.lifetime_roi?.toFixed(2) || 0}%</td>
+                        <td className="px-6 py-4">
+                          <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(investor.status)}`}>
+                            {investor.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {investor.linked_bank_account ? (
+                            <span className="text-green-400">Linked</span>
+                          ) : (
+                            <span className="text-slate-400">Not linked</span>
                           )}
-                          <button
-                            onClick={() => openEditInvestor(investor)}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => setDeletingInvestor(investor)}
-                            className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold transition"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {investor.status === 'invited' && (
+                              <button
+                                onClick={() => handleResendInvite(investor)}
+                                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold transition"
+                              >
+                                Resend
+                              </button>
+                            )}
+                            <button
+                              onClick={() => openEditInvestor(investor)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => setDeletingInvestor(investor)}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold transition"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {resendLinkForId === investor.id && resendLinkUrl && (
+                        <tr className="bg-slate-700/40">
+                          <td colSpan="9" className="px-6 py-3">
+                            <div className="flex items-center gap-3">
+                              <span className="text-slate-400 text-xs font-semibold whitespace-nowrap">Invite Link:</span>
+                              <input
+                                type="text"
+                                readOnly
+                                value={resendLinkUrl}
+                                className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white text-xs font-mono"
+                                onClick={e => e.target.select()}
+                              />
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(resendLinkUrl);
+                                  setResendCopied(true);
+                                  setTimeout(() => setResendCopied(false), 2000);
+                                }}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded text-xs font-semibold transition whitespace-nowrap"
+                              >
+                                {resendCopied ? 'Copied!' : 'Copy Link'}
+                              </button>
+                              <button
+                                onClick={() => { setResendLinkForId(null); setResendLinkUrl(''); }}
+                                className="px-2 py-2 text-slate-400 hover:text-white transition"
+                                title="Close"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
