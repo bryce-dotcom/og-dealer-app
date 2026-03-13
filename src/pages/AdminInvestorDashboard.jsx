@@ -489,25 +489,37 @@ export default function AdminInvestorDashboard() {
         if (pool) poolName = pool.pool_name;
       }
 
-      const { error: fnError } = await supabase.functions.invoke('send-investor-notification', {
-        body: {
-          investor_id: null,
-          notification_type: 'invite',
-          data: {
-            email: inv.email,
-            full_name: inv.full_name,
-            invite_link: link,
-            pool_name: poolName,
-            pool_type: poolType,
-            rate,
-            payout_frequency: payoutFrequency,
-            min_investment: minInvestment,
+      // Try to send email, but don't block on failure
+      let emailSent = false;
+      try {
+        const { error: fnError } = await supabase.functions.invoke('send-investor-notification', {
+          body: {
+            investor_id: null,
+            notification_type: 'invite',
+            data: {
+              email: inv.email,
+              full_name: inv.full_name,
+              invite_link: link,
+              pool_name: poolName,
+              pool_type: poolType,
+              rate,
+              payout_frequency: payoutFrequency,
+              min_investment: minInvestment,
+            },
           },
-        },
-      });
+        });
+        if (!fnError) emailSent = true;
+      } catch (e) {
+        console.warn('Email send failed, showing link instead:', e);
+      }
 
-      if (fnError) throw fnError;
-      alert(`Invite resent to ${inv.email}`);
+      // Show the invite link so admin can copy/share it
+      setInviteLink(link);
+      if (emailSent) {
+        alert(`Invite email sent to ${inv.email}`);
+      } else {
+        alert(`Email service unavailable. Copy the invite link below to send manually to ${inv.email}`);
+      }
     } catch (error) {
       console.error('Resend invite error:', error);
       alert('Failed to resend invite: ' + error.message);
