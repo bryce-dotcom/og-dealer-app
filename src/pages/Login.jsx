@@ -81,12 +81,16 @@ export default function Login() {
       return;
     }
 
+    console.log('[Login] Auth user id:', data.user.id, 'email:', data.user.email);
+
     // Check if user is a dealer owner
-    const { data: dealer } = await supabase
+    const { data: dealer, error: dealerErr } = await supabase
       .from('dealer_settings')
       .select('*')
       .eq('owner_user_id', data.user.id)
       .maybeSingle();
+
+    console.log('[Login] Dealer lookup result:', dealer, 'error:', dealerErr);
 
     if (dealer) {
       setDealer(dealer);
@@ -96,12 +100,14 @@ export default function Login() {
     }
 
     // Check if user is an employee
-    const { data: employeeData } = await supabase
+    const { data: employeeData, error: empErr } = await supabase
       .from('employees')
       .select('dealer_id')
       .eq('user_id', data.user.id)
       .eq('active', true)
       .maybeSingle();
+
+    console.log('[Login] Employee lookup result:', employeeData, 'error:', empErr);
 
     if (employeeData) {
       // Load dealer settings for this employee
@@ -119,7 +125,20 @@ export default function Login() {
       }
     }
 
-    // Not a dealer owner or employee
+    // Check if user is an investor - redirect to investor portal
+    const { data: investorData } = await supabase
+      .from('investors')
+      .select('id')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
+
+    if (investorData) {
+      navigate('/investor/dashboard');
+      setLoading(false);
+      return;
+    }
+
+    // Not a dealer owner, employee, or investor
     setError('No dealership found for this account. Please sign up.');
     await supabase.auth.signOut();
     setLoading(false);
