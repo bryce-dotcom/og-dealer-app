@@ -116,8 +116,8 @@ export default function InvestorDashboard() {
 
   function NavBar() {
     return (
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+      <header style={{ backgroundColor: '#fff', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 50 }}>
+        <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '0 1.5rem' }}>
           {/* Top row */}
           <div className="flex items-center justify-between h-16">
             {/* Brand */}
@@ -231,8 +231,8 @@ export default function InvestorDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="flex items-center justify-center h-screen">
+      <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
           <div className="text-center">
             <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
             <p className="text-gray-500 text-sm">Loading your portfolio...</p>
@@ -244,7 +244,7 @@ export default function InvestorDashboard() {
 
   if (!investor) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div className="text-center">
           <p className="text-gray-500 mb-3">Investor account not found.</p>
           <button onClick={() => navigate('/investor/login')} className="text-blue-600 text-sm hover:underline">Return to login</button>
@@ -258,10 +258,10 @@ export default function InvestorDashboard() {
   // ─── Render ──────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
       <NavBar />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <main style={{ maxWidth: '72rem', margin: '0 auto', padding: '2rem 1.5rem' }}>
 
         {/* Welcome */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-3">
