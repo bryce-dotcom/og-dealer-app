@@ -2,46 +2,44 @@ import { useState, useCallback, useEffect } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { supabase } from '../lib/supabase';
 
-export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'Link Bank Account' }) {
+export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'Link Bank Account', style: customStyle }) {
   const [linkToken, setLinkToken] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    createLinkToken();
+    if (investorId) createLinkToken();
   }, [investorId]);
 
   async function createLinkToken() {
     try {
       setLoading(true);
+      setError(null);
 
-      const { data, error } = await supabase.functions.invoke('plaid-create-link-token', {
+      const { data, error: fnError } = await supabase.functions.invoke('plaid-create-link-token', {
         body: { investor_id: investorId }
       });
 
-      if (error) throw error;
+      if (fnError) throw fnError;
 
       if (data.success) {
         setLinkToken(data.link_token);
       } else {
         throw new Error(data.error || 'Failed to create link token');
       }
-
-    } catch (error) {
-      console.error('Error creating link token:', error);
-      alert('Failed to initialize Plaid: ' + error.message);
+    } catch (err) {
+      console.error('Error creating link token:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }
 
   const onPlaidSuccess = useCallback(async (public_token, metadata) => {
-    console.log('Plaid success:', metadata);
-
     try {
       setLoading(true);
 
-      // Exchange public token for access token
-      const { data, error } = await supabase.functions.invoke('plaid-exchange-token', {
+      const { data, error: fnError } = await supabase.functions.invoke('plaid-exchange-token', {
         body: {
           investor_id: investorId,
           public_token: public_token,
@@ -50,7 +48,7 @@ export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'L
         }
       });
 
-      if (error) throw error;
+      if (fnError) throw fnError;
 
       if (data.success) {
         alert('Bank account linked successfully!');
@@ -58,10 +56,9 @@ export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'L
       } else {
         throw new Error(data.error || 'Failed to link account');
       }
-
-    } catch (error) {
-      console.error('Error exchanging token:', error);
-      alert('Failed to link bank account: ' + error.message);
+    } catch (err) {
+      console.error('Error exchanging token:', err);
+      alert('Failed to link bank account: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -74,24 +71,63 @@ export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'L
 
   const { open, ready } = usePlaidLink(config);
 
-  if (!linkToken) {
+  const disabled = !ready || loading || !linkToken;
+
+  const baseStyle = {
+    padding: '14px 28px',
+    fontSize: 15,
+    fontWeight: 600,
+    borderRadius: 10,
+    border: 'none',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    transition: 'all 0.15s',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: disabled ? '#e5e7eb' : '#111827',
+    color: disabled ? '#9ca3af' : '#fff',
+    ...customStyle,
+  };
+
+  if (error) {
     return (
-      <button
-        disabled
-        className="px-6 py-3 bg-slate-700 text-slate-400 rounded-lg font-semibold cursor-not-allowed"
-      >
-        Loading Plaid...
-      </button>
+      <div>
+        <button
+          onClick={() => createLinkToken()}
+          style={{ ...baseStyle, backgroundColor: '#dc2626', color: '#fff', cursor: 'pointer' }}
+        >
+          <svg style={{ width: 18, height: 18 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          Retry Connection
+        </button>
+        <p style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{error}</p>
+      </div>
     );
   }
 
   return (
     <button
       onClick={() => open()}
-      disabled={!ready || loading}
-      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition"
+      disabled={disabled}
+      style={baseStyle}
+      onMouseOver={e => { if (!disabled) e.currentTarget.style.backgroundColor = '#1f2937'; }}
+      onMouseOut={e => { if (!disabled) e.currentTarget.style.backgroundColor = '#111827'; }}
     >
-      {loading ? 'Connecting...' : buttonText}
+      {loading ? (
+        <>
+          <div style={{ width: 18, height: 18, border: '2px solid #9ca3af', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          Connecting...
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </>
+      ) : (
+        <>
+          <svg style={{ width: 18, height: 18 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+          {buttonText}
+        </>
+      )}
     </button>
   );
 }
