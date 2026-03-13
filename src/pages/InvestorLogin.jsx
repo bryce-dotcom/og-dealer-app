@@ -148,10 +148,10 @@ export default function InvestorLogin() {
 
   function PageShell({ children, narrow = false }) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 flex flex-col">
         {/* Header */}
         <header className="bg-white border-b border-gray-200">
-          <div className={`${narrow ? 'max-w-lg' : 'max-w-3xl'} mx-auto px-6 py-4 flex items-center justify-between`}>
+          <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 bg-gray-900 rounded flex items-center justify-center">
                 <span className="text-white text-xs font-bold">OG</span>
@@ -166,10 +166,12 @@ export default function InvestorLogin() {
             </button>
           </div>
         </header>
-        {children}
+        <div className="flex-1 flex flex-col">
+          {children}
+        </div>
         {/* Footer */}
-        <footer className="border-t border-gray-200 bg-white mt-auto">
-          <div className={`${narrow ? 'max-w-lg' : 'max-w-3xl'} mx-auto px-6 py-6`}>
+        <footer className="border-t border-gray-200 bg-white">
+          <div className="max-w-3xl mx-auto px-6 py-6">
             <p className="text-[11px] text-gray-400 leading-relaxed">
               <strong className="text-gray-500">Important Disclosures:</strong> Securities offered pursuant to Rule 506(b) of Regulation D
               under the Securities Act of 1933. Not registered with the SEC or any state securities commission.
@@ -554,7 +556,7 @@ export default function InvestorLogin() {
 
   return (
     <PageShell narrow>
-      <div className="max-w-sm mx-auto px-6 py-16">
+      <div className="max-w-sm mx-auto px-6 py-16 flex-1 flex flex-col justify-center">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-gray-900 rounded-lg flex items-center justify-center mx-auto mb-4">
