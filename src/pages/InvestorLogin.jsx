@@ -147,7 +147,7 @@ export default function InvestorLogin() {
     setError('');
     try {
       setLoading(true);
-      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } });
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName }, emailRedirectTo: window.location.origin + '/investor/login' } });
       if (authError) throw authError;
       if (mode === 'invite' && inviteData?.investor) {
         await supabase.from('investors').update({ user_id: authData.user.id, full_name: fullName, status: 'active' }).eq('id', inviteData.investor.id);
