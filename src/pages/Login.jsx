@@ -81,16 +81,12 @@ export default function Login() {
       return;
     }
 
-    console.log('[Login] Auth user id:', data.user.id, 'email:', data.user.email);
-
     // Check if user is a dealer owner
-    const { data: dealer, error: dealerErr } = await supabase
+    const { data: dealer } = await supabase
       .from('dealer_settings')
       .select('*')
       .eq('owner_user_id', data.user.id)
       .maybeSingle();
-
-    console.log('[Login] Dealer lookup result:', dealer, 'error:', dealerErr);
 
     if (dealer) {
       setDealer(dealer);
@@ -100,14 +96,12 @@ export default function Login() {
     }
 
     // Check if user is an employee
-    const { data: employeeData, error: empErr } = await supabase
+    const { data: employeeData } = await supabase
       .from('employees')
       .select('dealer_id')
       .eq('user_id', data.user.id)
       .eq('active', true)
       .maybeSingle();
-
-    console.log('[Login] Employee lookup result:', employeeData, 'error:', empErr);
 
     if (employeeData) {
       // Load dealer settings for this employee
