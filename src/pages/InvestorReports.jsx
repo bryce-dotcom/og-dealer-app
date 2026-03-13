@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import InvestorLayout from '../components/InvestorLayout';
+
+const cardStyle = { backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', marginBottom: 24, overflow: 'hidden' };
+const inputStyle = { width: '100%', padding: '10px 16px', backgroundColor: '#fff', border: '1px solid #d1d5db', borderRadius: 8, color: '#111827', fontSize: 14, outline: 'none', boxSizing: 'border-box' };
 
 export default function InvestorReports() {
   const navigate = useNavigate();
@@ -17,7 +21,6 @@ export default function InvestorReports() {
 
   useEffect(() => {
     loadReports();
-    // Set default period to last month
     const now = new Date();
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
@@ -102,219 +105,197 @@ export default function InvestorReports() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500"></div>
-      </div>
+      <InvestorLayout title="Reports & Tax Documents">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4rem 0' }}>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500"></div>
+        </div>
+      </InvestorLayout>
     );
   }
 
-  // Split reports by type
   const statements = reports.filter(r => ['monthly', 'quarterly', 'annual', 'custom'].includes(r.report_type));
   const taxDocs = reports.filter(r => r.report_type === 'tax');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-6">
-      <div className="max-w-5xl mx-auto">
+    <InvestorLayout title="Reports & Tax Documents" subtitle="View statements, generate reports, and download tax forms">
 
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
+      {/* Generate Report */}
+      <div style={{ ...cardStyle, padding: 24 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>Generate New Report</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 16, alignItems: 'end' }}>
           <div>
-            <h1 className="text-4xl font-bold text-white mb-2">Reports & Tax Documents</h1>
-            <p className="text-blue-200">View statements, generate reports, and download tax forms</p>
-          </div>
-          <button
-            onClick={() => navigate('/investor/dashboard')}
-            className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
-          >
-            ← Dashboard
-          </button>
-        </div>
-
-        {/* Generate Report */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 mb-8">
-          <h2 className="text-xl font-bold text-white mb-4">Generate New Report</h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div>
-              <label className="block text-blue-200 text-sm font-medium mb-2">Report Type</label>
-              <select
-                value={reportType}
-                onChange={(e) => {
-                  setReportType(e.target.value);
-                  // Auto-set date range
-                  const now = new Date();
-                  if (e.target.value === 'monthly') {
-                    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                    const end = new Date(now.getFullYear(), now.getMonth(), 0);
-                    setPeriodStart(start.toISOString().split('T')[0]);
-                    setPeriodEnd(end.toISOString().split('T')[0]);
-                  } else if (e.target.value === 'quarterly') {
-                    const qStart = new Date(now.getFullYear(), Math.floor((now.getMonth() - 3) / 3) * 3, 1);
-                    const qEnd = new Date(qStart.getFullYear(), qStart.getMonth() + 3, 0);
-                    setPeriodStart(qStart.toISOString().split('T')[0]);
-                    setPeriodEnd(qEnd.toISOString().split('T')[0]);
-                  } else if (e.target.value === 'annual' || e.target.value === 'tax') {
-                    setPeriodStart(`${now.getFullYear() - 1}-01-01`);
-                    setPeriodEnd(`${now.getFullYear() - 1}-12-31`);
-                  }
-                }}
-                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:border-blue-500 outline-none"
-              >
-                <option value="monthly">Monthly Statement</option>
-                <option value="quarterly">Quarterly Report</option>
-                <option value="annual">Annual Summary</option>
-                <option value="tax">Tax Document</option>
-                <option value="custom">Custom Range</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-blue-200 text-sm font-medium mb-2">Start Date</label>
-              <input
-                type="date"
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:border-blue-500 outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-blue-200 text-sm font-medium mb-2">End Date</label>
-              <input
-                type="date"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:border-blue-500 outline-none"
-              />
-            </div>
-            <button
-              onClick={handleGenerateReport}
-              disabled={generating}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white rounded-lg font-semibold transition"
+            <label style={{ display: 'block', color: '#6b7280', fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Report Type</label>
+            <select
+              value={reportType}
+              onChange={(e) => {
+                setReportType(e.target.value);
+                const now = new Date();
+                if (e.target.value === 'monthly') {
+                  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+                  setPeriodStart(start.toISOString().split('T')[0]);
+                  setPeriodEnd(end.toISOString().split('T')[0]);
+                } else if (e.target.value === 'quarterly') {
+                  const qStart = new Date(now.getFullYear(), Math.floor((now.getMonth() - 3) / 3) * 3, 1);
+                  const qEnd = new Date(qStart.getFullYear(), qStart.getMonth() + 3, 0);
+                  setPeriodStart(qStart.toISOString().split('T')[0]);
+                  setPeriodEnd(qEnd.toISOString().split('T')[0]);
+                } else if (e.target.value === 'annual' || e.target.value === 'tax') {
+                  setPeriodStart(`${now.getFullYear() - 1}-01-01`);
+                  setPeriodEnd(`${now.getFullYear() - 1}-12-31`);
+                }
+              }}
+              style={inputStyle}
             >
-              {generating ? 'Generating...' : 'Generate'}
-            </button>
+              <option value="monthly">Monthly Statement</option>
+              <option value="quarterly">Quarterly Report</option>
+              <option value="annual">Annual Summary</option>
+              <option value="tax">Tax Document</option>
+              <option value="custom">Custom Range</option>
+            </select>
           </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-white/20">
+          <div>
+            <label style={{ display: 'block', color: '#6b7280', fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Start Date</label>
+            <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ display: 'block', color: '#6b7280', fontSize: 14, fontWeight: 500, marginBottom: 8 }}>End Date</label>
+            <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} style={inputStyle} />
+          </div>
           <button
-            onClick={() => setActiveTab('statements')}
-            className={`px-6 py-3 font-semibold transition border-b-2 ${
-              activeTab === 'statements' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-white'
-            }`}
+            onClick={handleGenerateReport}
+            disabled={generating}
+            style={{
+              padding: '10px 24px', backgroundColor: generating ? '#e5e7eb' : '#111827', color: generating ? '#9ca3af' : '#fff',
+              borderRadius: 8, fontWeight: 600, border: 'none', cursor: generating ? 'not-allowed' : 'pointer', fontSize: 14, height: 42,
+            }}
           >
-            Statements ({statements.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('tax')}
-            className={`px-6 py-3 font-semibold transition border-b-2 ${
-              activeTab === 'tax' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-white'
-            }`}
-          >
-            Tax Documents ({taxDocs.length})
+            {generating ? 'Generating...' : 'Generate'}
           </button>
         </div>
+      </div>
 
-        {/* Reports List */}
-        <div className="space-y-4">
-          {(activeTab === 'statements' ? statements : taxDocs).map(report => (
-            <div key={report.id} className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20 hover:border-blue-500/50 transition">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                    <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d={getReportTypeIcon(report.report_type)} clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div className="text-white font-semibold text-lg">{getReportTypeLabel(report.report_type)}</div>
-                    <div className="text-blue-200 text-sm">
-                      {new Date(report.period_start).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                      {' - '}
-                      {new Date(report.period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                    </div>
-                    <div className="text-slate-400 text-xs mt-1">
-                      Generated {report.generated_at ? new Date(report.generated_at).toLocaleDateString() : 'N/A'}
-                    </div>
-                  </div>
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #e5e7eb', marginBottom: 24 }}>
+        <button
+          onClick={() => setActiveTab('statements')}
+          style={{
+            padding: '12px 24px', fontWeight: 600, fontSize: 14, border: 'none', background: 'none', cursor: 'pointer',
+            borderBottom: activeTab === 'statements' ? '2px solid #111827' : '2px solid transparent',
+            color: activeTab === 'statements' ? '#111827' : '#9ca3af',
+          }}
+        >
+          Statements ({statements.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('tax')}
+          style={{
+            padding: '12px 24px', fontWeight: 600, fontSize: 14, border: 'none', background: 'none', cursor: 'pointer',
+            borderBottom: activeTab === 'tax' ? '2px solid #111827' : '2px solid transparent',
+            color: activeTab === 'tax' ? '#111827' : '#9ca3af',
+          }}
+        >
+          Tax Documents ({taxDocs.length})
+        </button>
+      </div>
+
+      {/* Reports List */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {(activeTab === 'statements' ? statements : taxDocs).map(report => (
+          <div key={report.id} style={{ ...cardStyle, marginBottom: 0, padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{ width: 48, height: 48, backgroundColor: '#eff6ff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg style={{ width: 24, height: 24, color: '#3b82f6' }} fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d={getReportTypeIcon(report.report_type)} clipRule="evenodd" />
+                  </svg>
                 </div>
-
-                <div className="flex items-center gap-4">
-                  {/* Summary Stats */}
-                  {report.summary && (
-                    <div className="hidden md:flex gap-6 text-sm">
-                      <div className="text-center">
-                        <div className="text-slate-400">Vehicles Sold</div>
-                        <div className="text-white font-bold">{report.summary.vehicles_sold || 0}</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-slate-400">Profit</div>
-                        <div className="text-green-400 font-bold">{formatCurrency(report.summary.profit_earned)}</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-slate-400">Deposits</div>
-                        <div className="text-blue-400 font-bold">{formatCurrency(report.summary.deposits)}</div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Download buttons */}
-                  <div className="flex gap-2">
-                    {report.pdf_url && (
-                      <a href={report.pdf_url} target="_blank" rel="noopener noreferrer"
-                        className="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg text-sm font-semibold transition">
-                        PDF
-                      </a>
-                    )}
-                    {report.csv_url && (
-                      <a href={report.csv_url} target="_blank" rel="noopener noreferrer"
-                        className="px-4 py-2 bg-green-600/20 hover:bg-green-600/40 text-green-400 rounded-lg text-sm font-semibold transition">
-                        CSV
-                      </a>
-                    )}
+                <div>
+                  <div style={{ color: '#111827', fontWeight: 600, fontSize: 16 }}>{getReportTypeLabel(report.report_type)}</div>
+                  <div style={{ color: '#6b7280', fontSize: 14 }}>
+                    {new Date(report.period_start).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    {' - '}
+                    {new Date(report.period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                  </div>
+                  <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 4 }}>
+                    Generated {report.generated_at ? new Date(report.generated_at).toLocaleDateString() : 'N/A'}
                   </div>
                 </div>
               </div>
 
-              {/* Expandable Summary */}
-              {report.summary && (
-                <div className="mt-4 pt-4 border-t border-white/10">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <div className="text-slate-400">Active Vehicles</div>
-                      <div className="text-white font-semibold">{report.summary.vehicles_active || 0}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                {report.summary && (
+                  <div style={{ display: 'flex', gap: 24, fontSize: 14 }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ color: '#6b7280' }}>Vehicles Sold</div>
+                      <div style={{ color: '#111827', fontWeight: 700 }}>{report.summary.vehicles_sold || 0}</div>
                     </div>
-                    <div>
-                      <div className="text-slate-400">Capital Deployed</div>
-                      <div className="text-white font-semibold">{formatCurrency(report.summary.capital_deployed)}</div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ color: '#6b7280' }}>Profit</div>
+                      <div style={{ color: '#059669', fontWeight: 700 }}>{formatCurrency(report.summary.profit_earned)}</div>
                     </div>
-                    <div>
-                      <div className="text-slate-400">Distributions Paid</div>
-                      <div className="text-green-400 font-semibold">{formatCurrency(report.summary.distributions_paid)}</div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ color: '#6b7280' }}>Deposits</div>
+                      <div style={{ color: '#3b82f6', fontWeight: 700 }}>{formatCurrency(report.summary.deposits)}</div>
                     </div>
-                    <div>
-                      <div className="text-slate-400">Net Capital Flow</div>
-                      <div className={`font-semibold ${(report.summary.net_capital_flow || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(report.summary.net_capital_flow)}
-                      </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {report.pdf_url && (
+                    <a href={report.pdf_url} target="_blank" rel="noopener noreferrer"
+                      style={{ padding: '8px 16px', backgroundColor: '#fef2f2', color: '#dc2626', borderRadius: 8, fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>
+                      PDF
+                    </a>
+                  )}
+                  {report.csv_url && (
+                    <a href={report.csv_url} target="_blank" rel="noopener noreferrer"
+                      style={{ padding: '8px 16px', backgroundColor: '#ecfdf5', color: '#059669', borderRadius: 8, fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>
+                      CSV
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {report.summary && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f3f4f6' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, fontSize: 14 }}>
+                  <div>
+                    <div style={{ color: '#6b7280' }}>Active Vehicles</div>
+                    <div style={{ color: '#111827', fontWeight: 600 }}>{report.summary.vehicles_active || 0}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#6b7280' }}>Capital Deployed</div>
+                    <div style={{ color: '#111827', fontWeight: 600 }}>{formatCurrency(report.summary.capital_deployed)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#6b7280' }}>Distributions Paid</div>
+                    <div style={{ color: '#059669', fontWeight: 600 }}>{formatCurrency(report.summary.distributions_paid)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#6b7280' }}>Net Capital Flow</div>
+                    <div style={{ fontWeight: 600, color: (report.summary.net_capital_flow || 0) >= 0 ? '#059669' : '#dc2626' }}>
+                      {formatCurrency(report.summary.net_capital_flow)}
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
+              </div>
+            )}
+          </div>
+        ))}
 
-          {(activeTab === 'statements' ? statements : taxDocs).length === 0 && (
-            <div className="text-center py-16 text-slate-400">
-              <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <p className="text-lg">No {activeTab === 'statements' ? 'statements' : 'tax documents'} yet</p>
-              <p className="text-sm mt-2">Generate your first report using the form above</p>
-            </div>
-          )}
-        </div>
-
+        {(activeTab === 'statements' ? statements : taxDocs).length === 0 && (
+          <div style={{ textAlign: 'center', padding: 64, color: '#6b7280' }}>
+            <svg style={{ width: 64, height: 64, margin: '0 auto 16px', opacity: 0.5 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p style={{ fontSize: 18 }}>No {activeTab === 'statements' ? 'statements' : 'tax documents'} yet</p>
+            <p style={{ fontSize: 14, marginTop: 8 }}>Generate your first report using the form above</p>
+          </div>
+        )}
       </div>
-    </div>
+
+    </InvestorLayout>
   );
 }
