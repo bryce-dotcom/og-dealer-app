@@ -52,37 +52,45 @@ serve(async (req) => {
       ? 'https://development.plaid.com/link/token/create'
       : 'https://sandbox.plaid.com/link/token/create';
 
+    // Determine products - try 'auth' first since 'transfer' requires separate Plaid approval
+    const products = is_pool_account
+      ? ['transactions', 'auth']
+      : ['auth'];
+
+    const requestBody: any = {
+      client_id: PLAID_CLIENT_ID,
+      secret: PLAID_SECRET,
+      user: {
+        client_user_id: investor_id,
+      },
+      client_name: 'OG DiX Motor Club',
+      products,
+      country_codes: ['US'],
+      language: 'en',
+      webhook: `${supabaseUrl}/functions/v1/plaid-webhook`,
+      account_filters: {
+        depository: {
+          account_subtypes: ['checking', 'savings'],
+        },
+      },
+    };
+
+    console.log('[PLAID] Request products:', products, 'env:', PLAID_ENV);
+
     // Create link token
     const response = await fetch(plaidUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        client_id: PLAID_CLIENT_ID,
-        secret: PLAID_SECRET,
-        user: {
-          client_user_id: investor_id,
-        },
-        client_name: 'OG Dealer Investor Portal',
-        products: is_pool_account
-          ? ['transactions', 'auth'] // Pool account: monitor transactions
-          : ['auth', 'transfer'], // Investor account: ACH transfers
-        country_codes: ['US'],
-        language: 'en',
-        webhook: `${supabaseUrl}/functions/v1/plaid-webhook`,
-        account_filters: {
-          depository: {
-            account_subtypes: ['checking', 'savings'],
-          },
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(`Plaid API error: ${data.error_message || 'Unknown error'}`);
+      console.error('[PLAID] API Error:', JSON.stringify(data));
+      throw new Error(`Plaid API error: ${data.error_message || data.error_code || 'Unknown error'}`);
     }
 
     console.log('[PLAID] Link token created successfully');

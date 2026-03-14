@@ -16,20 +16,31 @@ export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'L
       setLoading(true);
       setError(null);
 
+      console.log('[PlaidLink] Creating link token for investor:', investorId);
+
       const { data, error: fnError } = await supabase.functions.invoke('plaid-create-link-token', {
         body: { investor_id: investorId }
       });
 
-      if (fnError) throw fnError;
+      console.log('[PlaidLink] Response:', { data, fnError });
 
-      if (data.success) {
+      // supabase.functions.invoke returns the response body in data even on error
+      // and fnError contains the FunctionsHttpError for non-2xx
+      if (fnError) {
+        // Try to extract the actual error message from the response
+        const errMsg = typeof fnError === 'object' && fnError.message ? fnError.message : String(fnError);
+        throw new Error(errMsg);
+      }
+
+      if (data?.success) {
         setLinkToken(data.link_token);
+        console.log('[PlaidLink] Link token created successfully');
       } else {
-        throw new Error(data.error || 'Failed to create link token');
+        throw new Error(data?.error || 'Failed to create link token');
       }
     } catch (err) {
-      console.error('Error creating link token:', err);
-      setError(err.message);
+      console.error('[PlaidLink] Error creating link token:', err);
+      setError(err.message || 'Failed to connect to Plaid');
     } finally {
       setLoading(false);
     }
@@ -64,12 +75,13 @@ export default function PlaidLinkButton({ investorId, onSuccess, buttonText = 'L
     }
   }, [investorId, onSuccess]);
 
-  const config = {
-    token: linkToken,
+  const { open, ready } = usePlaidLink({
+    token: linkToken || '',
     onSuccess: onPlaidSuccess,
-  };
-
-  const { open, ready } = usePlaidLink(config);
+    onExit: (err) => {
+      if (err) console.error('[PlaidLink] Exit with error:', err);
+    },
+  });
 
   const disabled = !ready || loading || !linkToken;
 
