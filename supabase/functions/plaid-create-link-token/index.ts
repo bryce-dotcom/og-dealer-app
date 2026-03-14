@@ -52,10 +52,12 @@ serve(async (req) => {
       ? 'https://development.plaid.com/link/token/create'
       : 'https://sandbox.plaid.com/link/token/create';
 
-    // Determine products - try 'auth' first since 'transfer' requires separate Plaid approval
+    // Products: auth for bank verification, transactions for monitoring deposits
+    // Pool accounts need transactions for pool-level monitoring
+    // Investor accounts need transactions to detect outgoing bank-to-bank transfers
     const products = is_pool_account
       ? ['transactions', 'auth']
-      : ['auth'];
+      : ['auth', 'transactions'];
 
     const requestBody: any = {
       client_id: PLAID_CLIENT_ID,

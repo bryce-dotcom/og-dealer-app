@@ -225,35 +225,55 @@ async function handleTransactionsWebhook(supabase: any, webhook: any) {
   console.log(`Transactions webhook: ${webhook_code} for item ${item_id}`);
 
   // Check if this is a pool account
-  const { data: pool, error: poolError } = await supabase
+  const { data: pool } = await supabase
     .from('investment_pools')
     .select('id')
     .eq('plaid_item_id', item_id)
     .single();
 
-  if (poolError || !pool) {
-    console.log('Not a pool account or pool not found');
-    return new Response(JSON.stringify({ received: true }), {
+  if (pool) {
+    // Trigger transaction sync for this pool
+    console.log('Triggering transaction sync for pool:', pool.id);
+    try {
+      const { error } = await supabase.functions.invoke('plaid-sync-pool-transactions', {
+        body: { pool_id: pool.id }
+      });
+      if (error) console.error('Error syncing pool transactions:', error);
+    } catch (error) {
+      console.error('Exception syncing pool transactions:', error);
+    }
+
+    return new Response(JSON.stringify({ received: true, synced: true, type: 'pool' }), {
       headers: { 'Content-Type': 'application/json' }
     });
   }
 
-  // Trigger transaction sync for this pool
-  console.log('Triggering transaction sync for pool:', pool.id);
+  // Check if this is an investor account
+  const { data: investor } = await supabase
+    .from('investors')
+    .select('id')
+    .eq('plaid_item_id', item_id)
+    .single();
 
-  try {
-    const { error } = await supabase.functions.invoke('plaid-sync-pool-transactions', {
-      body: { pool_id: pool.id }
-    });
-
-    if (error) {
-      console.error('Error syncing transactions:', error);
+  if (investor) {
+    // Trigger investor transaction sync (detect bank-to-bank deposits)
+    console.log('Triggering transaction sync for investor:', investor.id);
+    try {
+      const { error } = await supabase.functions.invoke('sync-investor-transactions', {
+        body: { investor_id: investor.id }
+      });
+      if (error) console.error('Error syncing investor transactions:', error);
+    } catch (error) {
+      console.error('Exception syncing investor transactions:', error);
     }
-  } catch (error) {
-    console.error('Exception syncing transactions:', error);
+
+    return new Response(JSON.stringify({ received: true, synced: true, type: 'investor' }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
-  return new Response(JSON.stringify({ received: true, synced: true }), {
+  console.log('Item not found in pools or investors:', item_id);
+  return new Response(JSON.stringify({ received: true, matched: false }), {
     headers: { 'Content-Type': 'application/json' }
   });
 }

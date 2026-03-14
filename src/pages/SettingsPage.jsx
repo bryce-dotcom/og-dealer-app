@@ -29,6 +29,17 @@ export default function SettingsPage() {
     email: '',
     website: ''
   });
+
+  // Investor Portal bank info
+  const [bankForm, setBankForm] = useState({
+    investor_portal_enabled: false,
+    investor_bank_name: '',
+    investor_bank_account_name: '',
+    investor_bank_routing: '',
+    investor_bank_account: '',
+    investor_bank_type: 'checking',
+  });
+  const [savingBank, setSavingBank] = useState(false);
   
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -71,6 +82,14 @@ export default function SettingsPage() {
         website: dealer.website || ''
       });
       setLogoPreview(dealer.logo_url || null);
+      setBankForm({
+        investor_portal_enabled: dealer.investor_portal_enabled || false,
+        investor_bank_name: dealer.investor_bank_name || '',
+        investor_bank_account_name: dealer.investor_bank_account_name || '',
+        investor_bank_routing: dealer.investor_bank_routing || '',
+        investor_bank_account: dealer.investor_bank_account || '',
+        investor_bank_type: dealer.investor_bank_type || 'checking',
+      });
     }
   }, [dealerId, dealer, navigate]);
 
@@ -106,6 +125,30 @@ export default function SettingsPage() {
       showMessage('Error saving: ' + err.message, 'error');
     }
     setSaving(false);
+  };
+
+  // Save investor portal bank info
+  const handleSaveBank = async () => {
+    setSavingBank(true);
+    try {
+      const { error } = await supabase
+        .from('dealer_settings')
+        .update({
+          investor_portal_enabled: bankForm.investor_portal_enabled,
+          investor_bank_name: bankForm.investor_bank_name,
+          investor_bank_account_name: bankForm.investor_bank_account_name,
+          investor_bank_routing: bankForm.investor_bank_routing,
+          investor_bank_account: bankForm.investor_bank_account,
+          investor_bank_type: bankForm.investor_bank_type,
+        })
+        .eq('id', dealerId);
+      if (error) throw error;
+      await fetchAllData();
+      showMessage('Investor portal settings saved!', 'success');
+    } catch (err) {
+      showMessage('Error saving: ' + err.message, 'error');
+    }
+    setSavingBank(false);
   };
 
   // Logo upload - FIXED VERSION
@@ -376,6 +419,23 @@ export default function SettingsPage() {
           General
         </button>
         <button
+          onClick={() => handleTabChange('investor')}
+          style={{
+            padding: '12px 24px',
+            fontSize: '14px',
+            fontWeight: '600',
+            backgroundColor: activeTab === 'investor' ? theme.accent : 'transparent',
+            color: activeTab === 'investor' ? '#000' : theme.textSecondary,
+            border: 'none',
+            borderBottom: activeTab === 'investor' ? `2px solid ${theme.accent}` : 'none',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            borderRadius: '8px 8px 0 0'
+          }}
+        >
+          Investor Portal
+        </button>
+        <button
           onClick={() => handleTabChange('billing')}
           style={{
             padding: '12px 24px',
@@ -397,6 +457,181 @@ export default function SettingsPage() {
       {/* Tab Content */}
       {activeTab === 'billing' ? (
         <BillingPage />
+      ) : activeTab === 'investor' ? (
+        <>
+          {message.text && (
+            <div style={{
+              padding: '12px 16px', borderRadius: '8px', marginBottom: '20px',
+              backgroundColor: message.type === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+              color: message.type === 'error' ? '#ef4444' : '#22c55e', fontSize: '14px',
+              display: 'flex', alignItems: 'center', gap: '8px'
+            }}>
+              {message.type === 'error' ? '✕' : '✓'} {message.text}
+            </div>
+          )}
+
+          {/* Enable Toggle */}
+          <div style={cardStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: '600', color: theme.text, margin: '0 0 4px 0' }}>
+                  Investor Portal
+                </h2>
+                <p style={{ color: theme.textMuted, fontSize: '13px', margin: 0 }}>
+                  Allow investors to view their portfolio and deposit capital
+                </p>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                <span style={{ fontSize: '14px', color: bankForm.investor_portal_enabled ? '#22c55e' : theme.textMuted, fontWeight: '500' }}>
+                  {bankForm.investor_portal_enabled ? 'Enabled' : 'Disabled'}
+                </span>
+                <div
+                  onClick={() => setBankForm({ ...bankForm, investor_portal_enabled: !bankForm.investor_portal_enabled })}
+                  style={{
+                    width: 44, height: 24, borderRadius: 12, padding: 2, cursor: 'pointer', transition: 'background-color 0.2s',
+                    backgroundColor: bankForm.investor_portal_enabled ? '#22c55e' : theme.border,
+                    display: 'flex', alignItems: 'center',
+                  }}
+                >
+                  <div style={{
+                    width: 20, height: 20, borderRadius: '50%', backgroundColor: '#fff',
+                    transition: 'transform 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    transform: bankForm.investor_portal_enabled ? 'translateX(20px)' : 'translateX(0)',
+                  }} />
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Bank Account Info */}
+          <div style={cardStyle}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: theme.text, marginBottom: '6px' }}>
+              Receiving Bank Account
+            </h2>
+            <p style={{ color: theme.textMuted, fontSize: '13px', margin: '0 0 20px 0' }}>
+              This is the bank account investors will send deposits to. This info is displayed in their portal.
+            </p>
+
+            <div style={{ display: 'grid', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={labelStyle}>Bank Name *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_name}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_name: e.target.value })}
+                    style={inputStyle}
+                    placeholder="e.g. Chase, Wells Fargo, Mountain America"
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Account Name *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_account_name}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_account_name: e.target.value })}
+                    style={inputStyle}
+                    placeholder="e.g. OG DiX Motor Club LLC"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={labelStyle}>Routing Number *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_routing}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_routing: e.target.value.replace(/\D/g, '').slice(0, 9) })}
+                    style={inputStyle}
+                    placeholder="9 digits"
+                    maxLength={9}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Account Number *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_account}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_account: e.target.value.replace(/\D/g, '') })}
+                    style={inputStyle}
+                    placeholder="Account number"
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Account Type</label>
+                  <select
+                    value={bankForm.investor_bank_type}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_type: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="checking">Checking</option>
+                    <option value="savings">Savings</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Preview */}
+            {bankForm.investor_bank_name && bankForm.investor_bank_routing && (
+              <div style={{
+                marginTop: '24px', padding: '20px',
+                backgroundColor: 'rgba(34,197,94,0.08)', border: `1px solid rgba(34,197,94,0.2)`,
+                borderRadius: '10px',
+              }}>
+                <div style={{ fontSize: '12px', fontWeight: '600', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                  Preview — What Investors See
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted }}>Account Name</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, fontFamily: 'monospace' }}>{bankForm.investor_bank_account_name || '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted }}>Bank</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, fontFamily: 'monospace' }}>{bankForm.investor_bank_name}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted }}>Routing Number</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, fontFamily: 'monospace' }}>{bankForm.investor_bank_routing}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted }}>Account Number</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, fontFamily: 'monospace' }}>{bankForm.investor_bank_account || '—'}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button
+                onClick={handleSaveBank}
+                disabled={savingBank}
+                style={{ ...buttonPrimary, opacity: savingBank ? 0.6 : 1 }}
+              >
+                {savingBank ? 'Saving...' : 'Save Investor Settings'}
+              </button>
+            </div>
+          </div>
+
+          {/* Info card */}
+          <div style={{
+            ...cardStyle,
+            borderColor: 'rgba(59,130,246,0.2)',
+            backgroundColor: 'rgba(59,130,246,0.05)',
+          }}>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <svg style={{ width: 20, height: 20, color: '#3b82f6', flexShrink: 0, marginTop: 2 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+              </svg>
+              <div style={{ fontSize: '13px', color: '#3b82f6', lineHeight: 1.6 }}>
+                <strong>How it works:</strong> Investors send deposits directly to this bank account from their own bank.
+                Plaid monitors their linked bank for the outgoing transfer and automatically confirms the deposit.
+                No fees, no middlemen — just bank-to-bank transfers with automated reconciliation.
+              </div>
+            </div>
+          </div>
+        </>
       ) : (
         <>
           {/* Message Alert */}

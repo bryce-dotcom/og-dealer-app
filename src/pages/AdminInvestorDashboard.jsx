@@ -66,6 +66,18 @@ export default function AdminInvestorDashboard() {
   const [resendLinkUrl, setResendLinkUrl] = useState('');
   const [resendCopied, setResendCopied] = useState(false);
 
+  // Bank setup state
+  const [bankForm, setBankForm] = useState({
+    investor_portal_enabled: false,
+    investor_bank_name: '',
+    investor_bank_account_name: '',
+    investor_bank_routing: '',
+    investor_bank_account: '',
+    investor_bank_type: 'checking',
+  });
+  const [savingBank, setSavingBank] = useState(false);
+  const [bankMessage, setBankMessage] = useState('');
+
   useEffect(() => {
     loadAdminData();
   }, []);
@@ -135,6 +147,23 @@ export default function AdminInvestorDashboard() {
         .limit(100);
       setDistributions(distData || []);
 
+      // Load dealer bank info
+      const { data: dealerData } = await supabase
+        .from('dealer_settings')
+        .select('investor_portal_enabled, investor_bank_name, investor_bank_account_name, investor_bank_routing, investor_bank_account, investor_bank_type')
+        .limit(1)
+        .single();
+      if (dealerData) {
+        setBankForm({
+          investor_portal_enabled: dealerData.investor_portal_enabled || false,
+          investor_bank_name: dealerData.investor_bank_name || '',
+          investor_bank_account_name: dealerData.investor_bank_account_name || '',
+          investor_bank_routing: dealerData.investor_bank_routing || '',
+          investor_bank_account: dealerData.investor_bank_account || '',
+          investor_bank_type: dealerData.investor_bank_type || 'checking',
+        });
+      }
+
       const totalInvestors = investorsData?.length || 0;
       const totalCapital = poolsData?.reduce((sum, p) => sum + (parseFloat(p.total_capital) || 0), 0) || 0;
       const deployedCapital = poolsData?.reduce((sum, p) => sum + (parseFloat(p.deployed_capital) || 0), 0) || 0;
@@ -156,6 +185,34 @@ export default function AdminInvestorDashboard() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSaveBank() {
+    setSavingBank(true);
+    setBankMessage('');
+    try {
+      // Get dealerId from the first dealer_settings row
+      const { data: dealer } = await supabase.from('dealer_settings').select('id').limit(1).single();
+      if (!dealer) throw new Error('Dealer settings not found');
+
+      const { error } = await supabase
+        .from('dealer_settings')
+        .update({
+          investor_portal_enabled: bankForm.investor_portal_enabled,
+          investor_bank_name: bankForm.investor_bank_name,
+          investor_bank_account_name: bankForm.investor_bank_account_name,
+          investor_bank_routing: bankForm.investor_bank_routing,
+          investor_bank_account: bankForm.investor_bank_account,
+          investor_bank_type: bankForm.investor_bank_type,
+        })
+        .eq('id', dealer.id);
+      if (error) throw error;
+      setBankMessage('Bank info saved! Investors will see these details when depositing.');
+      setTimeout(() => setBankMessage(''), 5000);
+    } catch (err) {
+      setBankMessage('Error: ' + err.message);
+    }
+    setSavingBank(false);
   }
 
   async function handleSyncPoolTransactions(poolId) {
@@ -780,15 +837,16 @@ export default function AdminInvestorDashboard() {
             { id: 'transfers', label: 'Transfers' },
             { id: 'distributions', label: 'Distributions', highlight2: true },
             { id: 'pools', label: 'Investment Pools' },
-            { id: 'accreditation', label: `Accreditation (${accreditationDocs.length})` }
+            { id: 'accreditation', label: `Accreditation (${accreditationDocs.length})` },
+            { id: 'bank', label: 'Bank Setup', highlight3: true }
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-6 py-3 font-semibold transition border-b-2 whitespace-nowrap ${
                 activeTab === tab.id
-                  ? tab.highlight ? 'border-green-500 text-green-400' : tab.highlight2 ? 'border-emerald-500 text-emerald-400' : 'border-blue-500 text-blue-400'
-                  : tab.highlight ? 'border-transparent text-green-400/60 hover:text-green-400' : tab.highlight2 ? 'border-transparent text-emerald-400/60 hover:text-emerald-400' : 'border-transparent text-slate-400 hover:text-white'
+                  ? tab.highlight ? 'border-green-500 text-green-400' : tab.highlight2 ? 'border-emerald-500 text-emerald-400' : tab.highlight3 ? 'border-orange-500 text-orange-400' : 'border-blue-500 text-blue-400'
+                  : tab.highlight ? 'border-transparent text-green-400/60 hover:text-green-400' : tab.highlight2 ? 'border-transparent text-emerald-400/60 hover:text-emerald-400' : tab.highlight3 ? 'border-transparent text-orange-400/60 hover:text-orange-400' : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
               {tab.highlight && (
@@ -2528,6 +2586,166 @@ export default function AdminInvestorDashboard() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bank Setup Tab */}
+        {activeTab === 'bank' && (
+          <div className="space-y-6">
+            {bankMessage && (
+              <div className={`p-4 rounded-xl text-sm font-medium ${bankMessage.startsWith('Error') ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-green-500/20 text-green-400 border border-green-500/30'}`}>
+                {bankMessage}
+              </div>
+            )}
+
+            {/* Enable Toggle */}
+            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Investor Portal</h2>
+                  <p className="text-slate-400 text-sm mt-1">Allow investors to view their portfolio and deposit capital</p>
+                </div>
+                <button
+                  onClick={() => setBankForm({ ...bankForm, investor_portal_enabled: !bankForm.investor_portal_enabled })}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${bankForm.investor_portal_enabled ? 'bg-green-500' : 'bg-slate-600'}`}
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${bankForm.investor_portal_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Bank Account Details */}
+            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div className="flex items-center gap-3 mb-2">
+                <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z" />
+                </svg>
+                <h2 className="text-lg font-bold text-white">Receiving Bank Account</h2>
+              </div>
+              <p className="text-slate-400 text-sm mb-6">
+                This is the bank account investors will send deposits to. These details are displayed in their investor portal when they initiate a deposit.
+              </p>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Bank Name *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_name}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_name: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    placeholder="e.g. Chase, Wells Fargo, Mountain America"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Account Holder Name *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_account_name}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_account_name: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    placeholder="e.g. OG DiX Motor Club LLC"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Routing Number *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_routing}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_routing: e.target.value.replace(/\D/g, '').slice(0, 9) })}
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    placeholder="9 digits"
+                    maxLength={9}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Account Number *</label>
+                  <input
+                    type="text"
+                    value={bankForm.investor_bank_account}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_account: e.target.value.replace(/\D/g, '') })}
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    placeholder="Account number"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Account Type</label>
+                  <select
+                    value={bankForm.investor_bank_type}
+                    onChange={e => setBankForm({ ...bankForm, investor_bank_type: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                  >
+                    <option value="checking">Checking</option>
+                    <option value="savings">Savings</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Live Preview */}
+              {bankForm.investor_bank_name && bankForm.investor_bank_routing && (
+                <div className="bg-slate-900/50 border border-slate-600 rounded-xl p-5 mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span className="text-xs font-bold text-green-400 uppercase tracking-wider">What investors will see</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-slate-500 mb-1">Account Name</div>
+                      <div className="text-white font-semibold font-mono">{bankForm.investor_bank_account_name || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500 mb-1">Bank</div>
+                      <div className="text-white font-semibold font-mono">{bankForm.investor_bank_name}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500 mb-1">Routing Number</div>
+                      <div className="text-white font-semibold font-mono">{bankForm.investor_bank_routing}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500 mb-1">Account Number</div>
+                      <div className="text-white font-semibold font-mono">{bankForm.investor_bank_account || '—'}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleSaveBank}
+                disabled={savingBank || !bankForm.investor_bank_name || !bankForm.investor_bank_routing}
+                className={`px-6 py-3 rounded-lg font-semibold text-sm transition ${
+                  savingBank || !bankForm.investor_bank_name || !bankForm.investor_bank_routing
+                    ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                    : 'bg-orange-500 hover:bg-orange-600 text-white'
+                }`}
+              >
+                {savingBank ? 'Saving...' : 'Save Bank Details'}
+              </button>
+            </div>
+
+            {/* How it works */}
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-5">
+              <div className="flex gap-3">
+                <svg className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+                <div className="text-sm text-blue-300 leading-relaxed">
+                  <strong className="text-blue-200">How bank-to-bank deposits work:</strong>
+                  <ol className="mt-2 space-y-1 list-decimal list-inside text-blue-300/80">
+                    <li>Investor declares a deposit amount in their portal</li>
+                    <li>Your bank details (above) are shown so they can send money from their bank</li>
+                    <li>Plaid monitors the investor's linked bank for the outgoing transfer</li>
+                    <li>When detected, the deposit is automatically confirmed — no manual work</li>
+                  </ol>
+                  <p className="mt-2 text-blue-300/60">Zero fees. No Stripe. No middleman. Just direct bank-to-bank transfers.</p>
+                </div>
               </div>
             </div>
           </div>

@@ -92,7 +92,8 @@ export default function InvestorPortfolio() {
     return (
       <InvestorLayout title="Investment Portfolio">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4rem 0' }}>
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500"></div>
+          <div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTopColor: '#0f172a', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </InvestorLayout>
     );

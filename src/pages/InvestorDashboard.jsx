@@ -77,14 +77,17 @@ export default function InvestorDashboard() {
     return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  const card = { backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', marginBottom: 24, overflow: 'hidden' };
+  const cardHead = { padding: '14px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
+  const cardTitle = { fontSize: 13, fontWeight: 700, color: '#0f172a', margin: 0, letterSpacing: '-0.01em', textTransform: 'uppercase', letterSpacing: '0.02em' };
+
   if (loading) {
     return (
       <InvestorLayout>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ width: 32, height: 32, border: '2px solid #d1d5db', borderTopColor: '#111827', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }} />
-            <p style={{ color: '#6b7280', fontSize: 14 }}>Loading your portfolio...</p>
-            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            <div style={{ width: 32, height: 32, border: '3px solid #e2e8f0', borderTopColor: '#0f172a', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }} />
+            <p style={{ color: '#64748b', fontSize: 14 }}>Loading your portfolio...</p>
           </div>
         </div>
       </InvestorLayout>
@@ -95,8 +98,8 @@ export default function InvestorDashboard() {
     return (
       <InvestorLayout>
         <div style={{ textAlign: 'center', padding: '4rem 0' }}>
-          <p style={{ color: '#6b7280', marginBottom: 12 }}>Investor account not found.</p>
-          <button onClick={() => navigate('/investor/login')} style={{ color: '#2563eb', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Return to login</button>
+          <p style={{ color: '#64748b', marginBottom: 12 }}>Investor account not found.</p>
+          <button onClick={() => navigate('/investor/login')} style={{ color: '#3b82f6', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Return to login</button>
         </div>
       </InvestorLayout>
     );
@@ -107,121 +110,127 @@ export default function InvestorDashboard() {
   return (
     <InvestorLayout>
       {/* Welcome */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 32, flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 600, color: '#111827', margin: 0 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
             Welcome back, {investor.full_name?.split(' ')[0]}
           </h1>
-          <p style={{ color: '#6b7280', fontSize: 14, marginTop: 4 }}>
+          <p style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </p>
         </div>
         <button
           onClick={() => navigate('/investor/capital')}
-          style={{ padding: '10px 20px', backgroundColor: '#111827', color: '#fff', fontSize: 14, fontWeight: 500, borderRadius: 8, border: 'none', cursor: 'pointer' }}
+          style={{
+            padding: '10px 22px',
+            background: 'linear-gradient(135deg, #0f172a 0%, #334155 100%)',
+            color: '#fff', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+            transition: 'all 0.15s',
+          }}
+          onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+          onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
         >
           Fund Account
         </button>
       </div>
 
-      {/* Account Summary */}
-      <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', marginBottom: 24, overflow: 'hidden' }}>
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid #f3f4f6' }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Account Summary</h2>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          {[
-            { label: 'Total Invested', value: fmt(s.total_invested) },
-            { label: 'Total Returns', value: fmt(s.total_returned), color: null },
-            { label: 'Lifetime ROI', value: `${(s.lifetime_roi || 0).toFixed(1)}%`, color: (s.lifetime_roi || 0) >= 0 ? '#16a34a' : '#dc2626' },
-            { label: 'Available Balance', value: fmt(s.available_balance) },
-          ].map((stat, i) => (
-            <div key={i} style={{ padding: '20px 24px', borderLeft: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
-              <div style={{ fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>{stat.label}</div>
-              <div style={{ fontSize: 24, fontWeight: 600, color: stat.color || '#111827' }}>{stat.value}</div>
+      {/* Account Summary — 4 stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+        {[
+          { label: 'Total Invested', value: fmt(s.total_invested), icon: 'M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z', color: '#0f172a', bg: '#f1f5f9' },
+          { label: 'Total Returns', value: fmt(s.total_returned), icon: 'M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941', color: '#16a34a', bg: '#f0fdf4' },
+          { label: 'Lifetime ROI', value: `${(s.lifetime_roi || 0).toFixed(1)}%`, icon: 'M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5', color: (s.lifetime_roi || 0) >= 0 ? '#16a34a' : '#dc2626', bg: (s.lifetime_roi || 0) >= 0 ? '#f0fdf4' : '#fef2f2' },
+          { label: 'Available Balance', value: fmt(s.available_balance), icon: 'M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z', color: '#d97706', bg: '#fffbeb' },
+        ].map((stat, i) => (
+          <div key={i} style={{ ...card, marginBottom: 0, padding: '20px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: stat.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg style={{ width: 18, height: 18, color: stat.color }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d={stat.icon} />
+                </svg>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{stat.label}</span>
             </div>
-          ))}
-        </div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: stat.color, letterSpacing: '-0.02em' }}>{stat.value}</div>
+          </div>
+        ))}
       </div>
 
       {/* Two column layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '5fr 3fr', gap: 20, marginBottom: 24 }}>
         {/* Portfolio Value Chart */}
-        <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Portfolio Value</h2>
-            <div style={{ display: 'flex', gap: 4 }}>
+        <div style={card}>
+          <div style={cardHead}>
+            <h2 style={cardTitle}>Portfolio Value</h2>
+            <div style={{ display: 'flex', gap: 2 }}>
               {['6M', '1Y', 'ALL'].map(period => (
                 <button key={period} style={{
-                  padding: '4px 10px', borderRadius: 4, fontSize: 12, border: 'none', cursor: 'pointer',
-                  backgroundColor: period === '6M' ? '#111827' : 'transparent',
-                  color: period === '6M' ? '#fff' : '#6b7280',
+                  padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer',
+                  backgroundColor: period === '6M' ? '#0f172a' : 'transparent',
+                  color: period === '6M' ? '#fff' : '#94a3b8',
+                  transition: 'all 0.15s',
                 }}>{period}</button>
               ))}
             </div>
           </div>
-          <div style={{ padding: '16px 24px' }}>
-            <ResponsiveContainer width="100%" height={240}>
+          <div style={{ padding: '16px 20px 12px' }}>
+            <ResponsiveContainer width="100%" height={220}>
               <AreaChart data={portfolioData}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#111827" stopOpacity={0.08} />
-                    <stop offset="95%" stopColor="#111827" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#0f172a" stopOpacity={0.06} />
+                    <stop offset="95%" stopColor="#0f172a" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                <XAxis dataKey="month" stroke="#9ca3af" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
-                <YAxis stroke="#9ca3af" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="month" stroke="#cbd5e1" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis stroke="#cbd5e1" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  labelStyle={{ color: '#6b7280', fontWeight: 500 }}
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, fontSize: 13, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', padding: '8px 14px' }}
+                  labelStyle={{ color: '#64748b', fontWeight: 600, marginBottom: 2 }}
                   formatter={(v) => [`$${v.toLocaleString()}`, 'Value']}
                 />
-                <Area type="monotone" dataKey="value" stroke="#111827" strokeWidth={2} fill="url(#colorValue)" dot={false} />
+                <Area type="monotone" dataKey="value" stroke="#0f172a" strokeWidth={2} fill="url(#colorValue)" dot={false} activeDot={{ r: 4, fill: '#0f172a', stroke: '#fff', strokeWidth: 2 }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Fund Metrics */}
-        <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid #f3f4f6' }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Fund Metrics</h2>
+        <div style={card}>
+          <div style={cardHead}>
+            <h2 style={cardTitle}>Fund Metrics</h2>
           </div>
-          <div style={{ padding: 24 }}>
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Active Positions</div>
-              <div style={{ fontSize: 30, fontWeight: 600, color: '#111827' }}>{s.active_vehicles || 0}</div>
-              <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>Vehicles currently held</p>
-            </div>
-            <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 20, marginBottom: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Sold (30 days)</div>
-              <div style={{ fontSize: 30, fontWeight: 600, color: '#111827' }}>{s.vehicles_sold_30d || 0}</div>
-              <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>Vehicles liquidated</p>
-            </div>
-            <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Pending Distributions</div>
-              <div style={{ fontSize: 30, fontWeight: 600, color: '#16a34a' }}>{fmt(s.pending_distributions)}</div>
-              <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>Awaiting payout</p>
-            </div>
+          <div style={{ padding: 20 }}>
+            {[
+              { label: 'Active Positions', value: s.active_vehicles || 0, sub: 'Vehicles currently held', color: '#0f172a' },
+              { label: 'Sold (30 days)', value: s.vehicles_sold_30d || 0, sub: 'Vehicles liquidated', color: '#0f172a' },
+              { label: 'Pending Distributions', value: fmt(s.pending_distributions), sub: 'Awaiting payout', color: '#16a34a' },
+            ].map((m, i) => (
+              <div key={i} style={{ paddingTop: i > 0 ? 18 : 0, marginTop: i > 0 ? 18 : 0, borderTop: i > 0 ? '1px solid #f1f5f9' : 'none' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>{m.label}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: m.color, letterSpacing: '-0.02em' }}>{m.value}</div>
+                <p style={{ fontSize: 12, color: '#cbd5e1', marginTop: 2 }}>{m.sub}</p>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Active Positions */}
       {activeVehicles.length > 0 && (
-        <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', marginBottom: 24, overflow: 'hidden' }}>
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Active Positions</h2>
-            <button onClick={() => navigate('/investor/portfolio')} style={{ color: '#2563eb', fontSize: 12, fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer' }}>View All</button>
+        <div style={card}>
+          <div style={cardHead}>
+            <h2 style={cardTitle}>Active Positions</h2>
+            <button onClick={() => navigate('/investor/portfolio')} style={{ color: '#3b82f6', fontSize: 12, fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}>View All</button>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-                <th style={{ padding: '12px 24px', textAlign: 'left', fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vehicle</th>
-                <th style={{ padding: '12px 24px', textAlign: 'right', fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Capital</th>
-                <th style={{ padding: '12px 24px', textAlign: 'right', fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Days Held</th>
-                <th style={{ padding: '12px 24px', textAlign: 'right', fontSize: 11, fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</th>
+              <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                {['Vehicle', 'Capital', 'Days Held', 'Status'].map((h, i) => (
+                  <th key={h} style={{ padding: '10px 24px', textAlign: i === 0 ? 'left' : 'right', fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -229,25 +238,25 @@ export default function InvestorDashboard() {
                 const days = Math.floor((new Date() - new Date(v.purchase_date)) / (1000 * 60 * 60 * 24));
                 return (
                   <tr key={v.id} style={{ borderBottom: '1px solid #fafafa' }}>
-                    <td style={{ padding: '16px 24px' }}>
+                    <td style={{ padding: '14px 24px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 40, height: 40, backgroundColor: '#f3f4f6', borderRadius: 6, overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ width: 40, height: 40, backgroundColor: '#f1f5f9', borderRadius: 8, overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {v.inventory?.photos?.[0] ? (
                             <img src={v.inventory.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
-                            <span style={{ color: '#9ca3af', fontSize: 10 }}>N/A</span>
+                            <span style={{ color: '#cbd5e1', fontSize: 10 }}>N/A</span>
                           )}
                         </div>
-                        <span style={{ fontWeight: 500, color: '#111827' }}>
+                        <span style={{ fontWeight: 600, color: '#0f172a' }}>
                           {v.vehicle_info?.year} {v.vehicle_info?.make} {v.vehicle_info?.model}
                         </span>
                       </div>
                     </td>
-                    <td style={{ padding: '16px 24px', textAlign: 'right', fontWeight: 500, color: '#111827' }}>{fmt(v.capital_deployed)}</td>
-                    <td style={{ padding: '16px 24px', textAlign: 'right', color: '#6b7280' }}>{days}d</td>
-                    <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', backgroundColor: '#f0fdf4', color: '#15803d', fontSize: 12, fontWeight: 500, borderRadius: 12 }}>
-                        <span style={{ width: 6, height: 6, backgroundColor: '#22c55e', borderRadius: '50%' }} />
+                    <td style={{ padding: '14px 24px', textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>{fmt(v.capital_deployed)}</td>
+                    <td style={{ padding: '14px 24px', textAlign: 'right', color: '#64748b' }}>{days}d</td>
+                    <td style={{ padding: '14px 24px', textAlign: 'right' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', backgroundColor: '#f0fdf4', color: '#15803d', fontSize: 11, fontWeight: 600, borderRadius: 99 }}>
+                        <span style={{ width: 5, height: 5, backgroundColor: '#22c55e', borderRadius: '50%' }} />
                         Active
                       </span>
                     </td>
@@ -260,9 +269,9 @@ export default function InvestorDashboard() {
       )}
 
       {/* Recent Activity */}
-      <div style={{ backgroundColor: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', marginBottom: 24, overflow: 'hidden' }}>
-        <div style={{ padding: '16px 24px', borderBottom: '1px solid #f3f4f6' }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Recent Activity</h2>
+      <div style={card}>
+        <div style={cardHead}>
+          <h2 style={cardTitle}>Recent Activity</h2>
         </div>
 
         {recentTransactions.length > 0 ? (
@@ -274,10 +283,10 @@ export default function InvestorDashboard() {
               const positive = isDeposit || isDistribution;
 
               return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: i < recentTransactions.length - 1 ? '1px solid #fafafa' : 'none' }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 24px', borderBottom: i < recentTransactions.length - 1 ? '1px solid #fafafa' : 'none' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{
-                      width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 34, height: 34, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       backgroundColor: positive ? '#f0fdf4' : '#fef2f2',
                     }}>
                       <svg style={{ width: 16, height: 16, color: positive ? '#16a34a' : '#ef4444' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
@@ -288,23 +297,23 @@ export default function InvestorDashboard() {
                       </svg>
                     </div>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 500, color: '#111827' }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
                         {isCapital
                           ? (isDeposit ? 'Capital Deposit' : 'Withdrawal')
-                          : `Distribution${tx.vehicle?.vehicle_info ? ` - ${tx.vehicle.vehicle_info.year} ${tx.vehicle.vehicle_info.make} ${tx.vehicle.vehicle_info.model}` : ''}`}
+                          : `Distribution${tx.vehicle?.vehicle_info ? ` — ${tx.vehicle.vehicle_info.year} ${tx.vehicle.vehicle_info.make} ${tx.vehicle.vehicle_info.model}` : ''}`}
                       </div>
-                      <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
                         {fmtDate(tx.created_at || tx.initiated_at)}
                       </div>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: positive ? '#16a34a' : '#ef4444' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: positive ? '#16a34a' : '#ef4444' }}>
                       {positive ? '+' : '-'}{fmt(Math.abs(tx.amount))}
                     </div>
                     <div style={{
-                      fontSize: 12, marginTop: 2,
-                      color: tx.status === 'completed' ? '#22c55e' : tx.status === 'pending' ? '#f59e0b' : '#9ca3af',
+                      fontSize: 11, fontWeight: 600, marginTop: 2,
+                      color: tx.status === 'completed' ? '#16a34a' : tx.status === 'pending' ? '#d97706' : '#94a3b8',
                     }}>
                       {tx.status?.charAt(0).toUpperCase() + tx.status?.slice(1)}
                     </div>
@@ -315,8 +324,8 @@ export default function InvestorDashboard() {
           </div>
         ) : (
           <div style={{ padding: '48px 24px', textAlign: 'center' }}>
-            <p style={{ color: '#9ca3af', fontSize: 14 }}>No recent activity</p>
-            <p style={{ color: '#d1d5db', fontSize: 12, marginTop: 4 }}>Transactions will appear here once your account is funded.</p>
+            <p style={{ color: '#94a3b8', fontSize: 14 }}>No recent activity</p>
+            <p style={{ color: '#cbd5e1', fontSize: 12, marginTop: 4 }}>Transactions will appear here once your account is funded.</p>
           </div>
         )}
       </div>
@@ -332,15 +341,20 @@ export default function InvestorDashboard() {
           <button
             key={item.path}
             onClick={() => navigate(item.path)}
-            style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, textAlign: 'left', cursor: 'pointer' }}
-            onMouseOver={e => { e.currentTarget.style.borderColor = '#d1d5db'; e.currentTarget.style.boxShadow = '0 1px 3px 0 rgb(0 0 0 / 0.1)'; }}
-            onMouseOut={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; }}
+            style={{
+              backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 18,
+              textAlign: 'left', cursor: 'pointer', transition: 'all 0.15s',
+            }}
+            onMouseOver={e => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+            onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'translateY(0)'; }}
           >
-            <svg style={{ width: 20, height: 20, color: '#9ca3af', marginBottom: 8 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
-            </svg>
-            <div style={{ fontSize: 14, fontWeight: 500, color: '#111827' }}>{item.label}</div>
-            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>{item.desc}</div>
+            <div style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+              <svg style={{ width: 18, height: 18, color: '#64748b' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+              </svg>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{item.label}</div>
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{item.desc}</div>
           </button>
         ))}
       </div>
