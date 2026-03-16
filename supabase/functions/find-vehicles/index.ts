@@ -361,6 +361,42 @@ function matchesSpecificFilters(vehicle: any, filters: {
   return true;
 }
 
+// Filter out junk listings (parts, accessories, search pages, wrong vehicles)
+function isRealVehicleListing(title: string, snippet: string, url: string, make: string, model: string): boolean {
+  const text = `${title} ${snippet}`.toLowerCase();
+
+  // Reject parts/accessories keywords
+  const junkKeywords = [
+    'parts for sale', 'auto parts', 'bumper', 'door panel', 'fender', 'hood for',
+    'headlight', 'tail light', 'taillight', 'mirror for', 'wheel for', 'rim for',
+    'tire for', 'seat for', 'grille', 'grill for', 'radiator', 'alternator',
+    'starter for', 'engine for', 'transmission for', 'bed liner', 'tonneau',
+    'running board', 'step bar', 'bull bar', 'brush guard', 'lift kit',
+    'leveling kit', 'exhaust for', 'intake for', 'chip for', 'tuner for',
+    'floor mat', 'cargo', 'accessori', 'new and used', 'factory', '-factory-',
+    'oem ', 'aftermarket', 'replacement', 'compatible', 'fits ',
+    'usados en venta', 'en todo el', // Spanish search results pages
+    'cars & trucks for sale', 'vehicles for sale', // category pages
+    'search results', 'listings near', 'best deals',
+  ];
+  for (const kw of junkKeywords) {
+    if (text.includes(kw)) return false;
+  }
+
+  // Reject URLs that are search/category pages, not actual listings
+  if (url.includes('/search?') || url.includes('/search/') || url.includes('/inventory') || url.includes('/listings?')) {
+    // Exception: individual listing URLs are OK
+    if (!url.includes('/item/') && !url.includes('/listing/') && !url.match(/\/\d{8,}/)) {
+      return false;
+    }
+  }
+
+  // Must mention the make somewhere in title
+  if (!text.includes(make.toLowerCase())) return false;
+
+  return true;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -653,7 +689,7 @@ serve(async (req) => {
 
       // ----- GOOGLE SEARCH: Craigslist -----
       try {
-        const clQuery = `${vehicleQuery} for sale site:craigslist.org`;
+        const clQuery = `${vehicleQuery} for sale -parts -accessories site:craigslist.org`;
         const clParams = new URLSearchParams({
           api_key: SERPAPI_API_KEY,
           engine: 'google',
@@ -677,17 +713,22 @@ serve(async (req) => {
             const url = item.link || '';
             if (seenUrls.has(url)) continue;
             if (!url.includes('craigslist.org')) continue;
+            if (!isRealVehicleListing(item.title || '', item.snippet || '', url, make, searchModel)) continue;
             seenUrls.add(url);
 
             const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
 
-            // Filter by year range
-            if (year_min && parsed.year && parsed.year < year_min) continue;
-            if (year_max && parsed.year && parsed.year > year_max) continue;
+            // Must have a year to be a real vehicle listing
+            if (!parsed.year) continue;
 
-            // Filter by price
-            if (max_price && parsed.price && parsed.price > max_price) continue;
-            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+            // Filter by year range
+            if (year_min && parsed.year < year_min) continue;
+            if (year_max && parsed.year > year_max) continue;
+
+            // Filter by price — must have a price
+            if (!parsed.price) continue;
+            if (max_price && parsed.price > max_price) continue;
+            if (parsed.price < 2000 || parsed.price > 500000) continue;
 
             privateListings.push({
               title: parsed.cleanTitle || item.title,
@@ -712,7 +753,7 @@ serve(async (req) => {
 
       // ----- GOOGLE SEARCH: Facebook Marketplace -----
       try {
-        const fbQuery = `${vehicleQuery} for sale site:facebook.com/marketplace`;
+        const fbQuery = `${vehicleQuery} for sale -parts -bumper -accessories site:facebook.com/marketplace`;
         const fbParams = new URLSearchParams({
           api_key: SERPAPI_API_KEY,
           engine: 'google',
@@ -736,17 +777,21 @@ serve(async (req) => {
             const url = item.link || '';
             if (seenUrls.has(url)) continue;
             if (!url.includes('facebook.com')) continue;
+            if (!isRealVehicleListing(item.title || '', item.snippet || '', url, make, searchModel)) continue;
             seenUrls.add(url);
 
             const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
 
+            // Must have year and price
+            if (!parsed.year || !parsed.price) continue;
+
             // Filter by year range
-            if (year_min && parsed.year && parsed.year < year_min) continue;
-            if (year_max && parsed.year && parsed.year > year_max) continue;
+            if (year_min && parsed.year < year_min) continue;
+            if (year_max && parsed.year > year_max) continue;
 
             // Filter by price
-            if (max_price && parsed.price && parsed.price > max_price) continue;
-            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+            if (max_price && parsed.price > max_price) continue;
+            if (parsed.price < 2000 || parsed.price > 500000) continue;
 
             privateListings.push({
               title: parsed.cleanTitle || item.title,
@@ -809,6 +854,9 @@ serve(async (req) => {
 
               const price = item.listing_price?.amount ? parseFloat(item.listing_price.amount) : null;
 
+              // Must have a price and it must be reasonable for a vehicle
+              if (!price || price < 2000 || price > 500000) continue;
+
               // Parse miles from subtitle
               let miles: number | null = null;
               const milesText = item.custom_sub_titles_with_rendering_flags?.[0]?.subtitle || '';
@@ -818,8 +866,19 @@ serve(async (req) => {
               }
 
               // Parse year from title
-              const yearMatch = (item.marketplace_listing_title || item.custom_title || '').match(/\b(19|20)\d{2}\b/);
+              const listingTitle = item.marketplace_listing_title || item.custom_title || '';
+              const yearMatch = listingTitle.match(/\b(19|20)\d{2}\b/);
               const year = yearMatch ? parseInt(yearMatch[0]) : null;
+
+              // Must have a year
+              if (!year) continue;
+
+              // Reject parts/accessories
+              const titleLower = listingTitle.toLowerCase();
+              if (titleLower.includes('parts') || titleLower.includes('bumper') || titleLower.includes('door panel') || titleLower.includes('fender') || titleLower.includes('headlight') || titleLower.includes('grille') || titleLower.includes('new and used')) continue;
+
+              // Must mention the make
+              if (!titleLower.includes(make.toLowerCase())) continue;
 
               const listingUrl = item.id ? 'https://www.facebook.com/marketplace/item/' + item.id : null;
 
@@ -828,12 +887,11 @@ serve(async (req) => {
               if (listingUrl) seenUrls.add(listingUrl);
 
               // Filter by year range
-              if (year_min && year && year < year_min) continue;
-              if (year_max && year && year > year_max) continue;
+              if (year_min && year < year_min) continue;
+              if (year_max && year > year_max) continue;
 
               // Filter by price
-              if (max_price && price && price > max_price) continue;
-              if (price && (price < 1000 || price > 500000)) continue;
+              if (max_price && price > max_price) continue;
 
               privateListings.push({
                 title: item.marketplace_listing_title || item.custom_title,
@@ -862,7 +920,7 @@ serve(async (req) => {
 
       // ----- GOOGLE SEARCH: OfferUp -----
       try {
-        const ouQuery = `${vehicleQuery} for sale site:offerup.com`;
+        const ouQuery = `${vehicleQuery} for sale -parts site:offerup.com`;
         const ouParams = new URLSearchParams({
           api_key: SERPAPI_API_KEY,
           engine: 'google',
@@ -886,17 +944,18 @@ serve(async (req) => {
             const url = item.link || '';
             if (seenUrls.has(url)) continue;
             if (!url.includes('offerup.com')) continue;
+            if (!isRealVehicleListing(item.title || '', item.snippet || '', url, make, searchModel)) continue;
             seenUrls.add(url);
 
             const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
 
-            // Filter by year range
-            if (year_min && parsed.year && parsed.year < year_min) continue;
-            if (year_max && parsed.year && parsed.year > year_max) continue;
+            if (!parsed.year || !parsed.price) continue;
 
-            // Filter by price
-            if (max_price && parsed.price && parsed.price > max_price) continue;
-            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+            if (year_min && parsed.year < year_min) continue;
+            if (year_max && parsed.year > year_max) continue;
+
+            if (max_price && parsed.price > max_price) continue;
+            if (parsed.price < 2000 || parsed.price > 500000) continue;
 
             privateListings.push({
               title: parsed.cleanTitle || item.title,
@@ -921,7 +980,7 @@ serve(async (req) => {
 
       // ----- GOOGLE SEARCH: CarGurus -----
       try {
-        const cgQuery = `${vehicleQuery} for sale site:cargurus.com`;
+        const cgQuery = `${vehicleQuery} for sale -parts site:cargurus.com`;
         const cgParams = new URLSearchParams({
           api_key: SERPAPI_API_KEY,
           engine: 'google',
@@ -945,17 +1004,18 @@ serve(async (req) => {
             const url = item.link || '';
             if (seenUrls.has(url)) continue;
             if (!url.includes('cargurus.com')) continue;
+            if (!isRealVehicleListing(item.title || '', item.snippet || '', url, make, searchModel)) continue;
             seenUrls.add(url);
 
             const parsed = parseVehicleListing(item.title || '', item.snippet || '', '');
 
-            // Filter by year range
-            if (year_min && parsed.year && parsed.year < year_min) continue;
-            if (year_max && parsed.year && parsed.year > year_max) continue;
+            if (!parsed.year || !parsed.price) continue;
 
-            // Filter by price
-            if (max_price && parsed.price && parsed.price > max_price) continue;
-            if (parsed.price && (parsed.price < 1000 || parsed.price > 500000)) continue;
+            if (year_min && parsed.year < year_min) continue;
+            if (year_max && parsed.year > year_max) continue;
+
+            if (max_price && parsed.price > max_price) continue;
+            if (parsed.price < 2000 || parsed.price > 500000) continue;
 
             privateListings.push({
               title: parsed.cleanTitle || item.title,
