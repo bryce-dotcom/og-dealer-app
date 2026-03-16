@@ -935,12 +935,7 @@ export default function InventoryPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
                 <div>
                   {detailEditMode ? (
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      <input type="number" value={formData.year} onChange={e => setFormData({...formData, year: e.target.value})} style={{ ...inputStyle, width: '70px', fontSize: '18px', fontWeight: '700' }} placeholder="Year" />
-                      <input type="text" value={formData.make} onChange={e => setFormData({...formData, make: e.target.value})} style={{ ...inputStyle, width: '110px', fontSize: '18px', fontWeight: '700' }} placeholder="Make" />
-                      <input type="text" value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} style={{ ...inputStyle, width: '110px', fontSize: '18px', fontWeight: '700' }} placeholder="Model" />
-                      <input type="text" value={formData.trim} onChange={e => setFormData({...formData, trim: e.target.value})} style={{ ...inputStyle, width: '100px', fontSize: '14px' }} placeholder="Trim" />
-                    </div>
+                    <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0, color: theme.accent }}>Editing Unit</h2>
                   ) : (
                     <>
                       <h2 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>{selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
@@ -983,6 +978,22 @@ export default function InventoryPage() {
               {detailEditMode ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '20px' }}>
                   <div>
+                    <div style={labelStyle}>Year *</div>
+                    <input type="number" value={formData.year} onChange={e => setFormData({...formData, year: e.target.value})} style={inputStyle} placeholder="2020" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Make *</div>
+                    <input type="text" value={formData.make} onChange={e => setFormData({...formData, make: e.target.value})} style={inputStyle} placeholder="Toyota" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Model *</div>
+                    <input type="text" value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} style={inputStyle} placeholder="Camry" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Trim</div>
+                    <input type="text" value={formData.trim} onChange={e => setFormData({...formData, trim: e.target.value})} style={inputStyle} placeholder="Platinum, XLT, SE..." />
+                  </div>
+                  <div style={{ gridColumn: 'span 2' }}>
                     <div style={labelStyle}>VIN</div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <input type="text" value={formData.vin} onChange={e => setFormData({...formData, vin: e.target.value.toUpperCase()})} style={{ ...inputStyle, fontFamily: 'monospace', flex: 1 }} placeholder="1HGBH41JXMN109186" maxLength={17} />
