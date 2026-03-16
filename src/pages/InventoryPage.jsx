@@ -45,6 +45,7 @@ export default function InventoryPage() {
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [detailEditMode, setDetailEditMode] = useState(false);
   const [valueLoading, setValueLoading] = useState(false);
   const [valueData, setValueData] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -432,6 +433,71 @@ export default function InventoryPage() {
       setPhotos([]);
     }
     setShowAddModal(true);
+  };
+
+  const enterDetailEditMode = () => {
+    if (!selectedVehicle) return;
+    setFormData({
+      year: selectedVehicle.year || '',
+      make: selectedVehicle.make || '',
+      model: selectedVehicle.model || '',
+      trim: selectedVehicle.trim || '',
+      vin: selectedVehicle.vin || '',
+      miles: selectedVehicle.miles || selectedVehicle.mileage || '',
+      color: selectedVehicle.color || '',
+      purchased_from: selectedVehicle.purchased_from || '',
+      purchase_price: selectedVehicle.purchase_price || '',
+      list_price: selectedVehicle.list_price || '',
+      sale_price: selectedVehicle.sale_price || '',
+      status: selectedVehicle.status || 'In Stock',
+      stock_number: selectedVehicle.stock_number || '',
+      description: selectedVehicle.description || ''
+    });
+    setDetailEditMode(true);
+  };
+
+  const saveDetailEdit = async () => {
+    if (!formData.year || !formData.make || !formData.model) {
+      alert('Year, Make, and Model are required');
+      return;
+    }
+    if (!dealerId) {
+      alert('Error: Dealer ID not found.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        year: parseInt(formData.year),
+        make: formData.make,
+        model: formData.model,
+        trim: formData.trim || null,
+        vin: formData.vin || null,
+        miles: parseInt(formData.miles) || 0,
+        color: formData.color || null,
+        purchased_from: formData.purchased_from || null,
+        purchase_price: parseFloat(formData.purchase_price) || 0,
+        list_price: parseFloat(formData.list_price) || null,
+        sale_price: parseFloat(formData.sale_price) || 0,
+        status: formData.status,
+        stock_number: formData.stock_number || null,
+        description: formData.description || null,
+        dealer_id: dealerId
+      };
+      if (photos.length > 0) payload.photos = photos;
+
+      const { error } = await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id);
+      if (error) throw new Error(error.message);
+
+      // Update selectedVehicle immediately so detail modal reflects changes
+      setSelectedVehicle({ ...selectedVehicle, ...payload });
+      setDetailEditMode(false);
+      await refreshData();
+    } catch (err) {
+      alert('Failed to save: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const refreshData = async () => {
@@ -860,10 +926,21 @@ export default function InventoryPage() {
             <div style={{ ...cardStyle, padding: '24px', maxWidth: '800px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
                 <div>
-                  <h2 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>{selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
-                  {selectedVehicle.trim && <p style={{ color: theme.textMuted, margin: '4px 0 0' }}>{selectedVehicle.trim}</p>}
+                  {detailEditMode ? (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <input type="number" value={formData.year} onChange={e => setFormData({...formData, year: e.target.value})} style={{ ...inputStyle, width: '70px', fontSize: '18px', fontWeight: '700' }} placeholder="Year" />
+                      <input type="text" value={formData.make} onChange={e => setFormData({...formData, make: e.target.value})} style={{ ...inputStyle, width: '110px', fontSize: '18px', fontWeight: '700' }} placeholder="Make" />
+                      <input type="text" value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} style={{ ...inputStyle, width: '110px', fontSize: '18px', fontWeight: '700' }} placeholder="Model" />
+                      <input type="text" value={formData.trim} onChange={e => setFormData({...formData, trim: e.target.value})} style={{ ...inputStyle, width: '100px', fontSize: '14px' }} placeholder="Trim" />
+                    </div>
+                  ) : (
+                    <>
+                      <h2 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>{selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
+                      {selectedVehicle.trim && <p style={{ color: theme.textMuted, margin: '4px 0 0' }}>{selectedVehicle.trim}</p>}
+                    </>
+                  )}
                 </div>
-                <button onClick={() => setShowDetailModal(false)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '28px', lineHeight: 1 }}>×</button>
+                <button onClick={() => { setShowDetailModal(false); setDetailEditMode(false); }} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '28px', lineHeight: 1 }}>×</button>
               </div>
 
               {/* Photo Section */}
@@ -895,23 +972,80 @@ export default function InventoryPage() {
               </div>
 
               {/* Vehicle Info + Financials */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
-                <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
-                  <div style={labelStyle}>Status</div>
-                  <div style={{ color: getStatusColor(selectedVehicle.status).color, fontSize: '15px', fontWeight: '600' }}>{selectedVehicle.status}</div>
+              {detailEditMode ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                  <div>
+                    <div style={labelStyle}>VIN</div>
+                    <input type="text" value={formData.vin} onChange={e => setFormData({...formData, vin: e.target.value.toUpperCase()})} style={{ ...inputStyle, fontFamily: 'monospace' }} placeholder="VIN" maxLength={17} />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Stock #</div>
+                    <input type="text" value={formData.stock_number} onChange={e => setFormData({...formData, stock_number: e.target.value})} style={inputStyle} placeholder="STK001" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Status</div>
+                    <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}>
+                      <option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Miles</div>
+                    <input type="number" value={formData.miles} onChange={e => setFormData({...formData, miles: e.target.value})} style={inputStyle} placeholder="60000" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Color</div>
+                    <input type="text" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} style={inputStyle} placeholder="Silver" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Purchased From</div>
+                    <input type="text" value={formData.purchased_from} onChange={e => setFormData({...formData, purchased_from: e.target.value})} style={inputStyle} placeholder="Auction, Trade-in" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Cost (Purchase Price)</div>
+                    <input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>List Price (Asking)</div>
+                    <input type="number" value={formData.list_price} onChange={e => setFormData({...formData, list_price: e.target.value})} style={inputStyle} placeholder="13000" />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Sale Price (Sold For)</div>
+                    <input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" />
+                  </div>
+                  <div style={{ gridColumn: 'span 2' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div style={labelStyle}>Description</div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button onClick={generateDescription} disabled={generatingDesc} style={{ padding: '3px 8px', backgroundColor: theme.accent, border: 'none', borderRadius: '4px', color: '#fff', fontSize: '11px', fontWeight: '600', cursor: 'pointer', opacity: generatingDesc ? 0.6 : 1 }}>
+                          {generatingDesc ? 'Generating...' : 'AI Generate'}
+                        </button>
+                        {formData.description && (
+                          <button onClick={copyDescription} style={{ padding: '3px 8px', backgroundColor: theme.border, border: 'none', borderRadius: '4px', color: theme.textSecondary, fontSize: '11px', cursor: 'pointer' }}>Copy</button>
+                        )}
+                      </div>
+                    </div>
+                    <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} style={{ ...inputStyle, minHeight: '80px', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5' }} placeholder="Vehicle description..." />
+                  </div>
                 </div>
-                <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
-                  <div style={labelStyle}>Miles</div>
-                  <div style={{ color: theme.text, fontSize: '15px', fontWeight: '600' }}>{formatNumber(selectedVehicle.miles || selectedVehicle.mileage)}</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={labelStyle}>Status</div>
+                    <div style={{ color: getStatusColor(selectedVehicle.status).color, fontSize: '15px', fontWeight: '600' }}>{selectedVehicle.status}</div>
+                  </div>
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={labelStyle}>Miles</div>
+                    <div style={{ color: theme.text, fontSize: '15px', fontWeight: '600' }}>{formatNumber(selectedVehicle.miles || selectedVehicle.mileage)}</div>
+                  </div>
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={labelStyle}>Color</div>
+                    <div style={{ color: theme.text, fontSize: '15px', fontWeight: '600' }}>{selectedVehicle.color || '-'}</div>
+                  </div>
                 </div>
-                <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
-                  <div style={labelStyle}>Color</div>
-                  <div style={{ color: theme.text, fontSize: '15px', fontWeight: '600' }}>{selectedVehicle.color || '-'}</div>
-                </div>
-              </div>
+              )}
 
-              {/* Financial Summary */}
-              <div style={sectionStyle}>
+              {/* Financial Summary - hidden in edit mode since fields are inline */}
+              {!detailEditMode && <div style={sectionStyle}>
                 <div style={labelStyle}>Financial Summary</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -951,7 +1085,7 @@ export default function InventoryPage() {
                     <span style={{ color: netProfit >= 0 ? '#4ade80' : '#f87171', fontWeight: '700', fontSize: '18px' }}>{formatCurrency(netProfit)}</span>
                   </div>
                 </div>
-              </div>
+              </div>}
 
               {/* EXPENSES SECTION */}
               <div style={sectionStyle}>
@@ -1061,10 +1195,19 @@ export default function InventoryPage() {
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                <button onClick={() => { setShowDetailModal(false); openAddModal(selectedVehicle); }} style={btnStyle()}>Edit</button>
-                <button onClick={() => getMarketValue(selectedVehicle)} disabled={valueLoading} style={{ ...btnStyle(true), opacity: valueLoading ? 0.6 : 1 }}>{valueLoading ? 'Checking...' : 'Check Value'}</button>
-                <button onClick={startDeal} style={{ ...btnStyle(true), backgroundColor: '#22c55e', color: '#fff' }}>🤝 Start Deal</button>
-                <button onClick={() => deleteVehicle(selectedVehicle.id)} style={{ ...btnStyle(), backgroundColor: '#7f1d1d', color: '#fca5a5' }}>Delete</button>
+                {detailEditMode ? (
+                  <>
+                    <button onClick={saveDetailEdit} disabled={saving} style={{ ...btnStyle(true), flex: 1, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving...' : 'Save Changes'}</button>
+                    <button onClick={() => setDetailEditMode(false)} style={{ ...btnStyle(), flex: 1 }}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={enterDetailEditMode} style={btnStyle()}>Edit</button>
+                    <button onClick={() => getMarketValue(selectedVehicle)} disabled={valueLoading} style={{ ...btnStyle(true), opacity: valueLoading ? 0.6 : 1 }}>{valueLoading ? 'Checking...' : 'Check Value'}</button>
+                    <button onClick={startDeal} style={{ ...btnStyle(true), backgroundColor: '#22c55e', color: '#fff' }}>Start Deal</button>
+                    <button onClick={() => deleteVehicle(selectedVehicle.id)} style={{ ...btnStyle(), backgroundColor: '#7f1d1d', color: '#fca5a5' }}>Delete</button>
+                  </>
+                )}
               </div>
 
               {/* Value Data */}
