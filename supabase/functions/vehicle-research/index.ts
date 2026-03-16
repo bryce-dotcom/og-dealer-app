@@ -514,7 +514,106 @@ serve(async (req) => {
     );
 
     // =======================================================================
-    // STEP 5: Build Response
+    // STEP 5: Fallback — calculate values from comparables if MarketCheck failed
+    // =======================================================================
+    let finalValues = {
+      mmr: pricePrediction.mmr,
+      wholesale: pricePrediction.wholesale,
+      retail: pricePrediction.retail,
+      trade_in: pricePrediction.trade_in,
+      confidence: pricePrediction.confidence
+    };
+    let dataSource = 'MarketCheck + find-vehicles';
+
+    if (!finalValues.retail) {
+      log('FALLBACK', 'MarketCheck returned no values, calculating from comparables...');
+
+      // Gather all prices from dealer + private listings
+      const allListings = [
+        ...(comparables.dealer_listings || []),
+        ...(comparables.private_listings || [])
+      ];
+      const prices = allListings
+        .map((l: any) => parseFloat(l.price))
+        .filter((p: number) => p > 0 && !isNaN(p))
+        .sort((a: number, b: number) => a - b);
+
+      if (prices.length >= 3) {
+        // Remove outliers (bottom 10% and top 10%)
+        const trimCount = Math.max(1, Math.floor(prices.length * 0.1));
+        const trimmedPrices = prices.slice(trimCount, prices.length - trimCount);
+
+        const avg = trimmedPrices.reduce((s: number, p: number) => s + p, 0) / trimmedPrices.length;
+        const median = trimmedPrices[Math.floor(trimmedPrices.length / 2)];
+
+        // Use median as the base retail value (more stable than average)
+        const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
+        const retailEstimate = Math.round(median * conditionMult);
+
+        finalValues = {
+          retail: retailEstimate,
+          mmr: Math.round(retailEstimate * 0.80),
+          wholesale: Math.round(retailEstimate * 0.82),
+          trade_in: Math.round(retailEstimate * 0.73),
+          confidence: trimmedPrices.length >= 10 ? 'MEDIUM' as const : 'LOW' as const
+        };
+
+        dataSource = `Comparables (${prices.length} listings)`;
+
+        log('FALLBACK', 'Calculated from comparables', {
+          total_prices: prices.length,
+          trimmed_count: trimmedPrices.length,
+          avg,
+          median,
+          condition_mult: conditionMult,
+          estimated_retail: retailEstimate,
+          price_range: { low: prices[0], high: prices[prices.length - 1] }
+        });
+      } else if (prices.length > 0) {
+        // Too few listings, just use average
+        const avg = prices.reduce((s: number, p: number) => s + p, 0) / prices.length;
+        const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
+        const retailEstimate = Math.round(avg * conditionMult);
+
+        finalValues = {
+          retail: retailEstimate,
+          mmr: Math.round(retailEstimate * 0.80),
+          wholesale: Math.round(retailEstimate * 0.82),
+          trade_in: Math.round(retailEstimate * 0.73),
+          confidence: 'LOW' as const
+        };
+
+        dataSource = `Comparables (${prices.length} listings, low confidence)`;
+        log('FALLBACK', `Only ${prices.length} priced listings, low confidence`, { avg, retail: retailEstimate });
+      } else {
+        log('FALLBACK', 'No priced listings available for fallback');
+      }
+    }
+
+    // Also build market stats from comparables if MarketCheck stats failed
+    let finalMarketStats = {
+      avg_days_on_market: marketStats.avg_days_on_market,
+      price_trend: marketStats.price_trend,
+      supply_level: marketStats.supply_level,
+      active_listings: marketStats.active_listings,
+      price_range: marketStats.price_range
+    };
+
+    if (!finalMarketStats.active_listings && comparables.private_listings?.length > 0) {
+      const allListings = [...(comparables.dealer_listings || []), ...(comparables.private_listings || [])];
+      const prices = allListings.map((l: any) => parseFloat(l.price)).filter((p: number) => p > 0 && !isNaN(p)).sort((a: number, b: number) => a - b);
+
+      finalMarketStats = {
+        avg_days_on_market: null,
+        price_trend: 'stable' as const,
+        supply_level: allListings.length > 50 ? 'high' as const : allListings.length > 15 ? 'medium' as const : 'low' as const,
+        active_listings: allListings.length,
+        price_range: prices.length > 0 ? { low: prices[0], high: prices[prices.length - 1] } : null
+      };
+    }
+
+    // =======================================================================
+    // STEP 6: Build Response
     // =======================================================================
     const response = {
       success: true,
@@ -534,21 +633,9 @@ serve(async (req) => {
         condition: condition
       },
 
-      values: {
-        mmr: pricePrediction.mmr,
-        wholesale: pricePrediction.wholesale,
-        retail: pricePrediction.retail,
-        trade_in: pricePrediction.trade_in,
-        confidence: pricePrediction.confidence
-      },
+      values: finalValues,
 
-      market_stats: {
-        avg_days_on_market: marketStats.avg_days_on_market,
-        price_trend: marketStats.price_trend,
-        supply_level: marketStats.supply_level,
-        active_listings: marketStats.active_listings,
-        price_range: marketStats.price_range
-      },
+      market_stats: finalMarketStats,
 
       comparables: {
         dealer_listings: comparables.dealer_listings,
@@ -556,7 +643,7 @@ serve(async (req) => {
         market_summary: comparables.market_summary
       },
 
-      data_source: 'MarketCheck + find-vehicles',
+      data_source: dataSource,
       logs: logs
     };
 
