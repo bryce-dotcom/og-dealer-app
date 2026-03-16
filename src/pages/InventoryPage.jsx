@@ -976,7 +976,10 @@ export default function InventoryPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '20px' }}>
                   <div>
                     <div style={labelStyle}>VIN</div>
-                    <input type="text" value={formData.vin} onChange={e => setFormData({...formData, vin: e.target.value.toUpperCase()})} style={{ ...inputStyle, fontFamily: 'monospace' }} placeholder="VIN" maxLength={17} />
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input type="text" value={formData.vin} onChange={e => setFormData({...formData, vin: e.target.value.toUpperCase()})} style={{ ...inputStyle, fontFamily: 'monospace', flex: 1 }} placeholder="1HGBH41JXMN109186" maxLength={17} />
+                      <button onClick={() => vinCameraRef.current?.click()} disabled={saving} style={{ padding: '10px 14px', backgroundColor: saving ? theme.border : theme.accent, border: 'none', borderRadius: '6px', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '16px', opacity: saving ? 0.6 : 1 }} title="Scan VIN">📷</button>
+                    </div>
                   </div>
                   <div>
                     <div style={labelStyle}>Stock #</div>
