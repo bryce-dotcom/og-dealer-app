@@ -776,84 +776,143 @@ export default function AdminInvestorDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-900">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500"></div>
+      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-2 border-slate-700 border-t-blue-500"></div>
+          <p className="text-slate-500 text-sm font-medium">Loading investor data...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-slate-950">
+      {/* Top gradient bar */}
+      <div className="h-1 bg-gradient-to-r from-blue-600 via-violet-500 to-emerald-500"></div>
+
+      <div className="max-w-7xl mx-auto px-6 py-8">
 
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-white mb-2">Investor Portal Admin</h1>
-            <p className="text-slate-400">Manage investors, pools, and capital flows</p>
+        <div className="flex justify-between items-start mb-10">
+          <div className="flex items-center gap-5">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-white tracking-tight">Investor Portal</h1>
+              <p className="text-slate-500 text-sm mt-1">Manage investors, pools, and capital flows</p>
+            </div>
           </div>
           <button
             onClick={() => navigate('/dashboard')}
-            className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-sm font-medium transition border border-slate-800/50 flex items-center gap-2"
           >
-            &larr; Back to Dashboard
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+            </svg>
+            Dashboard
           </button>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <div className="text-slate-400 text-sm mb-2">Total Investors</div>
-            <div className="text-3xl font-bold text-white">{stats?.totalInvestors || 0}</div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-10">
+          <div className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition group">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                </svg>
+              </div>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Investors</span>
+            </div>
+            <div className="text-2xl font-bold text-white">{stats?.totalInvestors || 0}</div>
           </div>
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <div className="text-slate-400 text-sm mb-2">Total Capital</div>
-            <div className="text-2xl font-bold text-blue-400">{formatCurrency(stats?.totalCapital)}</div>
+          <div className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition group">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                <svg className="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Total Capital</span>
+            </div>
+            <div className="text-xl font-bold text-violet-400">{formatCurrency(stats?.totalCapital)}</div>
           </div>
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <div className="text-slate-400 text-sm mb-2">Deployed</div>
-            <div className="text-2xl font-bold text-green-400">{formatCurrency(stats?.deployedCapital)}</div>
+          <div className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition group">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center">
+                <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />
+                </svg>
+              </div>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Deployed</span>
+            </div>
+            <div className="text-xl font-bold text-green-400">{formatCurrency(stats?.deployedCapital)}</div>
           </div>
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <div className="text-slate-400 text-sm mb-2">Available</div>
-            <div className="text-2xl font-bold text-amber-400">{formatCurrency(stats?.availableCapital)}</div>
+          <div className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition group">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3" />
+                </svg>
+              </div>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Available</span>
+            </div>
+            <div className="text-xl font-bold text-amber-400">{formatCurrency(stats?.availableCapital)}</div>
           </div>
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <div className="text-slate-400 text-sm mb-2">Pending Transfers</div>
-            <div className="text-3xl font-bold text-amber-400">{stats?.pendingTransfers || 0}</div>
+          <div className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition group">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center">
+                <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                </svg>
+              </div>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Pending</span>
+            </div>
+            <div className="text-2xl font-bold text-cyan-400">{stats?.pendingTransfers || 0}</div>
           </div>
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <div className="text-slate-400 text-sm mb-2">Vehicles Funded</div>
-            <div className="text-3xl font-bold text-white">{stats?.totalVehiclesFunded || 0}</div>
+          <div className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition group">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center">
+                <svg className="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                </svg>
+              </div>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Funded</span>
+            </div>
+            <div className="text-2xl font-bold text-white">{stats?.totalVehiclesFunded || 0}</div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-slate-700 overflow-x-auto">
+        <div className="flex gap-1 mb-8 bg-slate-900/50 rounded-2xl p-1.5 border border-slate-800 overflow-x-auto">
           {[
-            { id: 'overview', label: 'Overview' },
-            { id: 'invite', label: 'Invite Investor', highlight: true },
-            { id: 'investors', label: 'Investors' },
-            { id: 'transfers', label: 'Transfers' },
-            { id: 'distributions', label: 'Distributions', highlight2: true },
-            { id: 'pools', label: 'Investment Pools' },
-            { id: 'accreditation', label: `Accreditation (${accreditationDocs.length})` },
-            { id: 'bank', label: 'Bank Setup', highlight3: true }
+            { id: 'overview', label: 'Overview', icon: 'M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z' },
+            { id: 'invite', label: 'Invite', color: 'green', icon: 'M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z' },
+            { id: 'investors', label: 'Investors', icon: 'M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z' },
+            { id: 'transfers', label: 'Transfers', icon: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5' },
+            { id: 'distributions', label: 'Distributions', color: 'emerald', icon: 'M12 19l9 2-9-18-9 18 9-2zm0 0v-8' },
+            { id: 'pools', label: 'Pools', icon: 'M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125' },
+            { id: 'accreditation', label: `Accreditation${accreditationDocs.length ? ` (${accreditationDocs.length})` : ''}`, icon: 'M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z' },
+            { id: 'bank', label: 'Bank Setup', color: 'orange', icon: 'M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z' }
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-3 font-semibold transition border-b-2 whitespace-nowrap ${
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
                 activeTab === tab.id
-                  ? tab.highlight ? 'border-green-500 text-green-400' : tab.highlight2 ? 'border-emerald-500 text-emerald-400' : tab.highlight3 ? 'border-orange-500 text-orange-400' : 'border-blue-500 text-blue-400'
-                  : tab.highlight ? 'border-transparent text-green-400/60 hover:text-green-400' : tab.highlight2 ? 'border-transparent text-emerald-400/60 hover:text-emerald-400' : tab.highlight3 ? 'border-transparent text-orange-400/60 hover:text-orange-400' : 'border-transparent text-slate-400 hover:text-white'
+                  ? tab.color === 'green' ? 'bg-green-500/15 text-green-400 shadow-sm'
+                  : tab.color === 'emerald' ? 'bg-emerald-500/15 text-emerald-400 shadow-sm'
+                  : tab.color === 'orange' ? 'bg-orange-500/15 text-orange-400 shadow-sm'
+                  : 'bg-slate-800 text-white shadow-sm'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'
               }`}
             >
-              {tab.highlight && (
-                <svg className="w-4 h-4 inline-block mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              )}
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d={tab.icon} />
+              </svg>
               {tab.label}
             </button>
           ))}
@@ -861,72 +920,114 @@ export default function AdminInvestorDashboard() {
 
         {/* Overview Tab */}
         {activeTab === 'overview' && (
-          <div className="space-y-6">
-            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-              <h2 className="text-xl font-bold text-white mb-4">Recent Transfers</h2>
-              <div className="space-y-2">
-                {transfers.slice(0, 10).map(tx => (
-                  <div key={tx.id} className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg">
-                    <div>
-                      <div className="text-white font-medium">
-                        {tx.investors?.full_name || 'Unknown'} &bull; {tx.transaction_type}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            {/* Recent Transfers - takes 3 cols */}
+            <div className="lg:col-span-3 bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
+              <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                    <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                    </svg>
+                  </div>
+                  <h2 className="text-lg font-semibold text-white">Recent Transfers</h2>
+                </div>
+                <button onClick={() => setActiveTab('transfers')} className="text-xs text-slate-500 hover:text-blue-400 transition font-medium">View All</button>
+              </div>
+              <div className="divide-y divide-slate-800/50">
+                {transfers.slice(0, 8).map(tx => (
+                  <div key={tx.id} className="flex items-center justify-between px-6 py-3.5 hover:bg-slate-800/30 transition">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                        tx.transaction_type === 'deposit' ? 'bg-green-500/10 text-green-400' : 'bg-amber-500/10 text-amber-400'
+                      }`}>
+                        {tx.transaction_type === 'deposit' ? '+' : '-'}
                       </div>
-                      <div className="text-slate-400 text-sm">
-                        {new Date(tx.initiated_at).toLocaleDateString()}
+                      <div>
+                        <div className="text-white text-sm font-medium">{tx.investors?.full_name || 'Unknown'}</div>
+                        <div className="text-slate-500 text-xs capitalize">{tx.transaction_type} &middot; {new Date(tx.initiated_at).toLocaleDateString()}</div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-white font-bold">{formatCurrency(tx.amount)}</div>
-                      <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(tx.status)}`}>
+                    <div className="text-right flex items-center gap-3">
+                      <div className="text-white text-sm font-semibold">{formatCurrency(tx.amount)}</div>
+                      <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${getStatusColor(tx.status)}`}>
                         {tx.status}
                       </span>
                     </div>
                   </div>
                 ))}
+                {transfers.length === 0 && (
+                  <div className="px-6 py-12 text-center text-slate-600 text-sm">No transfers yet</div>
+                )}
               </div>
             </div>
 
-            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-              <h2 className="text-xl font-bold text-white mb-4">Investment Pools</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {pools.map(pool => (
-                  <div key={pool.id} className="bg-slate-700/50 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-bold text-white">{pool.pool_name}</h3>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${getPoolTypeBadge(pool.pool_type)}`}>
-                          {getPoolTypeLabel(pool.pool_type)}
-                        </span>
-                      </div>
-                      <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getStatusColor(pool.status)}`}>
-                        {pool.status}
+            {/* Investment Pools - takes 2 cols */}
+            <div className="lg:col-span-2 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                    <svg className="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375" />
+                    </svg>
+                  </div>
+                  <h2 className="text-lg font-semibold text-white">Investment Pools</h2>
+                </div>
+                <button onClick={() => setActiveTab('pools')} className="text-xs text-slate-500 hover:text-violet-400 transition font-medium">Manage</button>
+              </div>
+              {pools.map(pool => (
+                <div key={pool.id} className="bg-slate-900/80 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 transition">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-white">{pool.pool_name}</h3>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-semibold ${getPoolTypeBadge(pool.pool_type)}`}>
+                        {getPoolTypeLabel(pool.pool_type)}
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-sm">
-                      <div>
-                        <div className="text-slate-400">Total Capital</div>
-                        <div className="text-white font-semibold">{formatCurrency(pool.total_capital)}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-400">Deployed</div>
-                        <div className="text-green-400 font-semibold">{formatCurrency(pool.deployed_capital)}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-400">Available</div>
-                        <div className="text-amber-400 font-semibold">{formatCurrency(pool.available_capital)}</div>
-                      </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-md font-semibold ${getStatusColor(pool.status)}`}>
+                      {pool.status}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Total</div>
+                      <div className="text-white font-semibold text-sm">{formatCurrency(pool.total_capital)}</div>
                     </div>
-                    <div className="mt-3 pt-3 border-t border-slate-600 text-xs text-slate-400">
-                      {pool.pool_type === 'fixed_return' ? (
-                        <div>Rate: {pool.annual_return_rate}% annually | Payout: {getPayoutLabel(pool.payout_frequency)}</div>
-                      ) : (
-                        <div>Split: {pool.investor_profit_share}/{pool.platform_fee_share}/{pool.dealer_profit_share} (Investor/Platform/Dealer)</div>
-                      )}
-                      <div>Vehicles: {pool.total_vehicles_funded || 0} funded, {pool.total_vehicles_sold || 0} sold</div>
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Deployed</div>
+                      <div className="text-green-400 font-semibold text-sm">{formatCurrency(pool.deployed_capital)}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500 text-xs mb-1">Available</div>
+                      <div className="text-amber-400 font-semibold text-sm">{formatCurrency(pool.available_capital)}</div>
                     </div>
                   </div>
-                ))}
-              </div>
+                  {/* Capital deployment bar */}
+                  <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all"
+                      style={{ width: `${pool.total_capital ? Math.min(100, ((pool.deployed_capital || 0) / pool.total_capital) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-slate-800 text-xs text-slate-500">
+                    {pool.pool_type === 'fixed_return' ? (
+                      <span>{pool.annual_return_rate}% annually &middot; {getPayoutLabel(pool.payout_frequency)}</span>
+                    ) : pool.pool_type === 'merchant_rate' ? (
+                      <span>{pool.investor_profit_share}% per transaction</span>
+                    ) : (
+                      <span>{pool.investor_profit_share}/{pool.platform_fee_share}/{pool.dealer_profit_share} split</span>
+                    )}
+                    <span className="mx-2">&middot;</span>
+                    <span>{pool.total_vehicles_funded || 0} vehicles</span>
+                  </div>
+                </div>
+              ))}
+              {pools.length === 0 && (
+                <div className="bg-slate-900/80 rounded-2xl p-8 border border-slate-800 text-center">
+                  <p className="text-slate-500 text-sm mb-3">No pools created yet</p>
+                  <button onClick={() => { setActiveTab('pools'); setShowCreatePool(true); }} className="text-sm text-blue-400 hover:text-blue-300 font-medium transition">Create your first pool</button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -936,7 +1037,7 @@ export default function AdminInvestorDashboard() {
           <div className="max-w-4xl mx-auto">
             {inviteLink ? (
               /* Success state - show the invite link */
-              <div className="bg-slate-800 rounded-xl p-8 border border-slate-700 text-center">
+              <div className="bg-slate-900/80 rounded-2xl p-8 border border-slate-800 text-center">
                 <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
                   <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -967,7 +1068,7 @@ export default function AdminInvestorDashboard() {
                   </button>
                 </div>
 
-                <div className="bg-slate-700/30 rounded-lg p-4 mb-6 text-left">
+                <div className="bg-slate-800/30 rounded-xl p-4 mb-6 text-left">
                   <h3 className="text-white font-semibold mb-2 text-sm">What happens next:</h3>
                   <ol className="text-slate-400 text-sm space-y-1.5 list-decimal list-inside">
                     <li>Share this link with {inviteForm.full_name} via text, email, or in person</li>
@@ -1043,7 +1144,7 @@ export default function AdminInvestorDashboard() {
                       if (pType === 'merchant_rate') {
                         const rate = previewPool?.investor_profit_share || inviteForm.investor_profit_share || 3;
                         return (
-                          <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                          <div className="bg-slate-900/60 rounded-2xl p-6 border border-slate-800">
                             <div className="flex items-center gap-2 mb-4">
                               <h3 className="text-white font-bold text-lg">Your Investment Terms</h3>
                               <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-orange-400 bg-orange-500/20">Merchant Rate</span>
@@ -1062,7 +1163,7 @@ export default function AdminInvestorDashboard() {
                                 <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
                               </div>
                             </div>
-                            <div className="mt-4 pt-4 border-t border-slate-700 text-sm text-slate-400">
+                            <div className="mt-4 pt-4 border-t border-slate-800 text-sm text-slate-400">
                               You earn {rate}% every time your capital is used for a transaction. Like a merchant fee, but you're the one getting paid.
                             </div>
                           </div>
@@ -1076,7 +1177,7 @@ export default function AdminInvestorDashboard() {
                           previewPool?.payout_frequency || 'quarterly'
                         );
                         return (
-                          <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                          <div className="bg-slate-900/60 rounded-2xl p-6 border border-slate-800">
                             <div className="flex items-center gap-2 mb-4">
                               <h3 className="text-white font-bold text-lg">Your Investment Terms</h3>
                               <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-emerald-400 bg-emerald-500/20">Fixed Return</span>
@@ -1099,7 +1200,7 @@ export default function AdminInvestorDashboard() {
                                 <div className="text-2xl font-bold text-white">{formatCurrency(inviteForm.min_investment || 10000)}</div>
                               </div>
                             </div>
-                            <div className="mt-4 pt-4 border-t border-slate-700 text-sm text-slate-400">
+                            <div className="mt-4 pt-4 border-t border-slate-800 text-sm text-slate-400">
                               {formatCurrency(inviteForm.min_investment || 10000)} invested = {formatCurrency(preview.annual)}/year = {formatCurrency(preview.per)}/{preview.label}
                             </div>
                           </div>
@@ -1107,7 +1208,7 @@ export default function AdminInvestorDashboard() {
                       }
 
                       return (
-                        <div className="bg-slate-800/80 rounded-xl p-6 border border-slate-700">
+                        <div className="bg-slate-900/60 rounded-2xl p-6 border border-slate-800">
                           <div className="flex items-center gap-2 mb-4">
                             <h3 className="text-white font-bold text-lg">Your Investment Terms</h3>
                             <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-violet-400 bg-violet-500/20">Profit Share</span>
@@ -1131,7 +1232,7 @@ export default function AdminInvestorDashboard() {
                             </div>
                           </div>
                           {previewPool && (
-                            <div className="mt-4 pt-4 border-t border-slate-700">
+                            <div className="mt-4 pt-4 border-t border-slate-800">
                               <div className="text-slate-400 text-sm">Investment Pool</div>
                               <div className="text-white font-semibold">{previewPool.pool_name}</div>
                             </div>
@@ -1161,8 +1262,8 @@ export default function AdminInvestorDashboard() {
               </div>
             ) : (
               /* Invite form */
-              <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                <div className="p-6 border-b border-slate-700">
+              <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
+                <div className="p-6 border-b border-slate-800">
                   <h2 className="text-2xl font-bold text-white mb-1">Invite a New Investor</h2>
                   <p className="text-slate-400">Set up an investor profile and generate a unique invite link they can use to sign up.</p>
                 </div>
@@ -1179,7 +1280,7 @@ export default function AdminInvestorDashboard() {
                           value={inviteForm.full_name}
                           onChange={e => setInviteForm(prev => ({ ...prev, full_name: e.target.value }))}
                           placeholder="John Smith"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                         />
                       </div>
                       <div>
@@ -1189,7 +1290,7 @@ export default function AdminInvestorDashboard() {
                           value={inviteForm.email}
                           onChange={e => setInviteForm(prev => ({ ...prev, email: e.target.value }))}
                           placeholder="investor@example.com"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                         />
                       </div>
                       <div>
@@ -1199,7 +1300,7 @@ export default function AdminInvestorDashboard() {
                           value={inviteForm.phone}
                           onChange={e => setInviteForm(prev => ({ ...prev, phone: e.target.value }))}
                           placeholder="(555) 123-4567"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                         />
                       </div>
                       <div>
@@ -1207,7 +1308,7 @@ export default function AdminInvestorDashboard() {
                         <select
                           value={inviteForm.pool_id}
                           onChange={e => setInviteForm(prev => ({ ...prev, pool_id: e.target.value }))}
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                         >
                           <option value="">Select a pool...</option>
                           {pools.map(pool => (
@@ -1263,7 +1364,7 @@ export default function AdminInvestorDashboard() {
                         <div>
                           <h3 className="text-white font-semibold mb-4 text-lg">Merchant Rate Terms</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <div className="bg-slate-700/50 rounded-lg p-4">
+                            <div className="bg-slate-800/40 rounded-xl p-4">
                               <div className="text-slate-400 text-sm mb-1">Rate Per Transaction</div>
                               <div className="text-2xl font-bold text-orange-400">{selPool?.investor_profit_share || 3}%</div>
                               <div className="text-slate-400 text-xs mt-1">Earned automatically on every transaction</div>
@@ -1276,7 +1377,7 @@ export default function AdminInvestorDashboard() {
                                 onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
                                 placeholder="10000"
                                 min="0"
-                                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                                className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                               />
                             </div>
                           </div>
@@ -1301,11 +1402,11 @@ export default function AdminInvestorDashboard() {
                         <div>
                           <h3 className="text-white font-semibold mb-4 text-lg">Fixed Return Terms</h3>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                            <div className="bg-slate-700/50 rounded-lg p-4">
+                            <div className="bg-slate-800/40 rounded-xl p-4">
                               <div className="text-slate-400 text-sm mb-1">Annual Return Rate</div>
                               <div className="text-2xl font-bold text-emerald-400">{selPool?.annual_return_rate || 0}%</div>
                             </div>
-                            <div className="bg-slate-700/50 rounded-lg p-4">
+                            <div className="bg-slate-800/40 rounded-xl p-4">
                               <div className="text-slate-400 text-sm mb-1">Payout Frequency</div>
                               <div className="text-2xl font-bold text-blue-400">{getPayoutLabel(selPool?.payout_frequency)}</div>
                             </div>
@@ -1317,7 +1418,7 @@ export default function AdminInvestorDashboard() {
                                 onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
                                 placeholder="10000"
                                 min="0"
-                                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                                className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                               />
                             </div>
                           </div>
@@ -1348,7 +1449,7 @@ export default function AdminInvestorDashboard() {
                               placeholder="60"
                               min="0"
                               max="100"
-                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                              className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                             />
                           </div>
                           <div>
@@ -1360,7 +1461,7 @@ export default function AdminInvestorDashboard() {
                               placeholder="20"
                               min="0"
                               max="100"
-                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                              className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                             />
                           </div>
                           <div>
@@ -1372,7 +1473,7 @@ export default function AdminInvestorDashboard() {
                               placeholder="20"
                               min="0"
                               max="100"
-                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                              className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                             />
                           </div>
                           <div>
@@ -1383,7 +1484,7 @@ export default function AdminInvestorDashboard() {
                               onChange={e => setInviteForm(prev => ({ ...prev, min_investment: e.target.value }))}
                               placeholder="10000"
                               min="0"
-                              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                              className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                             />
                           </div>
                         </div>
@@ -1407,12 +1508,12 @@ export default function AdminInvestorDashboard() {
                       onChange={e => setInviteForm(prev => ({ ...prev, notes: e.target.value }))}
                       placeholder="Any special terms, agreements, or notes about this investor..."
                       rows={3}
-                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none resize-none"
+                      className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition resize-none"
                     />
                   </div>
 
                   {/* Actions */}
-                  <div className="flex gap-4 pt-4 border-t border-slate-700">
+                  <div className="flex gap-4 pt-4 border-t border-slate-800">
                     <button
                       onClick={() => {
                         if (!inviteForm.full_name || !inviteForm.email) {
@@ -1441,26 +1542,26 @@ export default function AdminInvestorDashboard() {
 
         {/* Investors Tab */}
         {activeTab === 'investors' && (
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-slate-700">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Investor</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Email</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Total Invested</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Total Returned</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Available</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">ROI</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Status</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Bank Linked</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-slate-300 uppercase">Actions</th>
+                <thead>
+                  <tr className="border-b border-slate-800">
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Investor</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Email</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Invested</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Returned</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Available</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">ROI</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Bank</th>
+                    <th className="px-6 py-4 text-right text-[11px] font-medium text-slate-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700">
+                <tbody className="divide-y divide-slate-800/50">
                   {investors.map(investor => (
                     <React.Fragment key={investor.id}>
-                      <tr className="hover:bg-slate-700/30">
+                      <tr className="hover:bg-slate-800/40">
                         <td className="px-6 py-4 text-white font-medium">{investor.full_name}</td>
                         <td className="px-6 py-4 text-slate-300">{investor.email}</td>
                         <td className="px-6 py-4 text-blue-400 font-semibold">{formatCurrency(investor.total_invested)}</td>
@@ -1513,7 +1614,7 @@ export default function AdminInvestorDashboard() {
                                 type="text"
                                 readOnly
                                 value={resendLinkUrl}
-                                className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white text-xs font-mono"
+                                className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded text-white text-xs font-mono"
                                 onClick={e => e.target.select()}
                               />
                               <button
@@ -1550,7 +1651,7 @@ export default function AdminInvestorDashboard() {
         {/* Edit Investor Modal */}
         {editingInvestor && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setEditingInvestor(null)}>
-            <div className="bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
               <h3 className="text-xl font-bold text-white mb-4">Edit Investor</h3>
               <div className="space-y-4">
                 <div>
@@ -1558,7 +1659,7 @@ export default function AdminInvestorDashboard() {
                   <input
                     type="text" value={editForm.full_name}
                     onChange={e => setEditForm(prev => ({ ...prev, full_name: e.target.value }))}
-                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                   />
                 </div>
                 <div>
@@ -1566,7 +1667,7 @@ export default function AdminInvestorDashboard() {
                   <input
                     type="email" value={editForm.email}
                     onChange={e => setEditForm(prev => ({ ...prev, email: e.target.value }))}
-                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                   />
                 </div>
                 <div>
@@ -1575,7 +1676,7 @@ export default function AdminInvestorDashboard() {
                     type="text" value={editForm.phone}
                     onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
                     placeholder="Optional"
-                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                   />
                 </div>
                 <div>
@@ -1583,7 +1684,7 @@ export default function AdminInvestorDashboard() {
                   <select
                     value={editForm.status}
                     onChange={e => setEditForm(prev => ({ ...prev, status: e.target.value }))}
-                    className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                   >
                     <option value="pending">Pending</option>
                     <option value="invited">Invited</option>
@@ -1649,23 +1750,23 @@ export default function AdminInvestorDashboard() {
 
         {/* Transfers Tab */}
         {activeTab === 'transfers' && (
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-slate-700">
+                <thead className="border-b border-slate-800">
                   <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Date</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Investor</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Type</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Amount</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Status</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Method</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Transfer ID</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Date</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Investor</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Amount</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Method</th>
+                    <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Transfer ID</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700">
+                <tbody className="divide-y divide-slate-800/50">
                   {transfers.map(tx => (
-                    <tr key={tx.id} className="hover:bg-slate-700/30">
+                    <tr key={tx.id} className="hover:bg-slate-800/40">
                       <td className="px-6 py-4 text-slate-300">
                         {new Date(tx.initiated_at).toLocaleDateString()}
                       </td>
@@ -1695,8 +1796,8 @@ export default function AdminInvestorDashboard() {
         {activeTab === 'distributions' && (
           <div className="space-y-6">
             {/* Create Distribution */}
-            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-              <div className="p-6 border-b border-slate-700">
+            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
+              <div className="p-6 border-b border-slate-800">
                 <h2 className="text-2xl font-bold text-white mb-1">Send Distribution</h2>
                 <p className="text-slate-400">Send profits, returns, or payouts back to an investor's bank account via ACH.</p>
               </div>
@@ -1743,7 +1844,7 @@ export default function AdminInvestorDashboard() {
                     <select
                       value={distForm.investor_id}
                       onChange={e => setDistForm(prev => ({ ...prev, investor_id: e.target.value }))}
-                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none"
+                      className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition"
                     >
                       <option value="">Choose an investor...</option>
                       {investors.filter(i => i.status === 'active').map(inv => (
@@ -1763,7 +1864,7 @@ export default function AdminInvestorDashboard() {
                       placeholder="0.00"
                       min="0"
                       step="0.01"
-                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none text-xl font-bold"
+                      className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition text-xl font-bold"
                     />
                   </div>
 
@@ -1772,7 +1873,7 @@ export default function AdminInvestorDashboard() {
                     <select
                       value={distForm.distribution_type}
                       onChange={e => setDistForm(prev => ({ ...prev, distribution_type: e.target.value }))}
-                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none"
+                      className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition"
                     >
                       <option value="profit_distribution">Profit Distribution</option>
                       <option value="fixed_return">Fixed Return Payment</option>
@@ -1789,7 +1890,7 @@ export default function AdminInvestorDashboard() {
                       value={distForm.notes}
                       onChange={e => setDistForm(prev => ({ ...prev, notes: e.target.value }))}
                       placeholder="e.g. Q1 2026 profit share, VIN 1234 sale proceeds..."
-                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/50 outline-none"
+                      className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition"
                     />
                   </div>
                 </div>
@@ -1799,7 +1900,7 @@ export default function AdminInvestorDashboard() {
                   const inv = investors.find(i => i.id === distForm.investor_id);
                   if (!inv) return null;
                   return (
-                    <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                    <div className="bg-slate-800/40 rounded-xl p-4 border border-slate-700">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
                           <div className="w-12 h-12 bg-slate-600 rounded-full flex items-center justify-center">
@@ -1822,7 +1923,7 @@ export default function AdminInvestorDashboard() {
                           )}
                         </div>
                       </div>
-                      <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-600">
+                      <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-800">
                         <div>
                           <div className="text-slate-400 text-xs">Total Invested</div>
                           <div className="text-blue-400 font-bold">{formatCurrency(inv.total_invested)}</div>
@@ -1845,7 +1946,7 @@ export default function AdminInvestorDashboard() {
                 })()}
 
                 {/* Send button */}
-                <div className="pt-4 border-t border-slate-700">
+                <div className="pt-4 border-t border-slate-800">
                   <button
                     onClick={handleCreateDistribution}
                     disabled={sendingDist || !distForm.investor_id || !distForm.amount}
@@ -1870,8 +1971,8 @@ export default function AdminInvestorDashboard() {
             </div>
 
             {/* Distribution History */}
-            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-              <div className="p-6 border-b border-slate-700">
+            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
+              <div className="p-6 border-b border-slate-800">
                 <h2 className="text-xl font-bold text-white">Distribution History</h2>
                 <p className="text-slate-400 text-sm mt-1">All payouts sent to investors</p>
               </div>
@@ -1888,18 +1989,18 @@ export default function AdminInvestorDashboard() {
                   <table className="w-full">
                     <thead className="bg-slate-700">
                       <tr>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Date</th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Investor</th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Type</th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Amount</th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Status</th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Method</th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-300 uppercase">Notes</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Date</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Investor</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Type</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Amount</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Method</th>
+                        <th className="px-6 py-4 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Notes</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700">
+                    <tbody className="divide-y divide-slate-800/50">
                       {distributions.map(dist => (
-                        <tr key={dist.id} className="hover:bg-slate-700/30">
+                        <tr key={dist.id} className="hover:bg-slate-800/40">
                           <td className="px-6 py-4 text-slate-300 text-sm">
                             {new Date(dist.created_at).toLocaleDateString()}
                           </td>
@@ -1928,25 +2029,25 @@ export default function AdminInvestorDashboard() {
 
             {/* Quick stats */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
                 <div className="text-slate-400 text-sm mb-2">Total Distributed</div>
                 <div className="text-2xl font-bold text-green-400">
                   {formatCurrency(distributions.filter(d => d.status === 'completed' || d.status === 'processing').reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0))}
                 </div>
               </div>
-              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
                 <div className="text-slate-400 text-sm mb-2">Pending Payouts</div>
                 <div className="text-2xl font-bold text-amber-400">
                   {distributions.filter(d => d.status === 'pending').length}
                 </div>
               </div>
-              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
                 <div className="text-slate-400 text-sm mb-2">Processing</div>
                 <div className="text-2xl font-bold text-blue-400">
                   {distributions.filter(d => d.status === 'processing').length}
                 </div>
               </div>
-              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
                 <div className="text-slate-400 text-sm mb-2">Completed</div>
                 <div className="text-2xl font-bold text-green-400">
                   {distributions.filter(d => d.status === 'completed').length}
@@ -1961,8 +2062,8 @@ export default function AdminInvestorDashboard() {
           <div className="space-y-6">
             {/* Create Pool Button / Form */}
             {showCreatePool ? (
-              <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                <div className="p-6 border-b border-slate-700 flex items-center justify-between">
+              <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden">
+                <div className="p-6 border-b border-slate-800 flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-bold text-white mb-1">Create New Pool</h2>
                     <p className="text-slate-400">Set up a new investment pool for your investors.</p>
@@ -1985,7 +2086,7 @@ export default function AdminInvestorDashboard() {
                         value={poolForm.pool_name}
                         onChange={e => setPoolForm(prev => ({ ...prev, pool_name: e.target.value }))}
                         placeholder="e.g. Growth Fund Q1 2026"
-                        className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                       />
                     </div>
                     <div>
@@ -1995,7 +2096,7 @@ export default function AdminInvestorDashboard() {
                         value={poolForm.description}
                         onChange={e => setPoolForm(prev => ({ ...prev, description: e.target.value }))}
                         placeholder="Brief description of this pool..."
-                        className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                        className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                       />
                     </div>
                   </div>
@@ -2009,7 +2110,7 @@ export default function AdminInvestorDashboard() {
                         className={`px-5 py-4 rounded-xl border-2 transition font-semibold text-left ${
                           poolForm.pool_type === 'merchant_rate'
                             ? 'border-orange-500 bg-orange-500/10 text-white'
-                            : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
+                            : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600'
                         }`}
                       >
                         <div className="flex items-center gap-2 mb-1">
@@ -2027,7 +2128,7 @@ export default function AdminInvestorDashboard() {
                         className={`px-5 py-4 rounded-xl border-2 transition font-semibold text-left ${
                           poolForm.pool_type === 'profit_share'
                             ? 'border-violet-500 bg-violet-500/10 text-white'
-                            : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
+                            : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600'
                         }`}
                       >
                         <div className="flex items-center gap-2 mb-1">
@@ -2045,7 +2146,7 @@ export default function AdminInvestorDashboard() {
                         className={`px-5 py-4 rounded-xl border-2 transition font-semibold text-left ${
                           poolForm.pool_type === 'fixed_return'
                             ? 'border-emerald-500 bg-emerald-500/10 text-white'
-                            : 'border-slate-600 bg-slate-700/50 text-slate-400 hover:border-slate-500'
+                            : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600'
                         }`}
                       >
                         <div className="flex items-center gap-2 mb-1">
@@ -2076,11 +2177,11 @@ export default function AdminInvestorDashboard() {
                             min="0"
                             max="100"
                             step="0.5"
-                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 outline-none text-2xl font-bold"
+                            className="w-full px-4 py-3 bg-slate-700 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 outline-none text-2xl font-bold"
                           />
                         </div>
                         <div className="flex items-end">
-                          <div className="bg-slate-700/30 rounded-lg p-4 w-full">
+                          <div className="bg-slate-800/30 rounded-xl p-4 w-full">
                             <div className="text-slate-400 text-sm mb-1">How it works</div>
                             <div className="text-white text-sm">
                               Every time the dealer uses investor capital for a transaction, the investor automatically earns <span className="text-orange-400 font-bold">{poolForm.investor_profit_share || 3}%</span> of the transaction amount.
@@ -2120,7 +2221,7 @@ export default function AdminInvestorDashboard() {
                             placeholder="60"
                             min="0"
                             max="100"
-                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                           />
                         </div>
                         <div>
@@ -2132,7 +2233,7 @@ export default function AdminInvestorDashboard() {
                             placeholder="20"
                             min="0"
                             max="100"
-                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                           />
                         </div>
                         <div>
@@ -2144,13 +2245,13 @@ export default function AdminInvestorDashboard() {
                             placeholder="20"
                             min="0"
                             max="100"
-                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                           />
                         </div>
                       </div>
 
                       {/* Visual split preview */}
-                      <div className="bg-slate-700/30 rounded-lg p-4">
+                      <div className="bg-slate-800/30 rounded-xl p-4">
                         <div className="text-slate-400 text-sm mb-3">Per-Transaction Profit Split</div>
                         <div className="flex h-8 rounded-lg overflow-hidden mb-3">
                           <div
@@ -2207,7 +2308,7 @@ export default function AdminInvestorDashboard() {
                             placeholder="8.50"
                             min="0"
                             max="100"
-                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                           />
                         </div>
                         <div>
@@ -2215,7 +2316,7 @@ export default function AdminInvestorDashboard() {
                           <select
                             value={poolForm.payout_frequency}
                             onChange={e => setPoolForm(prev => ({ ...prev, payout_frequency: e.target.value }))}
-                            className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                            className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                           >
                             <option value="monthly">Monthly</option>
                             <option value="quarterly">Quarterly</option>
@@ -2266,7 +2367,7 @@ export default function AdminInvestorDashboard() {
                           onChange={e => setPoolForm(prev => ({ ...prev, min_investment: e.target.value }))}
                           placeholder="10000"
                           min="0"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                         />
                       </div>
                       <div>
@@ -2277,14 +2378,14 @@ export default function AdminInvestorDashboard() {
                           onChange={e => setPoolForm(prev => ({ ...prev, max_investment: e.target.value }))}
                           placeholder="No limit"
                           min="0"
-                          className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none"
+                          className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
                         />
                       </div>
                     </div>
                   </div>
 
                   {/* Create Pool button */}
-                  <div className="pt-4 border-t border-slate-700">
+                  <div className="pt-4 border-t border-slate-800">
                     <button
                       onClick={handleCreatePool}
                       disabled={creatingPool || !poolForm.pool_name}
@@ -2311,7 +2412,7 @@ export default function AdminInvestorDashboard() {
 
             {/* Existing pools list */}
             {pools.map(pool => (
-              <div key={pool.id} className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+              <div key={pool.id} className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-3">
                     <div>
@@ -2330,45 +2431,45 @@ export default function AdminInvestorDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Total Capital</div>
                     <div className="text-2xl font-bold text-white">{formatCurrency(pool.total_capital)}</div>
                   </div>
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Deployed</div>
                     <div className="text-2xl font-bold text-green-400">{formatCurrency(pool.deployed_capital)}</div>
                   </div>
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Available</div>
                     <div className="text-2xl font-bold text-amber-400">{formatCurrency(pool.available_capital)}</div>
                   </div>
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Reserved</div>
                     <div className="text-2xl font-bold text-blue-400">{formatCurrency(pool.reserved_capital)}</div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Total Profit</div>
                     <div className="text-xl font-bold text-green-400">{formatCurrency(pool.total_profit)}</div>
                   </div>
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Lifetime ROI</div>
                     <div className="text-xl font-bold text-white">{pool.lifetime_roi?.toFixed(2) || 0}%</div>
                   </div>
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Vehicles Funded</div>
                     <div className="text-xl font-bold text-white">{pool.total_vehicles_funded || 0}</div>
                   </div>
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-slate-800/40 rounded-xl p-4">
                     <div className="text-slate-400 text-sm mb-1">Avg Days to Sell</div>
                     <div className="text-xl font-bold text-white">{pool.avg_days_to_sell?.toFixed(0) || 0} days</div>
                   </div>
                 </div>
 
                 {/* Terms section - adapts to pool type */}
-                <div className="bg-slate-700/30 rounded-lg p-4 mb-6">
+                <div className="bg-slate-800/30 rounded-xl p-4 mb-6">
                   {pool.pool_type === 'fixed_return' ? (
                     <>
                       <h3 className="text-white font-semibold mb-3">Fixed Return Terms</h3>
@@ -2389,7 +2490,7 @@ export default function AdminInvestorDashboard() {
                       {(() => {
                         const preview = calcFixedReturnPreview(pool.min_investment || 10000, pool.annual_return_rate, pool.payout_frequency);
                         return (
-                          <div className="mt-3 pt-3 border-t border-slate-600 text-sm text-slate-400">
+                          <div className="mt-3 pt-3 border-t border-slate-800 text-sm text-slate-400">
                             Example: {formatCurrency(pool.min_investment || 10000)} invested = {formatCurrency(preview.annual)}/year = {formatCurrency(preview.per)}/{preview.label}
                           </div>
                         );
@@ -2431,7 +2532,7 @@ export default function AdminInvestorDashboard() {
                   )}
                 </div>
 
-                <div className="bg-slate-700/30 rounded-lg p-4">
+                <div className="bg-slate-800/30 rounded-xl p-4">
                   <h3 className="text-white font-semibold mb-3">Pool Bank Account</h3>
                   {pool.plaid_item_id ? (
                     <div className="flex items-center justify-between">
@@ -2476,7 +2577,7 @@ export default function AdminInvestorDashboard() {
         {/* Accreditation Tab */}
         {activeTab === 'accreditation' && (
           <div className="space-y-6">
-            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
               <h2 className="text-xl font-bold text-white mb-4">Pending Accreditation Reviews</h2>
               {accreditationDocs.length === 0 ? (
                 <div className="text-center py-8 text-slate-400">
@@ -2485,7 +2586,7 @@ export default function AdminInvestorDashboard() {
               ) : (
                 <div className="space-y-4">
                   {accreditationDocs.map(doc => (
-                    <div key={doc.id} className="p-4 bg-slate-700/50 rounded-lg border border-slate-600">
+                    <div key={doc.id} className="p-4 bg-slate-700/50 rounded-lg border border-slate-700">
                       <div className="flex items-center justify-between mb-3">
                         <div>
                           <div className="text-white font-semibold">{doc.investors?.full_name}</div>
@@ -2542,22 +2643,22 @@ export default function AdminInvestorDashboard() {
               )}
             </div>
 
-            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
               <h2 className="text-xl font-bold text-white mb-4">Accreditation Status</h2>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-slate-700">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Investor</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Method</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Accredited</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Verified</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase">Date</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Investor</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Method</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Accredited</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Verified</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-medium text-slate-500 uppercase tracking-wider">Date</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-700">
+                  <tbody className="divide-y divide-slate-800/50">
                     {investors.map(inv => (
-                      <tr key={inv.id} className="hover:bg-slate-700/30">
+                      <tr key={inv.id} className="hover:bg-slate-800/40">
                         <td className="px-4 py-3">
                           <div className="text-white font-medium">{inv.full_name}</div>
                           <div className="text-slate-400 text-xs">{inv.email}</div>
@@ -2601,7 +2702,7 @@ export default function AdminInvestorDashboard() {
             )}
 
             {/* Enable Toggle */}
-            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-white">Investor Portal</h2>
@@ -2617,7 +2718,7 @@ export default function AdminInvestorDashboard() {
             </div>
 
             {/* Bank Account Details */}
-            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <div className="bg-slate-900/80 rounded-2xl p-6 border border-slate-800">
               <div className="flex items-center gap-3 mb-2">
                 <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z" />
@@ -2635,7 +2736,7 @@ export default function AdminInvestorDashboard() {
                     type="text"
                     value={bankForm.investor_bank_name}
                     onChange={e => setBankForm({ ...bankForm, investor_bank_name: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-600 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition"
                     placeholder="e.g. Chase, Wells Fargo, Mountain America"
                   />
                 </div>
@@ -2645,7 +2746,7 @@ export default function AdminInvestorDashboard() {
                     type="text"
                     value={bankForm.investor_bank_account_name}
                     onChange={e => setBankForm({ ...bankForm, investor_bank_account_name: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-600 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition"
                     placeholder="e.g. OG DiX Motor Club LLC"
                   />
                 </div>
@@ -2658,7 +2759,7 @@ export default function AdminInvestorDashboard() {
                     type="text"
                     value={bankForm.investor_bank_routing}
                     onChange={e => setBankForm({ ...bankForm, investor_bank_routing: e.target.value.replace(/\D/g, '').slice(0, 9) })}
-                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-700 rounded-lg text-white text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
                     placeholder="9 digits"
                     maxLength={9}
                   />
@@ -2669,7 +2770,7 @@ export default function AdminInvestorDashboard() {
                     type="text"
                     value={bankForm.investor_bank_account}
                     onChange={e => setBankForm({ ...bankForm, investor_bank_account: e.target.value.replace(/\D/g, '') })}
-                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-700 rounded-lg text-white text-sm font-mono focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
                     placeholder="Account number"
                   />
                 </div>
@@ -2678,7 +2779,7 @@ export default function AdminInvestorDashboard() {
                   <select
                     value={bankForm.investor_bank_type}
                     onChange={e => setBankForm({ ...bankForm, investor_bank_type: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-600 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition"
                   >
                     <option value="checking">Checking</option>
                     <option value="savings">Savings</option>
@@ -2688,7 +2789,7 @@ export default function AdminInvestorDashboard() {
 
               {/* Live Preview */}
               {bankForm.investor_bank_name && bankForm.investor_bank_routing && (
-                <div className="bg-slate-900/50 border border-slate-600 rounded-xl p-5 mb-6">
+                <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-5 mb-6">
                   <div className="flex items-center gap-2 mb-4">
                     <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
