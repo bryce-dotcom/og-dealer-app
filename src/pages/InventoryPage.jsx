@@ -658,7 +658,7 @@ export default function InventoryPage() {
           trim: vehicle.trim || null,
           miles: vehicle.miles || vehicle.mileage || 60000,
           condition: 'Good',
-          zip: dealer?.zip || '84065'
+          zip_code: dealer?.zip || '84065'
         }
       });
       
@@ -1074,21 +1074,63 @@ export default function InventoryPage() {
 
               {valueData && !valueData.error && (
                 <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '12px' }}>
                     <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>MARKET PRICE</div>
+                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>RETAIL VALUE</div>
                       <div style={{ color: theme.accent, fontSize: '22px', fontWeight: '700' }}>
-                        {formatCurrency(getValue(valueData, 'valuations.marketcheck', 'valuations.comp_average', 'valuations.kbb_retail'))}
+                        {formatCurrency(getValue(valueData, 'values.retail'))}
                       </div>
                     </div>
                     <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>BUY MAX</div>
+                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>WHOLESALE / MMR</div>
                       <div style={{ color: '#60a5fa', fontSize: '22px', fontWeight: '700' }}>
-                        {formatCurrency(getValue(valueData, 'pricing_recommendation.dealer_buy_max'))}
+                        {formatCurrency(getValue(valueData, 'values.wholesale', 'values.mmr'))}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>TRADE-IN</div>
+                      <div style={{ color: '#4ade80', fontSize: '18px', fontWeight: '700' }}>
+                        {formatCurrency(getValue(valueData, 'values.trade_in'))}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>CONFIDENCE</div>
+                      <div style={{ fontSize: '18px', fontWeight: '700', color: getValue(valueData, 'values.confidence') === 'HIGH' ? '#4ade80' : getValue(valueData, 'values.confidence') === 'MEDIUM' ? '#fbbf24' : '#f87171' }}>
+                        {getValue(valueData, 'values.confidence') || '-'}
                       </div>
                     </div>
                   </div>
-                  
+
+                  {/* Market Stats */}
+                  {valueData.market_stats && (
+                    <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', fontSize: '12px' }}>
+                      {valueData.market_stats.active_listings > 0 && (
+                        <div style={{ backgroundColor: theme.bg, padding: '8px 12px', borderRadius: '6px', color: theme.textSecondary }}>
+                          <span style={{ color: theme.textMuted }}>Listed: </span>
+                          <span style={{ fontWeight: '600' }}>{valueData.market_stats.active_listings}</span>
+                        </div>
+                      )}
+                      {valueData.market_stats.avg_days_on_market && (
+                        <div style={{ backgroundColor: theme.bg, padding: '8px 12px', borderRadius: '6px', color: theme.textSecondary }}>
+                          <span style={{ color: theme.textMuted }}>Avg DOM: </span>
+                          <span style={{ fontWeight: '600' }}>{valueData.market_stats.avg_days_on_market}d</span>
+                        </div>
+                      )}
+                      {valueData.market_stats.supply_level && (
+                        <div style={{ backgroundColor: theme.bg, padding: '8px 12px', borderRadius: '6px', color: valueData.market_stats.supply_level === 'low' ? '#4ade80' : valueData.market_stats.supply_level === 'high' ? '#f87171' : '#fbbf24' }}>
+                          <span style={{ color: theme.textMuted }}>Supply: </span>
+                          <span style={{ fontWeight: '600', textTransform: 'capitalize' }}>{valueData.market_stats.supply_level}</span>
+                        </div>
+                      )}
+                      {valueData.market_stats.price_range && (
+                        <div style={{ backgroundColor: theme.bg, padding: '8px 12px', borderRadius: '6px', color: theme.textSecondary }}>
+                          <span style={{ color: theme.textMuted }}>Range: </span>
+                          <span style={{ fontWeight: '600' }}>{formatCurrency(valueData.market_stats.price_range.low)} - {formatCurrency(valueData.market_stats.price_range.high)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <button onClick={goToFullResearch} style={{ padding: '10px 16px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>Full Research</button>
                 </div>
               )}
