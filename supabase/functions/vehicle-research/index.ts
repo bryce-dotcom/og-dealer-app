@@ -452,11 +452,13 @@ serve(async (req) => {
       trim,
       miles = 60000,
       condition = 'good',
+      color,
+      purchase_price,
       zip_code = '84065',
     } = body;
 
     log('MAIN', '========== NEW REQUEST ==========');
-    log('MAIN', 'Request params', { vin, year, make, model, trim, miles, condition, zip_code });
+    log('MAIN', 'Request params', { vin, year, make, model, trim, miles, condition, color, purchase_price, zip_code });
 
     const MARKETCHECK_API_KEY = Deno.env.get("MARKETCHECK_API_KEY");
 
@@ -638,27 +640,54 @@ serve(async (req) => {
         return 0;
       }
 
-      // Score and sort listings
+      // Score each listing by overall relevance (trim + mileage + year)
+      const targetYear = parseInt(searchYear.toString());
+      const targetMiles = miles || 60000;
+
       const scoredListings = allListings
         .filter((l: any) => {
           const p = parseFloat(l.price);
           return p > 0 && !isNaN(p);
         })
-        .map((l: any) => ({ ...l, _trimScore: trimMatchScore(l) }));
+        .map((l: any) => {
+          const tScore = trimMatchScore(l);
 
-      // Prefer trim-matched listings, but fall back to all if not enough
-      let bestListings = scoredListings.filter((l: any) => l._trimScore >= 2);
+          // Year proximity score (0-2): exact year=2, ±1 year=1, further=0
+          const listingYear = l.year || targetYear;
+          const yearDiff = Math.abs(listingYear - targetYear);
+          const yScore = yearDiff === 0 ? 2 : yearDiff === 1 ? 1 : 0;
 
+          // Mileage proximity score (0-2): within 15k=2, within 30k=1, further=0
+          const listingMiles = l.miles || targetMiles;
+          const milesDiff = Math.abs(listingMiles - targetMiles);
+          const mScore = milesDiff <= 15000 ? 2 : milesDiff <= 30000 ? 1 : 0;
+
+          // Combined relevance (trim is weighted heaviest: 0-3, year: 0-2, miles: 0-2)
+          const totalScore = tScore * 3 + yScore + mScore; // max = 9+2+2 = 13
+
+          return { ...l, _trimScore: tScore, _yearScore: yScore, _milesScore: mScore, _totalScore: totalScore };
+        });
+
+      // Sort by total relevance score descending
+      scoredListings.sort((a: any, b: any) => b._totalScore - a._totalScore);
+
+      // Prefer well-matched listings, fall back progressively
+      let bestListings = scoredListings.filter((l: any) => l._totalScore >= 7); // good trim + close year/miles
       if (bestListings.length < 3) {
-        // Not enough exact/tier matches — include unknowns too
-        bestListings = scoredListings.filter((l: any) => l._trimScore >= 1);
+        bestListings = scoredListings.filter((l: any) => l._totalScore >= 4); // decent trim match
       }
       if (bestListings.length < 3) {
-        // Still not enough — use everything
-        bestListings = scoredListings;
+        bestListings = scoredListings.filter((l: any) => l._trimScore >= 1); // at least some trim relevance
+      }
+      if (bestListings.length < 3) {
+        bestListings = scoredListings; // use everything
       }
 
-      log('FALLBACK', `Trim filtering: ${scoredListings.length} total priced, ${bestListings.length} after trim filter (score >= ${bestListings.length === scoredListings.length ? '0' : bestListings[0]?._trimScore || 0})`);
+      const exactTrimMatches = scoredListings.filter((l: any) => l._trimScore >= 2).length;
+      log('FALLBACK', `Scoring: ${scoredListings.length} total priced, ${bestListings.length} best matches, ${exactTrimMatches} exact trim matches`);
+      if (bestListings.length > 0) {
+        log('FALLBACK', `Top match scores: ${bestListings.slice(0, 5).map((l: any) => `${l.title?.slice(0, 30) || '?'}=$${l.price} (t:${l._trimScore} y:${l._yearScore} m:${l._milesScore} total:${l._totalScore})`).join(', ')}`);
+      }
 
       const prices = bestListings
         .map((l: any) => parseFloat(l.price))
@@ -669,18 +698,47 @@ serve(async (req) => {
         const trimCount = Math.max(1, Math.floor(prices.length * 0.1));
         const trimmedPrices = prices.slice(trimCount, prices.length - trimCount);
 
-        const avg = trimmedPrices.reduce((s: number, p: number) => s + p, 0) / trimmedPrices.length;
+        // Weighted average — give more weight to better-matched listings
+        const weightedListings = bestListings
+          .filter((l: any) => {
+            const p = parseFloat(l.price);
+            return p > 0 && !isNaN(p);
+          })
+          .sort((a: any, b: any) => b._totalScore - a._totalScore);
+
+        let weightedSum = 0;
+        let weightTotal = 0;
+        for (const l of weightedListings) {
+          const w = l._totalScore + 1; // +1 so even score=0 has some weight
+          weightedSum += parseFloat(l.price) * w;
+          weightTotal += w;
+        }
+        const weightedAvg = weightTotal > 0 ? weightedSum / weightTotal : 0;
+
         const median = trimmedPrices[Math.floor(trimmedPrices.length / 2)];
 
-        // Use median as the base retail value (more stable than average)
-        const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
-        const retailEstimate = Math.round(median * conditionMult);
+        // Blend weighted average and median (weighted avg is more accurate when good matches exist)
+        const hasGoodMatches = exactTrimMatches >= 3;
+        const baseValue = hasGoodMatches
+          ? Math.round(weightedAvg * 0.6 + median * 0.4) // favor weighted when good matches
+          : Math.round(weightedAvg * 0.3 + median * 0.7); // favor median when matches are weak
 
-        // Confidence based on how well we matched
-        const exactMatches = scoredListings.filter((l: any) => l._trimScore >= 2).length;
+        // Apply condition multiplier
+        const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
+
+        // Apply mileage adjustment — comparables may have different miles
+        // Roughly $0.05-0.15 per mile difference depending on vehicle value
+        const avgComparableMiles = weightedListings.reduce((s: number, l: any) => s + (l.miles || targetMiles), 0) / weightedListings.length;
+        const milesDelta = targetMiles - avgComparableMiles; // positive = our car has MORE miles
+        const perMileRate = baseValue > 40000 ? 0.12 : baseValue > 20000 ? 0.08 : 0.05;
+        const milesAdjustment = Math.round(milesDelta * perMileRate * -1); // more miles = lower value
+
+        const retailEstimate = Math.round((baseValue + milesAdjustment) * conditionMult);
+
+        // Confidence scoring
         let confidence: 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW';
-        if (exactMatches >= 10) confidence = 'MEDIUM';
-        if (exactMatches >= 20) confidence = 'HIGH';
+        if (exactTrimMatches >= 5 && bestListings.length >= 8) confidence = 'HIGH';
+        else if (exactTrimMatches >= 3 || bestListings.length >= 10) confidence = 'MEDIUM';
 
         finalValues = {
           retail: retailEstimate,
@@ -690,15 +748,18 @@ serve(async (req) => {
           confidence
         };
 
-        const trimNote = exactMatches > 0 ? `, ${exactMatches} trim-matched` : '';
+        const trimNote = exactTrimMatches > 0 ? `, ${exactTrimMatches} trim-matched` : '';
         dataSource = `Comparables (${prices.length} listings${trimNote})`;
 
         log('FALLBACK', 'Calculated from comparables', {
           total_prices: prices.length,
-          trimmed_count: trimmedPrices.length,
-          exact_trim_matches: exactMatches,
-          avg,
+          exact_trim_matches: exactTrimMatches,
+          weighted_avg: Math.round(weightedAvg),
           median,
+          base_value: baseValue,
+          miles_adjustment: milesAdjustment,
+          avg_comparable_miles: Math.round(avgComparableMiles),
+          target_miles: targetMiles,
           condition_mult: conditionMult,
           estimated_retail: retailEstimate,
           price_range: { low: prices[0], high: prices[prices.length - 1] }

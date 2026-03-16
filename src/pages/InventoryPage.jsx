@@ -728,6 +728,9 @@ export default function InventoryPage() {
           trim: vehicle.trim || null,
           miles: vehicle.miles || vehicle.mileage || 60000,
           condition: vehicle.condition || 'Good',
+          color: vehicle.color || null,
+          stock_number: vehicle.stock_number || null,
+          purchase_price: vehicle.purchase_price || null,
           zip_code: dealer?.zip || '84065'
         }
       });
