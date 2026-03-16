@@ -638,7 +638,18 @@ serve(async (req) => {
       let carGurusCount = 0;
 
       const yearQuery = year_min && year_max ? `${year_min}-${year_max}` : (year_min ? `${year_min}` : (year_max ? `${year_max}` : ''));
-      const vehicleQuery = `${yearQuery} ${make} ${model || ''}`.trim();
+
+      // Build search query including trim for more specific results
+      // e.g. "2020 Ford F-150 Platinum" instead of just "2020 Ford F-150"
+      let vehicleQuery = `${yearQuery} ${make} ${model || ''}`.trim();
+      if (trim) {
+        vehicleQuery = `${vehicleQuery} ${trim}`;
+      }
+      // Add fuel type keyword for non-gas vehicles (gas is default, doesn't need keyword)
+      if (engine_type && engine_type.toLowerCase() !== 'gas') {
+        vehicleQuery = `${vehicleQuery} ${engine_type}`;
+      }
+      log(`Vehicle search query: "${vehicleQuery}"`);
 
       // ----- GOOGLE SEARCH: Craigslist -----
       try {
@@ -1075,13 +1086,38 @@ Keep it concise and practical for a car buyer.`;
       // Apply strict filtering to dealer listings (they have detailed specs)
       dealerListings = dealerListings.filter(v => matchesSpecificFilters(v, filters));
 
-      // For private listings: filters are OPTIONAL (private sellers often don't list detailed specs)
-      // Only filter out if it EXPLICITLY contradicts (e.g., says "gas" when looking for "diesel")
-      // Otherwise, assume it MIGHT match and show it
-      log(`Private listings: Skipping strict filters (private sellers rarely list detailed specs)`);
+      // For private listings: apply fuel type filter (huge price impact) but skip others
+      // Private sellers rarely list drivetrain/transmission in titles, but fuel type
+      // matters a LOT (diesel vs gas vs hybrid can be $10k+ difference)
+      if (engine_type) {
+        privateListings = privateListings.filter(v => {
+          const searchText = `${v.title || ''} ${v.trim || ''} ${v.model || ''}`.toLowerCase();
+          const et = engine_type.toLowerCase();
+
+          if (et === 'diesel') {
+            // Keep if mentions diesel OR if no fuel info (might be diesel)
+            const mentionsDiesel = searchText.includes('diesel') || searchText.includes('powerstroke') || searchText.includes('duramax') || searchText.includes('cummins') || searchText.includes('turbodiesel');
+            const mentionsOther = searchText.includes('hybrid') || searchText.includes('electric') || searchText.includes(' ev ');
+            return mentionsDiesel || (!mentionsOther && !searchText.includes('ecoboost') && !searchText.includes('v6') && !searchText.includes('v8'));
+          } else if (et === 'gas') {
+            // Exclude if explicitly diesel/electric/hybrid
+            return !searchText.includes('diesel') && !searchText.includes('electric') && !searchText.includes(' ev ') && !searchText.includes('hybrid') && !searchText.includes('phev') && !searchText.includes('powerstroke') && !searchText.includes('duramax') && !searchText.includes('cummins');
+          } else if (et === 'hybrid') {
+            const mentionsHybrid = searchText.includes('hybrid') || searchText.includes('phev') || searchText.includes('plug-in');
+            const mentionsOther = searchText.includes('diesel') || searchText.includes('powerstroke') || searchText.includes('duramax');
+            return mentionsHybrid || (!mentionsOther);
+          } else if (et === 'electric') {
+            return searchText.includes('electric') || searchText.includes(' ev ') || searchText.includes('e-tron') || searchText.includes('tesla');
+          }
+          return true;
+        });
+        log(`Private listings after fuel filter: ${originalPrivateCount} -> ${privateListings.length}`);
+      } else {
+        log(`Private listings: No fuel filter applied`);
+      }
 
       log(`Dealer listings: ${originalDealerCount} -> ${dealerListings.length}`);
-      log(`Private listings: ${originalPrivateCount} -> ${privateListings.length} (filters not applied to private)`);
+      log(`Private listings: ${originalPrivateCount} -> ${privateListings.length}`);
     }
 
     // ===== FINAL RESPONSE =====

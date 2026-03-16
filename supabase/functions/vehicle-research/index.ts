@@ -331,6 +331,8 @@ async function getComparables(
     make: string;
     model: string;
     trim?: string;
+    fuel_type?: string;
+    drivetrain?: string;
   },
   miles: number,
   zip_code: string
@@ -349,7 +351,43 @@ async function getComparables(
     };
   }
 
+  // Map NHTSA fuel type to engine_type filter
+  let engineType: string | undefined;
+  if (vehicle.fuel_type) {
+    const ft = vehicle.fuel_type.toLowerCase();
+    if (ft.includes('diesel')) engineType = 'diesel';
+    else if (ft.includes('electric')) engineType = 'electric';
+    else if (ft.includes('hybrid') || ft.includes('plug-in')) engineType = 'hybrid';
+    else if (ft.includes('gasoline') || ft.includes('gas')) engineType = 'gas';
+  }
+
+  // Map NHTSA drivetrain to filter
+  let driveFilter: string | undefined;
+  if (vehicle.drivetrain) {
+    const dt = vehicle.drivetrain.toLowerCase();
+    if (dt.includes('4wd') || dt.includes('4x4') || dt.includes('four wheel') || dt.includes('part-time')) driveFilter = '4WD';
+    else if (dt.includes('awd') || dt.includes('all wheel') || dt.includes('all-wheel')) driveFilter = 'AWD';
+    else if (dt.includes('2wd') || dt.includes('rear wheel') || dt.includes('front wheel') || dt.includes('rwd') || dt.includes('fwd')) driveFilter = '2WD';
+  }
+
   try {
+    const requestBody: any = {
+      year_min: vehicle.year - 1,
+      year_max: vehicle.year + 1,
+      make: vehicle.make,
+      model: vehicle.model,
+      trim: vehicle.trim,
+      max_miles: (miles || 60000) + 30000,
+      zip_code: zip_code || '84065',
+      radius_miles: 250,
+    };
+
+    // Pass fuel type and drivetrain filters
+    if (engineType) requestBody.engine_type = engineType;
+    if (driveFilter) requestBody.drivetrain = driveFilter;
+
+    log('COMPARABLES', 'find-vehicles request body', requestBody);
+
     const comparablesRes = await fetch(
       SUPABASE_URL + '/functions/v1/find-vehicles',
       {
@@ -358,16 +396,7 @@ async function getComparables(
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({
-          year_min: vehicle.year - 1,
-          year_max: vehicle.year + 1,
-          make: vehicle.make,
-          model: vehicle.model,
-          trim: vehicle.trim,
-          max_miles: (miles || 60000) + 30000,
-          zip_code: zip_code || '84065',
-          radius_miles: 250,
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
@@ -507,7 +536,9 @@ serve(async (req) => {
         year: parseInt(searchYear.toString()),
         make: searchMake,
         model: searchModel,
-        trim: searchTrim
+        trim: searchTrim,
+        fuel_type: vehicleInfo.fuel_type || '',
+        drivetrain: vehicleInfo.drivetrain || '',
       },
       miles,
       zip_code
@@ -528,14 +559,109 @@ serve(async (req) => {
     if (!finalValues.retail) {
       log('FALLBACK', 'MarketCheck returned no values, calculating from comparables...');
 
-      // Gather all prices from dealer + private listings
+      // Gather all listings
       const allListings = [
         ...(comparables.dealer_listings || []),
         ...(comparables.private_listings || [])
       ];
-      const prices = allListings
+
+      // ---- TRIM-MATCHING: Filter comparables by trim similarity ----
+      // Premium trims (Platinum, Limited, Denali) are worth significantly more than base trims
+      const trimKeywords: Record<string, string[]> = {
+        // Premium
+        'platinum': ['platinum'],
+        'limited': ['limited'],
+        'denali': ['denali'],
+        'king ranch': ['king ranch', 'king-ranch'],
+        'lariat': ['lariat'],
+        'high country': ['high country'],
+        'overland': ['overland'],
+        'summit': ['summit'],
+        'longhorn': ['longhorn'],
+        'laramie': ['laramie'],
+        'tungsten': ['tungsten'],
+        'calligraphy': ['calligraphy'],
+        // Mid
+        'xlt': ['xlt'],
+        'slt': ['slt'],
+        'lt': [' lt ', ' lt,'],
+        'sel': ['sel'],
+        'sport': ['sport'],
+        'trail boss': ['trail boss'],
+        'tremor': ['tremor'],
+        'trd': ['trd'],
+        'sr5': ['sr5'],
+        // Base
+        'xl': [' xl ', ' xl,'],
+        'ls': [' ls ', ' ls,'],
+        'se': [' se ', ' se,'],
+        'base': ['base'],
+        'work truck': ['work truck', 'wt', 'w/t'],
+        'tradesman': ['tradesman'],
+      };
+
+      // Classify our target trim into a tier
+      function getTrimTier(trimStr: string): 'premium' | 'mid' | 'base' | 'unknown' {
+        const t = (trimStr || '').toLowerCase();
+        const premiumTrims = ['platinum', 'limited', 'denali', 'king ranch', 'lariat', 'high country', 'overland', 'summit', 'longhorn', 'laramie', 'tungsten', 'calligraphy'];
+        const baseTrims = ['xl', 'ls', 'se', 'base', 'work truck', 'wt', 'w/t', 'tradesman', 's ', 'fleet'];
+
+        for (const pt of premiumTrims) {
+          if (t.includes(pt)) return 'premium';
+        }
+        for (const bt of baseTrims) {
+          if (t.includes(bt)) return 'base';
+        }
+        if (t.length > 0) return 'mid';
+        return 'unknown';
+      }
+
+      const targetTrim = searchTrim.toLowerCase();
+      const targetTier = getTrimTier(searchTrim);
+      log('FALLBACK', `Target trim: "${searchTrim}", tier: ${targetTier}`);
+
+      // Score each listing by trim relevance
+      function trimMatchScore(listing: any): number {
+        const listingText = `${listing.title || ''} ${listing.trim || ''} ${listing.model || ''}`.toLowerCase();
+
+        // Exact trim match = best
+        if (targetTrim && listingText.includes(targetTrim)) return 3;
+
+        // Same tier match = good
+        const listingTier = getTrimTier(listingText);
+        if (targetTier !== 'unknown' && listingTier === targetTier) return 2;
+
+        // Unknown tier (can't determine) = acceptable
+        if (listingTier === 'unknown') return 1;
+
+        // Different tier = poor match
+        return 0;
+      }
+
+      // Score and sort listings
+      const scoredListings = allListings
+        .filter((l: any) => {
+          const p = parseFloat(l.price);
+          return p > 0 && !isNaN(p);
+        })
+        .map((l: any) => ({ ...l, _trimScore: trimMatchScore(l) }));
+
+      // Prefer trim-matched listings, but fall back to all if not enough
+      let bestListings = scoredListings.filter((l: any) => l._trimScore >= 2);
+
+      if (bestListings.length < 3) {
+        // Not enough exact/tier matches — include unknowns too
+        bestListings = scoredListings.filter((l: any) => l._trimScore >= 1);
+      }
+      if (bestListings.length < 3) {
+        // Still not enough — use everything
+        bestListings = scoredListings;
+      }
+
+      log('FALLBACK', `Trim filtering: ${scoredListings.length} total priced, ${bestListings.length} after trim filter (score >= ${bestListings.length === scoredListings.length ? '0' : bestListings[0]?._trimScore || 0})`);
+
+      const prices = bestListings
         .map((l: any) => parseFloat(l.price))
-        .filter((p: number) => p > 0 && !isNaN(p))
         .sort((a: number, b: number) => a - b);
 
       if (prices.length >= 3) {
@@ -550,19 +676,27 @@ serve(async (req) => {
         const conditionMult = CONDITION_MULTIPLIERS[condition.toLowerCase()] || 1.0;
         const retailEstimate = Math.round(median * conditionMult);
 
+        // Confidence based on how well we matched
+        const exactMatches = scoredListings.filter((l: any) => l._trimScore >= 2).length;
+        let confidence: 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW';
+        if (exactMatches >= 10) confidence = 'MEDIUM';
+        if (exactMatches >= 20) confidence = 'HIGH';
+
         finalValues = {
           retail: retailEstimate,
           mmr: Math.round(retailEstimate * 0.80),
           wholesale: Math.round(retailEstimate * 0.82),
           trade_in: Math.round(retailEstimate * 0.73),
-          confidence: trimmedPrices.length >= 10 ? 'MEDIUM' as const : 'LOW' as const
+          confidence
         };
 
-        dataSource = `Comparables (${prices.length} listings)`;
+        const trimNote = exactMatches > 0 ? `, ${exactMatches} trim-matched` : '';
+        dataSource = `Comparables (${prices.length} listings${trimNote})`;
 
         log('FALLBACK', 'Calculated from comparables', {
           total_prices: prices.length,
           trimmed_count: trimmedPrices.length,
+          exact_trim_matches: exactMatches,
           avg,
           median,
           condition_mult: conditionMult,
