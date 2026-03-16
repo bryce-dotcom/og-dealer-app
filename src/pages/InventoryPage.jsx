@@ -73,7 +73,7 @@ export default function InventoryPage() {
   
   const [formData, setFormData] = useState({
     year: '', make: '', model: '', trim: '', vin: '', miles: '',
-    color: '', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
+    color: '', condition: 'Good', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
     status: 'In Stock', stock_number: '', description: ''
   });
 
@@ -413,6 +413,7 @@ export default function InventoryPage() {
         vin: vehicle.vin || '',
         miles: vehicle.miles || vehicle.mileage || '',
         color: vehicle.color || '',
+        condition: vehicle.condition || 'Good',
         purchased_from: vehicle.purchased_from || '',
         purchase_price: vehicle.purchase_price || '',
         list_price: vehicle.list_price || '',
@@ -426,7 +427,7 @@ export default function InventoryPage() {
     } else {
       setFormData({
         year: '', make: '', model: '', trim: '', vin: '', miles: '',
-        color: '', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
+        color: '', condition: 'Good', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
         status: 'In Stock', stock_number: '', description: ''
       });
       setSelectedVehicle(null);
@@ -445,6 +446,7 @@ export default function InventoryPage() {
       vin: selectedVehicle.vin || '',
       miles: selectedVehicle.miles || selectedVehicle.mileage || '',
       color: selectedVehicle.color || '',
+      condition: selectedVehicle.condition || 'Good',
       purchased_from: selectedVehicle.purchased_from || '',
       purchase_price: selectedVehicle.purchase_price || '',
       list_price: selectedVehicle.list_price || '',
@@ -475,6 +477,7 @@ export default function InventoryPage() {
         vin: formData.vin || null,
         miles: parseInt(formData.miles) || 0,
         color: formData.color || null,
+        condition: formData.condition || 'Good',
         purchased_from: formData.purchased_from || null,
         purchase_price: parseFloat(formData.purchase_price) || 0,
         list_price: parseFloat(formData.list_price) || null,
@@ -617,6 +620,7 @@ export default function InventoryPage() {
         vin: formData.vin || null,
         miles: parseInt(formData.miles) || 0,
         color: formData.color || null,
+        condition: formData.condition || 'Good',
         purchased_from: formData.purchased_from || null,
         purchase_price: parseFloat(formData.purchase_price) || 0,
         list_price: parseFloat(formData.list_price) || null,
@@ -723,7 +727,7 @@ export default function InventoryPage() {
           model: vehicle.model,
           trim: vehicle.trim || null,
           miles: vehicle.miles || vehicle.mileage || 60000,
-          condition: 'Good',
+          condition: vehicle.condition || 'Good',
           zip_code: dealer?.zip || '84065'
         }
       });
@@ -883,10 +887,14 @@ export default function InventoryPage() {
                     <div style={{ fontSize: '17px', fontWeight: '600', color: theme.text, marginBottom: '4px' }}>{v.year} {v.make} {v.model}</div>
                     {v.trim && <div style={{ fontSize: '13px', color: theme.textMuted, marginBottom: '8px' }}>{v.trim}</div>}
                     
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
                       <div>
                         <div style={{ fontSize: '11px', color: theme.textMuted }}>Mileage</div>
                         <div style={{ fontSize: '14px', color: theme.text }}>{formatNumber(v.miles || v.mileage)} mi</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: theme.textMuted }}>Condition</div>
+                        <div style={{ fontSize: '14px', color: v.condition === 'Excellent' ? '#4ade80' : v.condition === 'Poor' || v.condition === 'Salvage' ? '#f87171' : v.condition === 'Fair' ? '#fbbf24' : theme.text }}>{v.condition || '-'}</div>
                       </div>
                       <div>
                         <div style={{ fontSize: '11px', color: theme.textMuted }}>Stock #</div>
@@ -1000,6 +1008,12 @@ export default function InventoryPage() {
                     <input type="text" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} style={inputStyle} placeholder="Silver" />
                   </div>
                   <div>
+                    <div style={labelStyle}>Condition</div>
+                    <select value={formData.condition} onChange={e => setFormData({...formData, condition: e.target.value})} style={inputStyle}>
+                      <option value="Excellent">Excellent</option><option value="Good">Good</option><option value="Fair">Fair</option><option value="Poor">Poor</option><option value="Salvage">Salvage</option>
+                    </select>
+                  </div>
+                  <div>
                     <div style={labelStyle}>Purchased From</div>
                     <input type="text" value={formData.purchased_from} onChange={e => setFormData({...formData, purchased_from: e.target.value})} style={inputStyle} placeholder="Auction, Trade-in" />
                   </div>
@@ -1031,10 +1045,14 @@ export default function InventoryPage() {
                   </div>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
                   <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
                     <div style={labelStyle}>Status</div>
                     <div style={{ color: getStatusColor(selectedVehicle.status).color, fontSize: '15px', fontWeight: '600' }}>{selectedVehicle.status}</div>
+                  </div>
+                  <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
+                    <div style={labelStyle}>Condition</div>
+                    <div style={{ color: selectedVehicle.condition === 'Excellent' ? '#4ade80' : selectedVehicle.condition === 'Poor' ? '#f87171' : selectedVehicle.condition === 'Fair' ? '#fbbf24' : theme.text, fontSize: '15px', fontWeight: '600' }}>{selectedVehicle.condition || '-'}</div>
                   </div>
                   <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px' }}>
                     <div style={labelStyle}>Miles</div>
@@ -1310,6 +1328,7 @@ export default function InventoryPage() {
                 
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Miles</label><input type="number" value={formData.miles} onChange={e => setFormData({...formData, miles: e.target.value})} style={inputStyle} placeholder="60000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Color</label><input type="text" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} style={inputStyle} placeholder="Silver" /></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Condition</label><select value={formData.condition} onChange={e => setFormData({...formData, condition: e.target.value})} style={inputStyle}><option value="Excellent">Excellent</option><option value="Good">Good</option><option value="Fair">Fair</option><option value="Poor">Poor</option><option value="Salvage">Salvage</option></select></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Stock #</label><input type="text" value={formData.stock_number} onChange={e => setFormData({...formData, stock_number: e.target.value})} style={inputStyle} placeholder="STK001" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Status</label><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}><option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option></select></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Cost (Purchase Price)</label><input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" /></div>

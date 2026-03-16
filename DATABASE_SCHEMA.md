@@ -339,6 +339,7 @@
 | `dealer_id` | integer | YES |  |
 | `photos` | text[] | YES |  |
 | `description` | text | YES |  |
+| `condition` | text | YES | Good (Excellent, Good, Fair, Poor, Salvage) |
 
 ## inventory_expenses (ACTIVE)
 
