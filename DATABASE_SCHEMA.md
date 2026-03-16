@@ -329,6 +329,7 @@
 | `color` | text | YES |  |
 | `purchased_from` | text | YES |  |
 | `purchase_price` | numeric | YES | 0 |
+| `list_price` | numeric | YES |  |
 | `sale_price` | numeric | YES |  |
 | `profit` | numeric | YES |  |
 | `status` | text | YES | In Stock |

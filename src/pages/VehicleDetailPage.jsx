@@ -207,16 +207,16 @@ export default function VehicleDetailPage() {
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div style={card}>
-              <div style={label}>Purchase Price</div>
+              <div style={label}>Cost</div>
               <div style={value}>{formatCurrency(vehicle.purchase_price)}</div>
+            </div>
+            <div style={card}>
+              <div style={label}>List Price</div>
+              <div style={value}>{vehicle.list_price ? formatCurrency(vehicle.list_price) : formatCurrency(vehicle.sale_price || vehicle.purchase_price)}</div>
             </div>
             <div style={card}>
               <div style={label}>Total Expenses</div>
               <div style={value}>{formatCurrency(totalExpenses)}</div>
-            </div>
-            <div style={card}>
-              <div style={label}>Recon Cost</div>
-              <div style={value}>{formatCurrency(totalReconCost)}</div>
             </div>
             <div style={card}>
               <div style={label}>Total Invested</div>
@@ -232,12 +232,23 @@ export default function VehicleDetailPage() {
                   <div style={label}>Profit</div>
                   <div style={{ ...value, color: profit >= 0 ? '#22c55e' : '#ef4444' }}>{formatCurrency(profit)}</div>
                 </div>
+                {vehicle.list_price && (
+                  <div style={{ ...card, gridColumn: 'span 2' }}>
+                    <div style={label}>Discount (List vs Sale)</div>
+                    <div style={{ ...value, color: (vehicle.list_price - salePrice) > 0 ? '#ef4444' : '#22c55e' }}>
+                      {(vehicle.list_price - salePrice) > 0 ? '-' : '+'}{formatCurrency(Math.abs(vehicle.list_price - salePrice))}
+                      <span style={{ fontSize: '13px', color: theme.textMuted, marginLeft: '8px' }}>
+                        ({((Math.abs(vehicle.list_price - salePrice) / vehicle.list_price) * 100).toFixed(1)}%)
+                      </span>
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <>
                 <div style={card}>
-                  <div style={label}>List Price</div>
-                  <div style={value}>{formatCurrency(vehicle.sale_price || vehicle.purchase_price)}</div>
+                  <div style={label}>Recon Cost</div>
+                  <div style={value}>{formatCurrency(totalReconCost)}</div>
                 </div>
                 <div style={card}>
                   <div style={label}>Days in Stock</div>
@@ -320,7 +331,9 @@ export default function VehicleDetailPage() {
               <div style={card}>
                 <h3 style={{ color: theme.text, fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>Sale Info</h3>
                 {[
+                  ['List Price', vehicle.list_price ? formatCurrency(vehicle.list_price) : '-'],
                   ['Sale Price', formatCurrency(vehicle.sale_price)],
+                  ['Discount', vehicle.list_price ? formatCurrency(vehicle.list_price - (vehicle.sale_price || 0)) : '-'],
                   ['Sale Date', formatDate(vehicle.sale_date)],
                   ['Customer', vehicle.client_customer],
                   ['Profit', formatCurrency(profit)],

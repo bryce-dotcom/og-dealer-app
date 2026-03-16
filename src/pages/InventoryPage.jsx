@@ -72,7 +72,7 @@ export default function InventoryPage() {
   
   const [formData, setFormData] = useState({
     year: '', make: '', model: '', trim: '', vin: '', miles: '',
-    color: '', purchased_from: '', purchase_price: '', sale_price: '',
+    color: '', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
     status: 'In Stock', stock_number: '', description: ''
   });
 
@@ -363,7 +363,7 @@ export default function InventoryPage() {
     sold: inventory.filter(v => v.status === 'Sold').length,
     bhph: inventory.filter(v => v.status === 'BHPH').length,
     fleet: inventory.filter(v => v.status === 'Fleet').length,
-    totalValue: inventory.reduce((sum, v) => sum + (parseFloat(v.sale_price) || 0), 0)
+    totalValue: inventory.reduce((sum, v) => sum + (parseFloat(v.list_price) || parseFloat(v.sale_price) || 0), 0)
   };
 
   const formatCurrency = (num) => {
@@ -414,6 +414,7 @@ export default function InventoryPage() {
         color: vehicle.color || '',
         purchased_from: vehicle.purchased_from || '',
         purchase_price: vehicle.purchase_price || '',
+        list_price: vehicle.list_price || '',
         sale_price: vehicle.sale_price || '',
         status: vehicle.status || 'In Stock',
         stock_number: vehicle.stock_number || '',
@@ -424,7 +425,7 @@ export default function InventoryPage() {
     } else {
       setFormData({
         year: '', make: '', model: '', trim: '', vin: '', miles: '',
-        color: '', purchased_from: '', purchase_price: '', sale_price: '',
+        color: '', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
         status: 'In Stock', stock_number: '', description: ''
       });
       setSelectedVehicle(null);
@@ -552,6 +553,7 @@ export default function InventoryPage() {
         color: formData.color || null,
         purchased_from: formData.purchased_from || null,
         purchase_price: parseFloat(formData.purchase_price) || 0,
+        list_price: parseFloat(formData.list_price) || null,
         sale_price: parseFloat(formData.sale_price) || 0,
         status: formData.status,
         stock_number: formData.stock_number || null,
@@ -618,7 +620,7 @@ export default function InventoryPage() {
           trim: formData.trim,
           miles: formData.miles,
           color: formData.color,
-          price: formData.sale_price,
+          price: formData.list_price || formData.sale_price,
           dealer_name: dealer?.dealer_name || 'OG DiX Motor Club'
         }
       });
@@ -628,7 +630,7 @@ export default function InventoryPage() {
         setFormData({ ...formData, description: data.description });
       }
     } catch (err) {
-      const desc = `${formData.year} ${formData.make} ${formData.model}${formData.trim ? ' ' + formData.trim : ''}\n\n${formData.miles ? formatNumber(formData.miles) + ' miles' : ''}${formData.color ? ' • ' + formData.color : ''}\n\n${formData.sale_price ? 'Asking: ' + formatCurrency(formData.sale_price) : 'Call for price'}\n\nClean title, ready to drive! Come see it at ${dealer?.dealer_name || 'our lot'}.\n\n${dealer?.phone || ''} • ${dealer?.address || ''}`;
+      const desc = `${formData.year} ${formData.make} ${formData.model}${formData.trim ? ' ' + formData.trim : ''}\n\n${formData.miles ? formatNumber(formData.miles) + ' miles' : ''}${formData.color ? ' • ' + formData.color : ''}\n\n${(formData.list_price || formData.sale_price) ? 'Asking: ' + formatCurrency(formData.list_price || formData.sale_price) : 'Call for price'}\n\nClean title, ready to drive! Come see it at ${dealer?.dealer_name || 'our lot'}.\n\n${dealer?.phone || ''} • ${dealer?.address || ''}`;
       setFormData({ ...formData, description: desc.trim() });
     } finally {
       setGeneratingDesc(false);
@@ -831,8 +833,12 @@ export default function InventoryPage() {
                         <div style={{ fontSize: '11px', color: theme.textMuted }}>Cost</div>
                         <div style={{ fontSize: '14px', color: theme.text }}>{formatCurrency(v.purchase_price)}</div>
                       </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: theme.textMuted }}>List</div>
+                        <div style={{ fontSize: '14px', color: theme.textSecondary }}>{v.list_price ? formatCurrency(v.list_price) : '-'}</div>
+                      </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '11px', color: theme.textMuted }}>Price</div>
+                        <div style={{ fontSize: '11px', color: theme.textMuted }}>{v.status === 'Sold' ? 'Sold' : 'Price'}</div>
                         <div style={{ fontSize: '20px', fontWeight: '700', color: '#4ade80' }}>{formatCurrency(v.sale_price)}</div>
                       </div>
                     </div>
@@ -909,13 +915,25 @@ export default function InventoryPage() {
                 <div style={labelStyle}>Financial Summary</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: theme.textMuted }}>Purchase Price</span>
+                    <span style={{ color: theme.textMuted }}>Cost</span>
                     <span style={{ color: theme.text }}>{formatCurrency(selectedVehicle.purchase_price)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>List Price</span>
+                    <span style={{ color: theme.textSecondary }}>{selectedVehicle.list_price ? formatCurrency(selectedVehicle.list_price) : '-'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: theme.textMuted }}>Sale Price</span>
                     <span style={{ color: theme.accent }}>{formatCurrency(selectedVehicle.sale_price)}</span>
                   </div>
+                  {selectedVehicle.list_price && selectedVehicle.sale_price && selectedVehicle.status === 'Sold' && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.textMuted }}>Discount</span>
+                      <span style={{ color: (selectedVehicle.list_price - selectedVehicle.sale_price) > 0 ? '#f87171' : '#4ade80', fontWeight: '600' }}>
+                        {(selectedVehicle.list_price - selectedVehicle.sale_price) > 0 ? '-' : '+'}{formatCurrency(Math.abs(selectedVehicle.list_price - selectedVehicle.sale_price))}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: theme.textMuted }}>Total Expenses</span>
                     <span style={{ color: '#f87171' }}>{formatCurrency(totalExpenses)}</span>
@@ -1106,8 +1124,9 @@ export default function InventoryPage() {
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Color</label><input type="text" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} style={inputStyle} placeholder="Silver" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Stock #</label><input type="text" value={formData.stock_number} onChange={e => setFormData({...formData, stock_number: e.target.value})} style={inputStyle} placeholder="STK001" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Status</label><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}><option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option></select></div>
-                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Purchase Price</label><input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" /></div>
-                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Sale Price</label><input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" /></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Cost (Purchase Price)</label><input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" /></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>List Price (Asking)</label><input type="number" value={formData.list_price} onChange={e => setFormData({...formData, list_price: e.target.value})} style={inputStyle} placeholder="13000" /></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Sale Price (Sold For)</label><input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" /></div>
                 <div style={{ gridColumn: 'span 2' }}><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Purchased From</label><input type="text" value={formData.purchased_from} onChange={e => setFormData({...formData, purchased_from: e.target.value})} style={inputStyle} placeholder="Auction, Trade-in" /></div>
                 
                 <div style={{ gridColumn: 'span 2' }}>

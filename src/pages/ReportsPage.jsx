@@ -71,6 +71,7 @@ export default function ReportsPage() {
     { id: 'expense-breakdown', icon: '💸', label: 'Where Did Money Go?', desc: 'Expenses by category', color: '#ef4444', cat: 'Financial' },
     { id: 'inventory', icon: '🚗', label: 'Inventory Report', desc: 'Stock levels & values', color: '#8b5cf6', cat: 'Inventory' },
     { id: 'inventory-aging', icon: '📅', label: 'Inventory Aging', desc: 'Days on lot', color: '#f97316', cat: 'Inventory' },
+    { id: 'price-variance', icon: '📉', label: 'Price Variance', desc: 'List vs Sale price', color: '#ec4899', cat: 'Inventory' },
     { id: 'bhph-collection', icon: '📋', label: 'Who Owes Me?', desc: 'BHPH loans', color: '#22c55e', cat: 'BHPH' },
     { id: 'deals-summary', icon: '🤝', label: 'Deals Summary', desc: 'Sales performance', color: '#8b5cf6', cat: 'Sales' },
     { id: 'salesman-performance', icon: '🏆', label: 'Salesman Performance', desc: 'By salesperson', color: '#f97316', cat: 'Sales' },
@@ -86,7 +87,7 @@ export default function ReportsPage() {
   ];
 
   const dataSources = [
-    { id: 'inventory', label: '🚗 Inventory', fields: ['year', 'make', 'model', 'vin', 'miles', 'purchase_price', 'sale_price', 'profit', 'status', 'stock_number', 'created_at'] },
+    { id: 'inventory', label: '🚗 Inventory', fields: ['year', 'make', 'model', 'vin', 'miles', 'purchase_price', 'list_price', 'sale_price', 'profit', 'status', 'stock_number', 'created_at'] },
     { id: 'deals', label: '🤝 Deals', fields: ['purchaser_name', 'date_of_sale', 'salesman', 'price', 'balance_due', 'created_at'] },
     { id: 'bhph_loans', label: '📋 BHPH Loans', fields: ['customer_name', 'term_months', 'interest_rate', 'purchase_price', 'down_payment', 'monthly_payment', 'current_balance', 'status'] },
     { id: 'customers', label: '👥 Customers', fields: ['name', 'phone', 'email', 'address', 'created_at'] },
@@ -137,6 +138,26 @@ export default function ReportsPage() {
         const now = new Date();
         const withAge = inv.map(v => ({ ...v, daysOnLot: Math.floor((now - new Date(v.created_at)) / (1000 * 60 * 60 * 24)) }));
         data = { vehicles: withAge.sort((a, b) => b.daysOnLot - a.daysOnLot), avgDays: withAge.length > 0 ? Math.round(withAge.reduce((sum, v) => sum + v.daysOnLot, 0) / withAge.length) : 0, over30: withAge.filter(v => v.daysOnLot > 30).length, over60: withAge.filter(v => v.daysOnLot > 60).length, over90: withAge.filter(v => v.daysOnLot > 90).length };
+        break;
+      }
+      case 'price-variance': {
+        const soldVehicles = (inventory || []).filter(v => v.status === 'Sold' && v.list_price && v.sale_price && new Date(v.updated_at || v.created_at) >= start);
+        const withVariance = soldVehicles.map(v => {
+          const listPrice = parseFloat(v.list_price) || 0;
+          const salePrice = parseFloat(v.sale_price) || 0;
+          const cost = parseFloat(v.purchase_price) || 0;
+          const discount = listPrice - salePrice;
+          const discountPct = listPrice > 0 ? (discount / listPrice) * 100 : 0;
+          const grossProfit = salePrice - cost;
+          return { ...v, list_price: listPrice, sale_price: salePrice, purchase_price: cost, discount, discount_pct: discountPct, gross_profit: grossProfit };
+        }).sort((a, b) => b.discount - a.discount);
+        const totalListPrice = withVariance.reduce((sum, v) => sum + v.list_price, 0);
+        const totalSalePrice = withVariance.reduce((sum, v) => sum + v.sale_price, 0);
+        const totalDiscount = withVariance.reduce((sum, v) => sum + v.discount, 0);
+        const totalCost = withVariance.reduce((sum, v) => sum + v.purchase_price, 0);
+        const totalGrossProfit = totalSalePrice - totalCost;
+        const avgDiscountPct = withVariance.length > 0 ? withVariance.reduce((sum, v) => sum + v.discount_pct, 0) / withVariance.length : 0;
+        data = { vehicles: withVariance, count: withVariance.length, totalListPrice, totalSalePrice, totalDiscount, totalGrossProfit, avgDiscountPct };
         break;
       }
       case 'bhph-collection': {
@@ -473,13 +494,61 @@ export default function ReportsPage() {
                   {activeReport === 'inventory' && !reportData.error && (
                     <div><h2 style={{ color: theme.text, fontSize: '24px', marginBottom: '24px' }}>🚗 Inventory</h2>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px', marginBottom: '24px' }}><Stat label="In Stock" value={reportData.count} color={theme.accent} /><Stat label="Total Value" value={formatCurrency(reportData.value)} color="#22c55e" /><Stat label="Avg Cost" value={formatCurrency(reportData.avgCost)} /></div>
-                      <DataTable data={reportData.vehicles} fields={['year', 'make', 'model', 'miles', 'purchase_price', 'sale_price', 'status']} theme={theme} f={formatCurrency} fd={formatDate} />
+                      <DataTable data={reportData.vehicles} fields={['year', 'make', 'model', 'miles', 'purchase_price', 'list_price', 'sale_price', 'status']} theme={theme} f={formatCurrency} fd={formatDate} />
                     </div>
                   )}
                   {activeReport === 'inventory-aging' && !reportData.error && (
                     <div><h2 style={{ color: theme.text, fontSize: '24px', marginBottom: '24px' }}>📅 Inventory Aging</h2>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px', marginBottom: '24px' }}><Stat label="Avg Days on Lot" value={reportData.avgDays} /><Stat label="Over 30 Days" value={reportData.over30} color="#eab308" /><Stat label="Over 60 Days" value={reportData.over60} color="#f97316" /><Stat label="Over 90 Days" value={reportData.over90} color="#ef4444" /></div>
-                      <DataTable data={reportData.vehicles} fields={['year', 'make', 'model', 'daysOnLot', 'purchase_price', 'sale_price']} theme={theme} f={formatCurrency} fd={formatDate} />
+                      <DataTable data={reportData.vehicles} fields={['year', 'make', 'model', 'daysOnLot', 'purchase_price', 'list_price', 'sale_price']} theme={theme} f={formatCurrency} fd={formatDate} />
+                    </div>
+                  )}
+                  {activeReport === 'price-variance' && !reportData.error && (
+                    <div><h2 style={{ color: theme.text, fontSize: '24px', marginBottom: '24px' }}>📉 Price Variance Report</h2>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                        <Stat label="Vehicles Sold" value={reportData.count} color="#ec4899" />
+                        <Stat label="Total List Price" value={formatCurrency(reportData.totalListPrice)} />
+                        <Stat label="Total Sale Price" value={formatCurrency(reportData.totalSalePrice)} color="#22c55e" />
+                        <Stat label="Total Discount" value={formatCurrency(reportData.totalDiscount)} color="#ef4444" />
+                        <Stat label="Avg Discount %" value={reportData.avgDiscountPct.toFixed(1) + '%'} color="#f97316" />
+                        <Stat label="Gross Profit" value={formatCurrency(reportData.totalGrossProfit)} color={reportData.totalGrossProfit >= 0 ? '#22c55e' : '#ef4444'} />
+                      </div>
+                      {reportData.vehicles.length > 0 ? (
+                        <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
+                            <thead><tr style={{ backgroundColor: theme.bg }}>
+                              {['Vehicle', 'Cost', 'List Price', 'Sale Price', 'Discount $', 'Discount %', 'Gross Profit'].map(h => (
+                                <th key={h} style={{ padding: '12px 16px', textAlign: h === 'Vehicle' ? 'left' : 'right', color: theme.textMuted, fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>{reportData.vehicles.slice(0, 100).map((v, i) => (
+                              <tr key={i} style={{ borderTop: `1px solid ${theme.border}` }}>
+                                <td style={{ padding: '12px 16px', color: theme.text, fontWeight: '500' }}>{v.year} {v.make} {v.model}{v.stock_number ? ` (#${v.stock_number})` : ''}</td>
+                                <td style={{ padding: '12px 16px', color: theme.text, textAlign: 'right' }}>{formatCurrency(v.purchase_price)}</td>
+                                <td style={{ padding: '12px 16px', color: theme.textSecondary, textAlign: 'right' }}>{formatCurrency(v.list_price)}</td>
+                                <td style={{ padding: '12px 16px', color: '#22c55e', textAlign: 'right', fontWeight: '600' }}>{formatCurrency(v.sale_price)}</td>
+                                <td style={{ padding: '12px 16px', color: v.discount > 0 ? '#ef4444' : '#22c55e', textAlign: 'right', fontWeight: '600' }}>{v.discount > 0 ? '-' : '+'}{formatCurrency(Math.abs(v.discount))}</td>
+                                <td style={{ padding: '12px 16px', color: v.discount_pct > 10 ? '#ef4444' : v.discount_pct > 5 ? '#f97316' : theme.textSecondary, textAlign: 'right' }}>{v.discount_pct.toFixed(1)}%</td>
+                                <td style={{ padding: '12px 16px', color: v.gross_profit >= 0 ? '#22c55e' : '#ef4444', textAlign: 'right', fontWeight: '700' }}>{formatCurrency(v.gross_profit)}</td>
+                              </tr>
+                            ))}</tbody>
+                            <tfoot><tr style={{ borderTop: `2px solid ${theme.border}`, backgroundColor: theme.bg }}>
+                              <td style={{ padding: '12px 16px', color: theme.text, fontWeight: '700' }}>TOTALS ({reportData.count} vehicles)</td>
+                              <td style={{ padding: '12px 16px', color: theme.text, textAlign: 'right', fontWeight: '600' }}>{formatCurrency(reportData.vehicles.reduce((s, v) => s + v.purchase_price, 0))}</td>
+                              <td style={{ padding: '12px 16px', color: theme.textSecondary, textAlign: 'right', fontWeight: '600' }}>{formatCurrency(reportData.totalListPrice)}</td>
+                              <td style={{ padding: '12px 16px', color: '#22c55e', textAlign: 'right', fontWeight: '700' }}>{formatCurrency(reportData.totalSalePrice)}</td>
+                              <td style={{ padding: '12px 16px', color: '#ef4444', textAlign: 'right', fontWeight: '700' }}>-{formatCurrency(reportData.totalDiscount)}</td>
+                              <td style={{ padding: '12px 16px', color: theme.textSecondary, textAlign: 'right', fontWeight: '600' }}>{reportData.avgDiscountPct.toFixed(1)}%</td>
+                              <td style={{ padding: '12px 16px', color: reportData.totalGrossProfit >= 0 ? '#22c55e' : '#ef4444', textAlign: 'right', fontWeight: '700' }}>{formatCurrency(reportData.totalGrossProfit)}</td>
+                            </tr></tfoot>
+                          </table>
+                        </div>
+                      ) : (
+                        <div style={{ padding: '40px', textAlign: 'center', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+                          <p style={{ fontSize: '16px', marginBottom: '8px' }}>No sold vehicles with list price data in this period</p>
+                          <p style={{ fontSize: '13px' }}>Make sure to set a List Price on vehicles before marking them as Sold</p>
+                        </div>
+                      )}
                     </div>
                   )}
                   {activeReport === 'bhph-collection' && !reportData.error && (
