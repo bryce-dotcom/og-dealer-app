@@ -1252,36 +1252,91 @@ export default function InventoryPage() {
 
               {valueData && !valueData.error && (
                 <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '12px' }}>
-                    <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>RETAIL VALUE</div>
-                      <div style={{ color: theme.accent, fontSize: '22px', fontWeight: '700' }}>
-                        {formatCurrency(getValue(valueData, 'values.retail'))}
+                  {/* MarketCheck Values — real API data only */}
+                  {getValue(valueData, 'values.retail') ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '12px' }}>
+                      <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>RETAIL VALUE</div>
+                        <div style={{ color: theme.accent, fontSize: '22px', fontWeight: '700' }}>
+                          {formatCurrency(getValue(valueData, 'values.retail'))}
+                        </div>
+                      </div>
+                      <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>WHOLESALE / MMR</div>
+                        <div style={{ color: '#60a5fa', fontSize: '22px', fontWeight: '700' }}>
+                          {formatCurrency(getValue(valueData, 'values.wholesale', 'values.mmr'))}
+                        </div>
+                      </div>
+                      <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>TRADE-IN</div>
+                        <div style={{ color: '#4ade80', fontSize: '18px', fontWeight: '700' }}>
+                          {formatCurrency(getValue(valueData, 'values.trade_in'))}
+                        </div>
+                      </div>
+                      <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>SOURCE</div>
+                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#4ade80' }}>MarketCheck</div>
                       </div>
                     </div>
-                    <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>WHOLESALE / MMR</div>
-                      <div style={{ color: '#60a5fa', fontSize: '22px', fontWeight: '700' }}>
-                        {formatCurrency(getValue(valueData, 'values.wholesale', 'values.mmr'))}
-                      </div>
+                  ) : (
+                    <div style={{ backgroundColor: '#7f1d1d20', padding: '12px', borderRadius: '8px', color: '#fca5a5', fontSize: '13px', marginBottom: '12px' }}>
+                      MarketCheck API unavailable — showing real listing prices below
                     </div>
-                    <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>TRADE-IN</div>
-                      <div style={{ color: '#4ade80', fontSize: '18px', fontWeight: '700' }}>
-                        {formatCurrency(getValue(valueData, 'values.trade_in'))}
+                  )}
+
+                  {/* Real comparable listings from the market */}
+                  {(() => {
+                    const dealers = valueData.comparables?.dealer_listings || [];
+                    const privates = valueData.comparables?.private_listings || [];
+                    const allComps = [...dealers, ...privates].filter(l => l.price > 0);
+                    if (allComps.length === 0) return null;
+
+                    const compPrices = allComps.map(l => l.price).sort((a, b) => a - b);
+                    const low = compPrices[0];
+                    const high = compPrices[compPrices.length - 1];
+                    const mid = compPrices[Math.floor(compPrices.length / 2)];
+
+                    return (
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '10px' }}>
+                          <div style={{ backgroundColor: theme.bg, padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                            <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '2px' }}>LOW</div>
+                            <div style={{ color: '#4ade80', fontSize: '16px', fontWeight: '700' }}>{formatCurrency(low)}</div>
+                          </div>
+                          <div style={{ backgroundColor: theme.bg, padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                            <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '2px' }}>MEDIAN</div>
+                            <div style={{ color: theme.accent, fontSize: '16px', fontWeight: '700' }}>{formatCurrency(mid)}</div>
+                          </div>
+                          <div style={{ backgroundColor: theme.bg, padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                            <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '2px' }}>HIGH</div>
+                            <div style={{ color: '#f87171', fontSize: '16px', fontWeight: '700' }}>{formatCurrency(high)}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>
+                          Based on {allComps.length} real listings ({dealers.length} dealer, {privates.length} private)
+                        </div>
+                        {/* Top 5 comparable listings */}
+                        <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                          {allComps.slice(0, 8).map((l, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${theme.border}`, fontSize: '13px' }}>
+                              <div>
+                                <span style={{ color: theme.text }}>{l.title || `${l.year || ''} ${l.make || ''} ${l.model || ''} ${l.trim || ''}`.trim()}</span>
+                                {l.miles && <span style={{ color: theme.textMuted, marginLeft: '8px' }}>{formatNumber(l.miles)} mi</span>}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ color: theme.accent, fontWeight: '600' }}>{formatCurrency(l.price)}</span>
+                                <span style={{ fontSize: '10px', color: theme.textMuted, padding: '2px 4px', backgroundColor: theme.bg, borderRadius: '3px' }}>{l.source || 'Dealer'}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ backgroundColor: theme.bg, padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '4px' }}>CONFIDENCE</div>
-                      <div style={{ fontSize: '18px', fontWeight: '700', color: getValue(valueData, 'values.confidence') === 'HIGH' ? '#4ade80' : getValue(valueData, 'values.confidence') === 'MEDIUM' ? '#fbbf24' : '#f87171' }}>
-                        {getValue(valueData, 'values.confidence') || '-'}
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
 
                   {/* Market Stats */}
                   {valueData.market_stats && (
-                    <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', fontSize: '12px' }}>
+                    <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', fontSize: '12px', flexWrap: 'wrap' }}>
                       {valueData.market_stats.active_listings > 0 && (
                         <div style={{ backgroundColor: theme.bg, padding: '8px 12px', borderRadius: '6px', color: theme.textSecondary }}>
                           <span style={{ color: theme.textMuted }}>Listed: </span>

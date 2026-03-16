@@ -1010,68 +1010,6 @@ serve(async (req) => {
       log(`Total private listings (deduplicated): ${privateListings.length}`);
     }
 
-    // ===== FALLBACK: Use Claude if no results =====
-    if (dealerListings.length === 0 && privateListings.length === 0 && ANTHROPIC_API_KEY) {
-      log(`\n=== ANTHROPIC FALLBACK ===`);
-
-      try {
-        const prompt = `I'm looking for a ${year_min || ''}${year_max ? '-' + year_max : ''} ${make} ${model || ''} with max price ${max_price ? '$' + max_price : 'any'} and max miles ${max_miles || 'any'}.
-
-Provide a brief market summary with:
-1. Typical price range for this vehicle
-2. Key things to look for
-3. Where to find good deals
-4. Any known issues to watch for
-
-Keep it concise and practical for a car buyer.`;
-
-        const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-3-haiku-20240307',
-            max_tokens: 500,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-        });
-
-        if (anthropicRes.ok) {
-          const anthropicData = await anthropicRes.json();
-          const aiResponse = anthropicData.content?.[0]?.text || '';
-          log(`Got AI market summary`);
-
-          // Return AI-generated guidance when no listings found
-          return new Response(
-            JSON.stringify({
-              success: true,
-              search_params: { make, model, year_range: yearRange, location: zip_code, radius: radius_miles },
-              market_summary: {
-                avg_price: null,
-                median_price: null,
-                price_range: null,
-                total_available: 0,
-                avg_days_on_market: null,
-                ai_insights: aiResponse,
-              },
-              dealer_listings: [],
-              private_listings: [],
-              total_found: 0,
-              message: 'No listings found in your area. Here\'s what we know about this vehicle:',
-              ai_guidance: aiResponse,
-              logs: logs,
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      } catch (aiError) {
-        log(`Anthropic Error: ${aiError.message}`);
-      }
-    }
-
     // ===== APPLY SPECIFIC FILTERS =====
     const filters = { engine_type, drivetrain, transmission, body_type, cab_type, bed_length };
     const hasSpecificFilters = engine_type || drivetrain || transmission || body_type || cab_type || bed_length;
