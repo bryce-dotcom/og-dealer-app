@@ -8,6 +8,7 @@ export default function TradeInsPage() {
   const { dealerId, customers, employees, deals } = useStore();
   const [loading, setLoading] = useState(true);
   const [tradeIns, setTradeIns] = useState([]);
+  const [recentSales, setRecentSales] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState('');
@@ -41,9 +42,31 @@ export default function TradeInsPage() {
 
   async function loadData() {
     setLoading(true);
-    const { data } = await supabase.from('trade_ins').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false });
-    setTradeIns(data || []);
+    const [tradeInsRes, salesRes] = await Promise.all([
+      supabase.from('trade_ins').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }),
+      supabase
+        .from('inventory')
+        .select('id, year, make, model, trim, vin, sale_price, status, created_at')
+        .eq('dealer_id', dealerId)
+        .in('status', ['Sold', 'For Sale', 'In Stock'])
+        .order('created_at', { ascending: false })
+        .limit(30)
+    ]);
+    setTradeIns(tradeInsRes.data || []);
+    setRecentSales(salesRes.data || []);
     setLoading(false);
+  }
+
+  function startTradeInForSale(sale) {
+    const deal = (deals || []).find(d => d.vehicle_id === sale.id);
+    resetForm();
+    setEditing(null);
+    setForm(prev => ({
+      ...prev,
+      deal_id: deal?.id ? String(deal.id) : '',
+      customer_id: deal?.customer_id ? String(deal.customer_id) : ''
+    }));
+    setShowModal(true);
   }
 
   // Stats
@@ -165,6 +188,43 @@ export default function TradeInsPage() {
           </div>
         ))}
       </div>
+
+      {/* Recent Sales & Inventory — tie a trade-in to a specific sale/customer */}
+      {recentSales.length > 0 && (
+        <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text }}>Current & Recently Sold Inventory</div>
+              <div style={{ fontSize: '12px', color: theme.textMuted }}>Start a trade-in tied to the buyer of any of these vehicles.</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
+            {recentSales.map(sale => {
+              const deal = (deals || []).find(d => d.vehicle_id === sale.id);
+              const cust = deal ? (customers || []).find(c => c.id === deal.customer_id) : null;
+              const custLabel = cust ? `${cust.first_name || ''} ${cust.last_name || ''}`.trim() : (deal?.purchaser_name || (sale.status === 'Sold' ? 'Buyer unknown' : 'Not sold'));
+              return (
+                <div key={sale.id} style={{ padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: '600', color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[sale.year, sale.make, sale.model].filter(Boolean).join(' ') || 'Vehicle'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sale.status} · {custLabel}{sale.sale_price ? ` · $${parseFloat(sale.sale_price).toLocaleString()}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => startTradeInForSale(sale)}
+                    style={{ padding: '6px 10px', backgroundColor: theme.accent, border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer', fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap' }}
+                  >
+                    + Trade-In
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>

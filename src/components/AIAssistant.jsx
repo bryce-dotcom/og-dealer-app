@@ -1,8 +1,40 @@
 import { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { getPermissions } from '../lib/permissions';
 import { CreditService } from '../lib/creditService';
+
+// Render assistant text with markdown-style [label](/path) links as clickable React Router Links.
+// External links (http/https) render as regular anchors opening in a new tab.
+function renderAssistantMessage(text) {
+  if (!text) return null;
+  const re = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const parts = [];
+  let last = 0;
+  let m;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const label = m[1];
+    const href = m[2];
+    if (href.startsWith('/')) {
+      parts.push(
+        <Link key={`lnk-${key++}`} to={href} style={{ color: '#fbbf24', textDecoration: 'underline' }}>{label}</Link>
+      );
+    } else if (href.startsWith('http://') || href.startsWith('https://')) {
+      parts.push(
+        <a key={`a-${key++}`} href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#fbbf24', textDecoration: 'underline' }}>{label}</a>
+      );
+    } else {
+      // Unknown scheme — render as plain text to avoid surprises
+      parts.push(m[0]);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
 
 const MicIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -284,11 +316,14 @@ export default function AIAssistant({ isOpen, onClose }) {
       const userRole = currentEmployee ? (currentEmployee.roles?.join(', ') || 'Employee') : 'Dealer Owner';
 
       const context = {
+        // Multi-tenant key — MUST be present so the edge function can verify/re-filter.
+        dealer_id: dealerId,
         user_access_level: userRole,
         access_note: currentEmployee
           ? 'This user is an employee. Only share information they have permission to see. Do NOT reveal payroll, bank accounts, financial details, or other employee data unless they have finance/admin roles.'
           : 'This user is the dealer owner with full access.',
         dealer: {
+          id: dealerId,
           name: dealer?.dealer_name,
           state: dealer?.state,
           subscription_status: dealer?.subscription_status
@@ -875,7 +910,7 @@ export default function AIAssistant({ isOpen, onClose }) {
                 whiteSpace: 'pre-wrap',
                 position: 'relative'
               }}>
-                {msg.content}
+                {msg.role === 'assistant' ? renderAssistantMessage(msg.content) : msg.content}
                 {/* Replay button for assistant messages when voice mode is on */}
                 {msg.role === 'assistant' && voiceMode && i > 0 && (
                   <button

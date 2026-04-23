@@ -66,23 +66,14 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
   async function calculateRevenue(startDate, endDate) {
     try {
-      console.log('Querying deals from', startDate, 'to', endDate);
-
-      // First check: how many sold/delivered deals exist total?
-      const { data: allSoldDeals } = await supabase
-        .from('deals')
-        .select('id, stage, date_of_sale')
-        .eq('dealer_id', dealerId)
-        .or('stage.eq.Sold,stage.eq.Delivered');
-
-      console.log('Total sold/delivered deals (all time):', (allSoldDeals || []).length, allSoldDeals);
-
       // Deal profit from sold/delivered deals in date range
       // Join with inventory to get purchase_price
       const { data: deals, error: dealsError } = await supabase
         .from('deals')
         .select(`
           sale_price,
+          trade_allowance,
+          trade_value,
           gap_insurance,
           extended_warranty,
           protection_package,
@@ -99,16 +90,34 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
       if (dealsError) throw dealsError;
 
-      console.log('Found', (deals || []).length, 'sold/delivered deals in date range:', deals);
+      const soldVehicleIds = (deals || []).map(d => d.vehicle_id).filter(Boolean);
+
+      // Pull recon/expense totals for the sold vehicles so vehicle profit reflects
+      // real gross profit. These expenses live on inventory_expenses per vehicle.
+      let reconByVehicle = {};
+      if (soldVehicleIds.length) {
+        const { data: exp } = await supabase
+          .from('inventory_expenses')
+          .select('inventory_id, amount')
+          .eq('dealer_id', dealerId)
+          .in('inventory_id', soldVehicleIds);
+        (exp || []).forEach(e => {
+          reconByVehicle[e.inventory_id] = (reconByVehicle[e.inventory_id] || 0) + (parseFloat(e.amount) || 0);
+        });
+      }
 
       const dealProfit = (deals || []).reduce((sum, deal) => {
-        const purchasePrice = deal.inventory?.purchase_price || 0;
-        const vehicleProfit = (deal.sale_price || 0) - purchasePrice;
+        const purchasePrice = parseFloat(deal.inventory?.purchase_price) || 0;
+        const recon = reconByVehicle[deal.vehicle_id] || 0;
+        // Effective sale = cash received + trade-in allowance (trade is real value, not a loss).
+        const tradeAllowance = parseFloat(deal.trade_allowance ?? deal.trade_value ?? 0) || 0;
+        const effectiveSale = (parseFloat(deal.sale_price) || 0) + tradeAllowance;
+        const vehicleProfit = effectiveSale - purchasePrice - recon;
         const fiProfit =
-          (deal.gap_insurance || 0) * 0.75 +
-          (deal.extended_warranty || 0) * 0.50 +
-          (deal.protection_package || 0) * 0.70;
-        return sum + vehicleProfit + fiProfit + (deal.doc_fee || 0);
+          (parseFloat(deal.gap_insurance) || 0) * 0.75 +
+          (parseFloat(deal.extended_warranty) || 0) * 0.50 +
+          (parseFloat(deal.protection_package) || 0) * 0.70;
+        return sum + vehicleProfit + fiProfit + (parseFloat(deal.doc_fee) || 0);
       }, 0);
 
       // BHPH interest income
@@ -121,14 +130,8 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
       if (paymentsError) throw paymentsError;
 
-      console.log('Found', (payments || []).length, 'BHPH payments');
-
-      const interestIncome = (payments || []).reduce((sum, p) => sum + (p.interest || 0), 0);
-      const totalRevenue = dealProfit + interestIncome;
-
-      console.log('Revenue breakdown - Deal profit:', dealProfit, 'Interest:', interestIncome, 'Total:', totalRevenue);
-
-      return totalRevenue;
+      const interestIncome = (payments || []).reduce((sum, p) => sum + (parseFloat(p.interest) || 0), 0);
+      return dealProfit + interestIncome;
     } catch (error) {
       console.error('Error calculating revenue:', error);
       console.error('Error details:', error.message, error.details, error.hint);
@@ -138,8 +141,9 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
   async function calculateBurnRate(startDate, endDate) {
     try {
-      // Execute queries in parallel
-      const [paystubs, expenses, invExpenses, liabilities] = await Promise.all([
+      // NOTE: inventory_expenses (recon) are now deducted from vehicle profit in
+      // calculateRevenue, so they are NOT included here — including them would double-count.
+      const [paystubs, expenses, liabilities] = await Promise.all([
         supabase.from('paystubs')
           .select('gross_pay')
           .eq('dealer_id', dealerId)
@@ -152,33 +156,26 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
           .gte('expense_date', startDate)
           .lte('expense_date', endDate),
 
-        supabase.from('inventory_expenses')
-          .select('amount')
-          .eq('dealer_id', dealerId)
-          .gte('expense_date', startDate)
-          .lte('expense_date', endDate),
-
         supabase.from('liabilities')
           .select('monthly_payment')
           .eq('dealer_id', dealerId)
           .eq('status', 'active')
       ]);
 
-      const payroll = (paystubs.data || []).reduce((sum, p) => sum + (p.gross_pay || 0), 0);
-      const opex = (expenses.data || []).reduce((sum, e) => sum + (e.amount || 0), 0);
-      const recon = (invExpenses.data || []).reduce((sum, e) => sum + (e.amount || 0), 0);
+      const payroll = (paystubs.data || []).reduce((sum, p) => sum + (parseFloat(p.gross_pay) || 0), 0);
+      const opex = (expenses.data || []).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
 
       // Prorate monthly payments for period
-      const days = (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24);
+      const days = Math.max(1, (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24));
       const monthlyFactor = days / 30;
-      const debtPayments = (liabilities.data || []).reduce((sum, l) => sum + (l.monthly_payment || 0), 0) * monthlyFactor;
+      const debtPayments = (liabilities.data || []).reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0) * monthlyFactor;
 
       return {
-        total: payroll + opex + recon + debtPayments,
+        total: payroll + opex + debtPayments,
         breakdown: {
           payroll,
           expenses: opex,
-          recon,
+          recon: 0, // recon folded into gross profit; see calculateRevenue
           debt: debtPayments
         }
       };
@@ -192,22 +189,28 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
     return Math.max(revenue * 0.15, 5000);
   }
 
-  async function calculateSpoilsRequired() {
+  async function calculateSpoilsRequired(startDate, endDate) {
     try {
+      // Scope inventory_commissions to the period (created_at) since that table has no
+      // payment status column — we can't tell paid vs unpaid, so use period activity.
+      // Scope `commissions` to rows still pending that were created in or before the period end.
       const [invComm, dealComm] = await Promise.all([
         supabase.from('inventory_commissions')
           .select('amount')
-          .eq('dealer_id', dealerId),
+          .eq('dealer_id', dealerId)
+          .gte('created_at', startDate)
+          .lte('created_at', endDate + 'T23:59:59'),
 
         supabase.from('commissions')
           .select('amount')
           .eq('dealer_id', dealerId)
           .eq('status', 'pending')
+          .lte('created_at', endDate + 'T23:59:59')
       ]);
 
       const total =
-        (invComm.data || []).reduce((sum, c) => sum + (c.amount || 0), 0) +
-        (dealComm.data || []).reduce((sum, c) => sum + (c.amount || 0), 0);
+        (invComm.data || []).reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0) +
+        (dealComm.data || []).reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
 
       return total;
     } catch (error) {
@@ -225,7 +228,7 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       const revenue = await calculateRevenue(start, end);
       const burnRateData = await calculateBurnRate(start, end);
       const capitalTarget = getCapitalTarget(revenue);
-      const spoilsRequired = await calculateSpoilsRequired();
+      const spoilsRequired = await calculateSpoilsRequired(start, end);
 
       // Calculate flow
       const toBurn = Math.min(revenue, burnRateData.total);

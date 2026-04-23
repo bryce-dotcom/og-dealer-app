@@ -76,7 +76,13 @@ export default function Login() {
     });
 
     if (authError) {
-      setError(authError.message);
+      // Supabase returns "Email not confirmed" when the user skipped the confirmation link.
+      // Surface an actionable message with a resend option instead of the raw string.
+      if (/email not confirmed|not confirmed/i.test(authError.message)) {
+        setError('Your email has not been confirmed yet. Check your inbox (and spam) for the confirmation link, or click "Forgot password?" to get a new link.');
+      } else {
+        setError(authError.message);
+      }
       setLoading(false);
       return;
     }
@@ -174,7 +180,10 @@ export default function Login() {
     // Create auth user
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
-      password
+      password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/login`
+      }
     });
 
     if (authError) {
@@ -185,6 +194,14 @@ export default function Login() {
 
     if (!authData.user) {
       setError('Signup failed. Please try again.');
+      setLoading(false);
+      return;
+    }
+
+    // Supabase returns an empty `identities` array when the email is already
+    // registered. Catch this BEFORE creating a dealer record for the existing user.
+    if (authData.user.identities && authData.user.identities.length === 0) {
+      setError('An account with this email already exists. Try signing in or resetting your password.');
       setLoading(false);
       return;
     }
@@ -208,14 +225,18 @@ export default function Login() {
       return;
     }
 
-    // Check if email confirmation is required
-    if (authData.user.identities?.length === 0) {
-      setMessage('Check your email to confirm your account, then log in.');
+    // If the Supabase project requires email confirmation, `session` will be null
+    // after signUp. Don't try to navigate to /dashboard — there's no session yet.
+    if (!authData.session) {
+      setMessage(`Account created for ${dealerName.trim()}. Check your email (including spam) for a confirmation link, then sign in.`);
       setMode('login');
+      setPassword('');
+      setDealerName('');
       setLoading(false);
       return;
     }
 
+    // Confirmation disabled: we have a session, go straight to the dashboard.
     setDealer(dealer);
     navigate('/dashboard');
   };

@@ -57,6 +57,9 @@ export default function InventoryPage() {
   const vinCameraRef = useRef(null);
   const receiptInputRef = useRef(null);
   
+  // Linked deal for the selected vehicle (used to show trade-in taken + adjust P&L)
+  const [linkedDeal, setLinkedDeal] = useState(null);
+
   // Expense & Commission state
   const [expenses, setExpenses] = useState([]);
   const [commissions, setCommissions] = useState([]);
@@ -74,7 +77,8 @@ export default function InventoryPage() {
   const [formData, setFormData] = useState({
     year: '', make: '', model: '', trim: '', vin: '', miles: '',
     color: '', condition: 'Good', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
-    status: 'In Stock', stock_number: '', description: ''
+    status: 'In Stock', stock_number: '', description: '',
+    date_acquired: '', sale_date: ''
   });
 
   const statuses = ['For Sale', 'In Stock', 'Sold', 'BHPH', 'Fleet', 'All'];
@@ -85,13 +89,27 @@ export default function InventoryPage() {
     if (dealerId) loadCommissionRoles();
   }, [dealerId]);
 
-  // Load expenses and commissions when detail opens
+  // Load expenses, commissions, and linked deal when detail opens
   useEffect(() => {
     if (selectedVehicle && showDetailModal) {
       loadExpenses(selectedVehicle.id);
       loadCommissions(selectedVehicle.id);
+      loadLinkedDeal(selectedVehicle.id);
+    } else {
+      setLinkedDeal(null);
     }
   }, [selectedVehicle?.id, showDetailModal]);
+
+  const loadLinkedDeal = async (vehicleId) => {
+    const { data } = await supabase
+      .from('deals')
+      .select('id, purchaser_name, date_of_sale, sale_price, trade_allowance, trade_value, trade_description, trade_year, trade_make, trade_model, trade_vin, trade_payoff')
+      .eq('dealer_id', dealerId)
+      .eq('vehicle_id', vehicleId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    setLinkedDeal(data && data[0] ? data[0] : null);
+  };
 
   const loadCommissionRoles = async () => {
     const { data } = await supabase
@@ -326,7 +344,10 @@ export default function InventoryPage() {
   const totalExpenses = expenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
   const totalCommissions = commissions.reduce((sum, c) => sum + parseFloat(c.amount || 0), 0);
   const totalCost = (parseFloat(selectedVehicle?.purchase_price || 0)) + totalExpenses;
-  const grossProfit = (parseFloat(selectedVehicle?.sale_price || 0)) - totalCost;
+  // Trade allowance on a linked deal is part of what we received for this vehicle, not a loss.
+  const tradeAllowance = parseFloat(linkedDeal?.trade_allowance || linkedDeal?.trade_value || 0);
+  const effectiveSale = (parseFloat(selectedVehicle?.sale_price || 0)) + tradeAllowance;
+  const grossProfit = effectiveSale - totalCost;
   const netProfit = grossProfit - totalCommissions;
 
   // Role-based access control for Fleet vehicles
@@ -420,7 +441,9 @@ export default function InventoryPage() {
         sale_price: vehicle.sale_price || '',
         status: vehicle.status || 'In Stock',
         stock_number: vehicle.stock_number || '',
-        description: vehicle.description || ''
+        description: vehicle.description || '',
+        date_acquired: vehicle.date_acquired || '',
+        sale_date: vehicle.sale_date || ''
       });
       setSelectedVehicle(vehicle);
       setPhotos(vehicle.photos || []);
@@ -428,7 +451,8 @@ export default function InventoryPage() {
       setFormData({
         year: '', make: '', model: '', trim: '', vin: '', miles: '',
         color: '', condition: 'Good', purchased_from: '', purchase_price: '', list_price: '', sale_price: '',
-        status: 'In Stock', stock_number: '', description: ''
+        status: 'In Stock', stock_number: '', description: '',
+        date_acquired: '', sale_date: ''
       });
       setSelectedVehicle(null);
       setPhotos([]);
@@ -453,7 +477,9 @@ export default function InventoryPage() {
       sale_price: selectedVehicle.sale_price || '',
       status: selectedVehicle.status || 'In Stock',
       stock_number: selectedVehicle.stock_number || '',
-      description: selectedVehicle.description || ''
+      description: selectedVehicle.description || '',
+      date_acquired: selectedVehicle.date_acquired || '',
+      sale_date: selectedVehicle.sale_date || ''
     });
     setDetailEditMode(true);
   };
@@ -485,6 +511,8 @@ export default function InventoryPage() {
         status: formData.status,
         stock_number: formData.stock_number || null,
         description: formData.description || null,
+        date_acquired: formData.date_acquired || null,
+        sale_date: formData.sale_date || null,
         dealer_id: dealerId
       };
       if (photos.length > 0) payload.photos = photos;
@@ -628,6 +656,8 @@ export default function InventoryPage() {
         status: formData.status,
         stock_number: formData.stock_number || null,
         description: formData.description || null,
+        date_acquired: formData.date_acquired || null,
+        sale_date: formData.sale_date || null,
         dealer_id: dealerId
       };
 
@@ -901,10 +931,17 @@ export default function InventoryPage() {
                       </div>
                       <div>
                         <div style={{ fontSize: '11px', color: theme.textMuted }}>Stock #</div>
-                        <div style={{ fontSize: '14px', color: theme.text }}>{v.stock_number || v.vin?.slice(-6) || 'N/A'}</div>
+                        <div style={{ fontSize: '14px', color: theme.text }}>{v.stock_number || 'N/A'}</div>
                       </div>
                     </div>
-                    
+
+                    {v.vin && (
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ fontSize: '11px', color: theme.textMuted }}>VIN</div>
+                        <div style={{ fontSize: '13px', color: theme.text, fontFamily: 'monospace', wordBreak: 'break-all' }}>{v.vin}</div>
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${theme.border}`, paddingTop: '12px' }}>
                       <div>
                         <div style={{ fontSize: '11px', color: theme.textMuted }}>Cost</div>
@@ -1043,6 +1080,14 @@ export default function InventoryPage() {
                     <div style={labelStyle}>Sale Price (Sold For)</div>
                     <input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" />
                   </div>
+                  <div>
+                    <div style={labelStyle}>Date Acquired</div>
+                    <input type="date" value={formData.date_acquired} onChange={e => setFormData({...formData, date_acquired: e.target.value})} style={inputStyle} />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Sale Date</div>
+                    <input type="date" value={formData.sale_date} onChange={e => setFormData({...formData, sale_date: e.target.value})} style={inputStyle} />
+                  </div>
                   <div style={{ gridColumn: 'span 2' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                       <div style={labelStyle}>Description</div>
@@ -1081,6 +1126,68 @@ export default function InventoryPage() {
 
               {/* Financial Summary - hidden in edit mode since fields are inline */}
               {!detailEditMode && <div style={sectionStyle}>
+                <div style={labelStyle}>Vehicle Info</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>VIN</span>
+                    <span style={{ color: theme.text, fontFamily: 'monospace', fontSize: '13px', wordBreak: 'break-all', textAlign: 'right' }}>{selectedVehicle.vin || '-'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>Stock #</span>
+                    <span style={{ color: theme.text }}>{selectedVehicle.stock_number || '-'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>Mileage</span>
+                    <span style={{ color: theme.text }}>{formatNumber(selectedVehicle.miles || selectedVehicle.mileage) || '-'} mi</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>Color</span>
+                    <span style={{ color: theme.text }}>{selectedVehicle.color || '-'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>Condition</span>
+                    <span style={{ color: theme.text }}>{selectedVehicle.condition || '-'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: theme.textMuted }}>Status</span>
+                    <span style={{ color: theme.text }}>{selectedVehicle.status || '-'}</span>
+                  </div>
+                  {selectedVehicle.purchased_from && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2' }}>
+                      <span style={{ color: theme.textMuted }}>Purchased From</span>
+                      <span style={{ color: theme.text }}>{selectedVehicle.purchased_from}</span>
+                    </div>
+                  )}
+                  {(selectedVehicle.date_acquired || selectedVehicle.created_at) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.textMuted }}>Date Acquired</span>
+                      <span style={{ color: theme.text }}>{selectedVehicle.date_acquired
+                        ? new Date(selectedVehicle.date_acquired).toLocaleDateString()
+                        : new Date(selectedVehicle.created_at).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                  {selectedVehicle.sale_date && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.textMuted }}>Sale Date</span>
+                      <span style={{ color: theme.text }}>{new Date(selectedVehicle.sale_date).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                  {(() => {
+                    const start = selectedVehicle.date_acquired || selectedVehicle.created_at;
+                    const end = selectedVehicle.sale_date || new Date();
+                    if (!start) return null;
+                    const days = Math.max(0, Math.floor((new Date(end) - new Date(start)) / 86400000));
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: theme.textMuted }}>Days on Lot</span>
+                        <span style={{ color: days > 45 ? '#f87171' : theme.text }}>{days}{selectedVehicle.sale_date ? '' : ' (so far)'}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>}
+
+              {!detailEditMode && <div style={sectionStyle}>
                 <div style={labelStyle}>Financial Summary</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1095,6 +1202,18 @@ export default function InventoryPage() {
                     <span style={{ color: theme.textMuted }}>Sale Price</span>
                     <span style={{ color: theme.accent }}>{formatCurrency(selectedVehicle.sale_price)}</span>
                   </div>
+                  {tradeAllowance > 0 && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: theme.textMuted }}>Trade Allowance</span>
+                        <span style={{ color: theme.accent }}>{formatCurrency(tradeAllowance)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2' }}>
+                        <span style={{ color: theme.textSecondary, fontWeight: '600' }}>Effective Sale (Cash + Trade)</span>
+                        <span style={{ color: theme.text, fontWeight: '600' }}>{formatCurrency(effectiveSale)}</span>
+                      </div>
+                    </>
+                  )}
                   {selectedVehicle.list_price && selectedVehicle.sale_price && selectedVehicle.status === 'Sold' && (
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: theme.textMuted }}>Discount</span>
@@ -1121,6 +1240,69 @@ export default function InventoryPage() {
                   </div>
                 </div>
               </div>}
+
+              {!detailEditMode && linkedDeal && (linkedDeal.trade_description || linkedDeal.trade_vin || tradeAllowance > 0) && (
+                <div style={sectionStyle}>
+                  <div style={labelStyle}>Trade-In Taken</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px' }}>
+                    {(linkedDeal.trade_year || linkedDeal.trade_make || linkedDeal.trade_model) && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2' }}>
+                        <span style={{ color: theme.textMuted }}>Vehicle</span>
+                        <span style={{ color: theme.text }}>{[linkedDeal.trade_year, linkedDeal.trade_make, linkedDeal.trade_model].filter(Boolean).join(' ') || '-'}</span>
+                      </div>
+                    )}
+                    {linkedDeal.trade_vin && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2' }}>
+                        <span style={{ color: theme.textMuted }}>Trade VIN</span>
+                        <span style={{ color: theme.text, fontFamily: 'monospace', fontSize: '13px' }}>{linkedDeal.trade_vin}</span>
+                      </div>
+                    )}
+                    {linkedDeal.trade_description && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: 'span 2' }}>
+                        <span style={{ color: theme.textMuted }}>Description</span>
+                        <span style={{ color: theme.text, textAlign: 'right' }}>{linkedDeal.trade_description}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: theme.textMuted }}>Allowance</span>
+                      <span style={{ color: theme.accent, fontWeight: '600' }}>{formatCurrency(tradeAllowance)}</span>
+                    </div>
+                    {linkedDeal.trade_payoff > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: theme.textMuted }}>Payoff</span>
+                        <span style={{ color: '#f87171' }}>{formatCurrency(linkedDeal.trade_payoff)}</span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setFormData({
+                        year: linkedDeal.trade_year || '',
+                        make: linkedDeal.trade_make || '',
+                        model: linkedDeal.trade_model || '',
+                        trim: '',
+                        vin: linkedDeal.trade_vin || '',
+                        miles: '',
+                        color: '',
+                        condition: 'Good',
+                        purchased_from: linkedDeal.purchaser_name || '',
+                        purchase_price: String(tradeAllowance || ''),
+                        list_price: '',
+                        sale_price: '',
+                        status: 'In Stock',
+                        stock_number: '',
+                        description: linkedDeal.trade_description || ''
+                      });
+                      setShowDetailModal(false);
+                      setSelectedVehicle(null);
+                      setShowAddModal(true);
+                    }}
+                    style={{ marginTop: '12px', width: '100%', padding: '10px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}
+                  >
+                    + Create Inventory from Trade
+                  </button>
+                </div>
+              )}
 
               {/* EXPENSES SECTION */}
               <div style={sectionStyle}>
@@ -1403,6 +1585,8 @@ export default function InventoryPage() {
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Cost (Purchase Price)</label><input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>List Price (Asking)</label><input type="number" value={formData.list_price} onChange={e => setFormData({...formData, list_price: e.target.value})} style={inputStyle} placeholder="13000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Sale Price (Sold For)</label><input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" /></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Date Acquired</label><input type="date" value={formData.date_acquired} onChange={e => setFormData({...formData, date_acquired: e.target.value})} style={inputStyle} /></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Sale Date</label><input type="date" value={formData.sale_date} onChange={e => setFormData({...formData, sale_date: e.target.value})} style={inputStyle} /></div>
                 <div style={{ gridColumn: 'span 2' }}><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Purchased From</label><input type="text" value={formData.purchased_from} onChange={e => setFormData({...formData, purchased_from: e.target.value})} style={inputStyle} placeholder="Auction, Trade-in" /></div>
                 
                 <div style={{ gridColumn: 'span 2' }}>

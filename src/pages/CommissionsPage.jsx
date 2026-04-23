@@ -5,7 +5,9 @@ import { useStore } from '../lib/store';
 export default function CommissionsPage() {
   const { dealerId, employees, currentEmployee } = useStore();
   const [commissions, setCommissions] = useState([]);
+  const [inventoryMap, setInventoryMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [drilldown, setDrilldown] = useState(null); // { employee, rows }
 
   // Role check - similar to ReportsPage
   const userRoles = currentEmployee?.roles || [];
@@ -19,16 +21,25 @@ export default function CommissionsPage() {
 
   async function fetchCommissions() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('inventory_commissions')
-      .select('*, employees(name)')
-      .eq('dealer_id', dealerId);
+    const [commRes, invRes] = await Promise.all([
+      supabase
+        .from('inventory_commissions')
+        .select('*, employees(name)')
+        .eq('dealer_id', dealerId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('inventory')
+        .select('id, year, make, model, trim, vin, stock_number, sale_price, status')
+        .eq('dealer_id', dealerId)
+    ]);
 
-    if (error) {
-      console.error('Error fetching commissions:', error);
-    } else {
-      setCommissions(data || []);
-    }
+    if (commRes.error) console.error('Error fetching commissions:', commRes.error);
+    setCommissions(commRes.data || []);
+
+    const map = {};
+    (invRes.data || []).forEach(v => { map[v.id] = v; });
+    setInventoryMap(map);
+
     setLoading(false);
   }
 
@@ -69,6 +80,22 @@ export default function CommissionsPage() {
     maximumFractionDigits: 0
   }).format(amount || 0);
 
+  const formatDate = (iso) => {
+    if (!iso) return '-';
+    try { return new Date(iso).toLocaleDateString(); } catch { return '-'; }
+  };
+
+  const openDrilldown = (emp) => {
+    const rows = commissions
+      .filter(c => c.employee_id === emp.id)
+      .map(c => ({
+        ...c,
+        vehicle: inventoryMap[c.inventory_id] || null
+      }))
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    setDrilldown({ employee: emp, rows });
+  };
+
   const cardStyle = { backgroundColor: '#18181b', borderRadius: '12px', padding: '20px', border: '1px solid #27272a' };
 
   // Access control
@@ -99,7 +126,7 @@ export default function CommissionsPage() {
     <div style={{ padding: '24px', backgroundColor: '#09090b', minHeight: '100vh' }}>
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0 }}>Commissions</h1>
-        <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '14px' }}>Track sales commissions across your team</p>
+        <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '14px' }}>Click a team member to see per-vehicle commission detail</p>
       </div>
 
       {/* Summary */}
@@ -127,7 +154,18 @@ export default function CommissionsPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {sortedEmployees.map((emp, i) => (
-              <div key={emp.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: '#27272a', borderRadius: '8px' }}>
+              <div
+                key={emp.id || i}
+                onClick={() => emp.commissionCount > 0 && openDrilldown(emp)}
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '16px', backgroundColor: '#27272a', borderRadius: '8px',
+                  cursor: emp.commissionCount > 0 ? 'pointer' : 'default',
+                  transition: 'background-color 0.15s'
+                }}
+                onMouseEnter={e => { if (emp.commissionCount > 0) e.currentTarget.style.backgroundColor = '#3f3f46'; }}
+                onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#27272a'; }}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div style={{
                     width: '40px',
@@ -148,13 +186,18 @@ export default function CommissionsPage() {
                     <div style={{ color: '#71717a', fontSize: '13px' }}>{emp.roles?.join(', ') || 'Staff'}</div>
                   </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: '#22c55e', fontWeight: '600', fontSize: '18px' }}>
-                    {formatCurrency(emp.commissionTotal)}
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div>
+                    <div style={{ color: '#22c55e', fontWeight: '600', fontSize: '18px' }}>
+                      {formatCurrency(emp.commissionTotal)}
+                    </div>
+                    <div style={{ color: '#71717a', fontSize: '12px' }}>
+                      {emp.commissionCount} {emp.commissionCount === 1 ? 'deal' : 'deals'}
+                    </div>
                   </div>
-                  <div style={{ color: '#71717a', fontSize: '12px' }}>
-                    {emp.commissionCount} {emp.commissionCount === 1 ? 'deal' : 'deals'}
-                  </div>
+                  {emp.commissionCount > 0 && (
+                    <span style={{ color: '#71717a', fontSize: '18px' }}>›</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -167,6 +210,105 @@ export default function CommissionsPage() {
           <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
             No commission data yet. Commissions are automatically tracked when vehicles are sold through the inventory page.
           </p>
+        </div>
+      )}
+
+      {/* Drilldown modal */}
+      {drilldown && (
+        <div
+          onClick={() => setDrilldown(null)}
+          style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '900px', maxHeight: '85vh', overflowY: 'auto' }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ color: '#fff', fontSize: '20px', fontWeight: '700', margin: 0 }}>{drilldown.employee.name}</h2>
+                <div style={{ color: '#71717a', fontSize: '13px', marginTop: '2px' }}>
+                  {drilldown.employee.roles?.join(', ') || 'Staff'} · {drilldown.rows.length} {drilldown.rows.length === 1 ? 'commission' : 'commissions'}
+                </div>
+              </div>
+              <button
+                onClick={() => setDrilldown(null)}
+                style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '28px', cursor: 'pointer', lineHeight: 1 }}
+              >×</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ backgroundColor: '#27272a', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: '#71717a', fontSize: '12px' }}>Total Earned</div>
+                <div style={{ color: '#22c55e', fontSize: '22px', fontWeight: '700' }}>{formatCurrency(drilldown.employee.commissionTotal)}</div>
+              </div>
+              <div style={{ backgroundColor: '#27272a', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: '#71717a', fontSize: '12px' }}>Avg / Deal</div>
+                <div style={{ color: '#fff', fontSize: '22px', fontWeight: '700' }}>
+                  {formatCurrency(drilldown.rows.length ? drilldown.employee.commissionTotal / drilldown.rows.length : 0)}
+                </div>
+              </div>
+              <div style={{ backgroundColor: '#27272a', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: '#71717a', fontSize: '12px' }}>As Specialist</div>
+                <div style={{ color: '#fff', fontSize: '22px', fontWeight: '700' }}>
+                  {drilldown.rows.filter(r => r.is_specialist).length}
+                </div>
+              </div>
+              <div style={{ backgroundColor: '#27272a', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: '#71717a', fontSize: '12px' }}>As Helper</div>
+                <div style={{ color: '#fff', fontSize: '22px', fontWeight: '700' }}>
+                  {drilldown.rows.filter(r => !r.is_specialist).length}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ color: '#71717a', textAlign: 'left' }}>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500' }}>Date</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500' }}>Vehicle</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500' }}>Stock #</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500' }}>Role</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500' }}>Type</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500', textAlign: 'right' }}>Rate</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500', textAlign: 'right' }}>Sale Price</th>
+                    <th style={{ padding: '8px', borderBottom: '1px solid #27272a', fontWeight: '500', textAlign: 'right' }}>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {drilldown.rows.length === 0 ? (
+                    <tr><td colSpan={8} style={{ padding: '20px', color: '#71717a', textAlign: 'center' }}>No commissions yet.</td></tr>
+                  ) : drilldown.rows.map(r => {
+                    const v = r.vehicle;
+                    const vehicleLabel = v
+                      ? [v.year, v.make, v.model, v.trim].filter(Boolean).join(' ')
+                      : (r.inventory_id ? 'Vehicle (removed)' : '-');
+                    const rate = r.override_rate ?? r.rate_used;
+                    return (
+                      <tr key={r.id} style={{ color: '#e4e4e7' }}>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a' }}>{formatDate(r.created_at)}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a' }}>{vehicleLabel}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a', fontFamily: 'monospace', fontSize: '12px' }}>{v?.stock_number || (v?.vin ? v.vin.slice(-6) : '-')}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a' }}>{r.role || '-'}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a', color: r.is_specialist ? '#a855f7' : '#3b82f6' }}>
+                          {r.is_specialist ? 'Specialist' : 'Helper'}
+                        </td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a', textAlign: 'right' }}>
+                          {rate != null ? `${(rate * 100).toFixed(1)}%` : (r.commission_type === 'Flat' ? 'Flat' : '-')}
+                        </td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a', textAlign: 'right', color: '#a1a1aa' }}>
+                          {v?.sale_price ? formatCurrency(v.sale_price) : '-'}
+                        </td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #27272a', textAlign: 'right', color: '#22c55e', fontWeight: '600' }}>
+                          {formatCurrency(r.amount)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>

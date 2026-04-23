@@ -41,21 +41,85 @@ async function getWeather() {
   return null;
 }
 
-async function getInventoryInsights(dealerId: number) {
-  const { data } = await supabase.from("inventory").select("*").eq("dealer_id", dealerId);
-  if (!data?.length) return null;
-  const makes = data.reduce((a: any, v: any) => { a[v.make] = (a[v.make] || 0) + 1; return a; }, {});
-  const avgDays = Math.round(data.reduce((s: number, v: any) => s + Math.floor((Date.now() - new Date(v.created_at).getTime()) / 86400000), 0) / data.length);
-  const stale = data.filter((v: any) => Math.floor((Date.now() - new Date(v.created_at).getTime()) / 86400000) > 45).length;
-  return { count: data.length, makes, avgDays, stale };
+// Compact a vehicle for the prompt. Keep it short, always include id + status so
+// the LLM can emit a deep-link like /vehicle/:id.
+function fmtVehicle(v: any) {
+  const parts = [
+    `id=${v.id}`,
+    v.status ? `[${v.status}]` : "",
+    [v.year, v.make, v.model, v.trim].filter(Boolean).join(" "),
+  ];
+  const details: string[] = [];
+  if (v.vin) details.push(`VIN:${v.vin}`);
+  if (v.stock_number) details.push(`stock#${v.stock_number}`);
+  if (v.miles || v.mileage) details.push(`${(v.miles || v.mileage).toLocaleString()}mi`);
+  if (v.purchase_price != null) details.push(`cost $${Number(v.purchase_price).toLocaleString()}`);
+  if (v.sale_price != null) details.push(`sale $${Number(v.sale_price).toLocaleString()}`);
+  if (v.created_at) {
+    const days = Math.floor((Date.now() - new Date(v.created_at).getTime()) / 86400000);
+    details.push(`${days}d on lot`);
+  }
+  return parts.filter(Boolean).join(" ") + (details.length ? " | " + details.join(", ") : "");
 }
 
-async function getBestSellers(dealerId: number) {
-  const { data } = await supabase.from("deals").select("*, inventory(make, model)").eq("dealer_id", dealerId);
-  if (!data?.length) return null;
-  const makes: Record<string, number> = {};
-  data.forEach((d: any) => { const m = d.inventory?.make; if (m) makes[m] = (makes[m] || 0) + 1; });
-  return Object.entries(makes).sort((a, b) => b[1] - a[1]).slice(0, 3);
+function fmtDeal(d: any) {
+  const parts = [
+    `id=${d.id}`,
+    d.status ? `[${d.status}]` : (d.deal_status ? `[${d.deal_status}]` : ""),
+    d.customer ? `cust:${d.customer}` : "",
+    d.vehicle_id ? `vehicle_id=${d.vehicle_id}` : "",
+    d.date ? `on ${d.date}` : "",
+    d.price != null ? `$${Number(d.price).toLocaleString()}` : "",
+  ];
+  return parts.filter(Boolean).join(" ");
+}
+
+function buildDealershipSection(ctx: any) {
+  const lines: string[] = [];
+  lines.push(`DEALER: ${ctx?.dealer?.name || "-"} (id=${ctx?.dealer_id || "?"}, state=${ctx?.dealer?.state || "-"})`);
+  lines.push(`ACCESS: ${ctx?.user_access_level || "-"}`);
+
+  const inv = ctx?.inventory;
+  if (inv) {
+    const byStatus = inv.by_status || {};
+    lines.push(`INVENTORY TOTALS: ${inv.total} total | For Sale ${byStatus.for_sale ?? 0} | In Stock ${byStatus.in_stock ?? 0} | Sold ${byStatus.sold ?? 0} | BHPH ${byStatus.bhph ?? 0}`);
+    const vehicles = Array.isArray(inv.vehicles) ? inv.vehicles : [];
+    if (vehicles.length) {
+      // Recent-first. Cap at 60 to keep prompt bounded.
+      const slice = vehicles.slice(0, 60);
+      lines.push(`VEHICLES (showing ${slice.length}/${vehicles.length}):`);
+      slice.forEach((v: any) => lines.push("  - " + fmtVehicle(v)));
+      if (vehicles.length > slice.length) {
+        lines.push(`  ...and ${vehicles.length - slice.length} more (ask for specific VIN/stock# if needed).`);
+      }
+    }
+  }
+
+  const deals = ctx?.deals;
+  if (deals) {
+    lines.push(`DEALS: ${deals.total} total | Completed ${deals.by_status?.completed ?? 0} | Pending ${deals.by_status?.pending ?? 0}`);
+    const list = Array.isArray(deals.list) ? deals.list : [];
+    if (list.length) {
+      const slice = list.slice(0, 40);
+      lines.push(`RECENT DEALS (${slice.length}/${list.length}):`);
+      slice.forEach((d: any) => lines.push("  - " + fmtDeal(d)));
+    }
+  }
+
+  const customers = ctx?.customers;
+  if (customers) {
+    lines.push(`CUSTOMERS: ${customers.total} total`);
+  }
+
+  if (ctx?.bhph) {
+    lines.push(`BHPH: ${ctx.bhph.active_loans || 0} active loans | $${Number(ctx.bhph.total_owed || 0).toLocaleString()} owed | $${Number(ctx.bhph.monthly_income || 0).toLocaleString()}/mo income`);
+  }
+
+  if (ctx?.employees) {
+    lines.push(`TEAM: ${ctx.employees.active || 0}/${ctx.employees.total || 0} active — ${(ctx.employees.list || []).map((e: any) => e.name).filter(Boolean).slice(0, 10).join(", ")}`);
+  }
+
+  return lines.join("\n");
 }
 
 serve(async (req) => {
@@ -66,70 +130,66 @@ serve(async (req) => {
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     if (!ANTHROPIC_API_KEY) throw new Error("Missing API key");
 
-    const q = message.toLowerCase();
-    const dealerId = context?.dealer_id || 1;
-    let data = "";
+    // CRITICAL: multi-tenant guard. Reject requests that don't identify the dealer.
+    const dealerId = context?.dealer_id ?? context?.dealer?.id;
+    if (!dealerId) {
+      return new Response(
+        JSON.stringify({ error: "dealer_id is required in context — refusing to answer without tenant scope." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
-    // VIN
+    const q = String(message || "").toLowerCase();
+    let extra = "";
+
+    // VIN lookup — unchanged, public data.
     const vin = message.match(/\b[A-HJ-NPR-Z0-9]{17}\b/i)?.[0];
     if (vin) {
       const v = await decodeVIN(vin);
       if (v) {
         const val = await getMarketValue(v.year, v.make, v.model, 80000);
-        data += `\n[VIN ${vin}] ${v.year} ${v.make} ${v.model} ${v.trim} | ${v.body}, ${v.drive} | Value: $${val.low.toLocaleString()}-$${val.high.toLocaleString()}`;
+        extra += `\n[VIN ${vin}] ${v.year} ${v.make} ${v.model} ${v.trim} | ${v.body}, ${v.drive} | Market est: $${val.low.toLocaleString()}-$${val.high.toLocaleString()}`;
       }
     }
 
-    // Year Make Model
+    // Year Make Model market lookup.
     const ymm = message.match(/(\d{4})\s+(\w+)\s+(\w+)/i);
     if (ymm && (q.includes("worth") || q.includes("value") || q.includes("price") || q.includes("research") || q.includes("buy"))) {
       const val = await getMarketValue(ymm[1], ymm[2], ymm[3], 80000);
-      data += `\n[Market] ${ymm[1]} ${ymm[2]} ${ymm[3]} est. $${val.est.toLocaleString()} (range: $${val.low.toLocaleString()}-$${val.high.toLocaleString()})`;
+      extra += `\n[Market est] ${ymm[1]} ${ymm[2]} ${ymm[3]}: $${val.est.toLocaleString()} (range $${val.low.toLocaleString()}-$${val.high.toLocaleString()})`;
     }
 
-    // Weather
+    // Weather.
     if (q.includes("weather") || q.includes("outside") || q.includes("cold") || q.includes("hot")) {
       const w = await getWeather();
-      if (w) data += `\n[Weather] Bluffdale: ${w}`;
+      if (w) extra += `\n[Weather] Bluffdale: ${w}`;
     }
 
-    // Inventory
-    if (q.includes("inventory") || q.includes("stock") || q.includes("lot") || q.includes("cars")) {
-      const ins = await getInventoryInsights(dealerId);
-      if (ins) data += `\n[Inventory] ${ins.count} vehicles | Avg ${ins.avgDays} days on lot | ${ins.stale} over 45 days | Top: ${Object.entries(ins.makes).sort((a: any, b: any) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}(${v})`).join(", ")}`;
-    }
+    const dealership = buildDealershipSection(context);
 
-    // Best sellers
-    if (q.includes("sell") || q.includes("best") || q.includes("moving") || q.includes("hot")) {
-      const best = await getBestSellers(dealerId);
-      if (best) data += `\n[Top Sellers] ${best.map(([m, c]) => `${m}: ${c}`).join(", ")}`;
-    }
-
-    const systemPrompt = `You're O.G. Arnie - 24 years running O.G. DiX Motor Club in Utah. You're the team's secret weapon.
+    const systemPrompt = `You're O.G. Arnie — 24 years running O.G. DiX Motor Club in Utah. You're the team's secret weapon.
 
 VOICE:
 - Quick, warm, confident. Like a favorite uncle who happens to be a business genius.
 - SHORT responses. 1-2 sentences usually. 3 max unless they need detail.
-- Never narrate actions. No asterisks. No "let me check" - just answer.
+- Never narrate actions. No asterisks. No "let me check" — just answer.
 - Say "O.G." not "OG"
-- Call them "chief", "boss", or nothing. Not "kiddo" or "champ" too much.
+- Call them "chief", "boss", or nothing.
 
-WHAT YOU KNOW:
-- VINs, values, market trends
-- What sells, what sits
-- When to buy, when to pass
-- BHPH, deals, team stuff
-- Weather, whatever they need
+DEEP-LINKS (IMPORTANT):
+- Whenever you reference a SPECIFIC vehicle from INVENTORY, include a markdown link to its detail page: [2017 Interstate trailer](/vehicle/<id>)
+- Whenever you reference a SPECIFIC deal, link it: [Deal #<id>](/deals)
+- Use the ids from the DEALERSHIP DATA section below — do NOT invent ids.
+- If the user asks for something you don't see in the data, say so plainly. Do NOT make up vehicles, customers, or sales that aren't in the list.
 
-YOUR RULES:
-- Turn cars in 30-45 days
-- Buy right = sell right
-- Cash flow is king
-- Relationships beat transactions
+DATA RULES:
+- The DEALERSHIP DATA below is the ONLY source of truth for this dealer's records. It is already filtered to dealer_id=${dealerId}.
+- If a vehicle isn't listed, it's not in inventory — say "I don't see that one in the system" rather than guessing.
+- When asked for "sold in last N months" or similar, filter the VEHICLES list by status=Sold and the created_at age yourself.
 
-DEALERSHIP NOW:
-${context?.inventory_summary?.total || 0} cars | ${context?.bhph_loans?.length || 0} BHPH loans | Team: ${context?.team?.map((t: any) => t.name).join(", ") || "crew"}
-${data}
+DEALERSHIP DATA (filtered to dealer_id=${dealerId}):
+${dealership}
+${extra}
 
 Be helpful. Be fast. Be the assistant they can't live without.`;
 
@@ -142,7 +202,7 @@ Be helpful. Be fast. Be the assistant they can't live without.`;
       },
       body: JSON.stringify({
         model: "claude-3-haiku-20240307",
-        max_tokens: 250,
+        max_tokens: 500,
         system: systemPrompt,
         messages: [{ role: "user", content: message }],
       }),
