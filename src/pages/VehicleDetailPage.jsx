@@ -22,7 +22,7 @@ export default function VehicleDetailPage() {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
-  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', category: 'repair', vendor: '' });
+  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', category: 'repair' });
 
   useEffect(() => {
     if (dealerId && id) loadAll();
@@ -39,9 +39,10 @@ export default function VehicleDetailPage() {
     }
     setVehicle(v);
 
-    // Load related data in parallel
+    // Load related data in parallel.
+    // NOTE: inventory_expenses uses inventory_id (NOT vehicle_id) per DATABASE_SCHEMA.md.
     const [expRes, reconRes, listRes, tradeRes, gpsRes] = await Promise.all([
-      supabase.from('inventory_expenses').select('*').eq('vehicle_id', id).eq('dealer_id', dealerId).order('created_at', { ascending: false }),
+      supabase.from('inventory_expenses').select('*').eq('inventory_id', id).eq('dealer_id', dealerId).order('created_at', { ascending: false }),
       supabase.from('reconditioning_tasks').select('*').eq('vehicle_id', id).eq('dealer_id', dealerId).order('sort_order'),
       supabase.from('marketplace_listings').select('*').eq('vehicle_id', id).eq('dealer_id', dealerId).order('created_at', { ascending: false }),
       supabase.from('trade_ins').select('*').eq('inventory_id', id).eq('dealer_id', dealerId),
@@ -79,15 +80,16 @@ export default function VehicleDetailPage() {
 
   const handleAddExpense = async () => {
     if (!expenseForm.description || !expenseForm.amount) return;
+    // inventory_expenses keys vehicles by inventory_id, NOT vehicle_id.
+    // Note: schema does not have a `vendor` column on inventory_expenses; drop it.
     await supabase.from('inventory_expenses').insert({
       dealer_id: dealerId,
-      vehicle_id: id,
+      inventory_id: id,
       description: expenseForm.description,
       amount: parseFloat(expenseForm.amount),
       category: expenseForm.category,
-      vendor: expenseForm.vendor || null,
     });
-    setExpenseForm({ description: '', amount: '', category: 'repair', vendor: '' });
+    setExpenseForm({ description: '', amount: '', category: 'repair' });
     setShowExpenseModal(false);
     loadAll();
   };
@@ -113,14 +115,24 @@ export default function VehicleDetailPage() {
 
   const title = [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(' ');
   const photos = vehicle.photos || [];
-  const primaryPhoto = vehicle.primary_photo || photos[0];
-  const allPhotos = primaryPhoto ? [primaryPhoto, ...photos.filter(p => p !== primaryPhoto)] : photos;
+  // schema: inventory has `photos` array; no separate `primary_photo` column.
+  const allPhotos = photos;
   const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const totalReconCost = reconTasks.reduce((s, t) => s + (parseFloat(t.actual_cost || t.estimated_cost) || 0), 0);
   const totalInvested = (parseFloat(vehicle.purchase_price) || 0) + totalExpenses + totalReconCost;
   const salePrice = parseFloat(vehicle.sale_price) || 0;
   const profit = vehicle.status === 'Sold' ? salePrice - totalInvested : null;
-  const daysInStock = vehicle.date_acquired ? Math.floor((new Date() - new Date(vehicle.date_acquired)) / 86400000) : null;
+  // Days in stock — fall back to created_at if date_acquired isn't set on older rows.
+  const acquiredDate = vehicle.date_acquired || vehicle.created_at;
+  const endDate = vehicle.sale_date ? new Date(vehicle.sale_date) : new Date();
+  const daysInStock = acquiredDate ? Math.max(0, Math.floor((endDate - new Date(acquiredDate)) / 86400000)) : null;
+
+  // Look up the buyer via the deal that sold this vehicle (vehicle has no client_customer column).
+  const dealForVehicle = (deals || []).find(d => d.vehicle_id === id);
+  const buyerCustomer = dealForVehicle ? (customers || []).find(c => c.id === dealForVehicle.customer_id) : null;
+  const buyerName = buyerCustomer
+    ? [buyerCustomer.first_name, buyerCustomer.last_name].filter(Boolean).join(' ')
+    : (dealForVehicle?.purchaser_name || '-');
 
   const reconCompleted = reconTasks.filter(t => t.status === 'completed').length;
   const reconTotal = reconTasks.length;
@@ -158,7 +170,7 @@ export default function VehicleDetailPage() {
         </button>
         <div style={{ flex: 1 }}>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>{title || 'Unknown Vehicle'}</h1>
-          <span style={{ color: theme.textMuted, fontSize: '13px' }}>#{vehicle.unit_id} • VIN: {vehicle.vin || 'N/A'}</span>
+          <span style={{ color: theme.textMuted, fontSize: '13px' }}>{vehicle.stock_number ? `#${vehicle.stock_number} • ` : ''}VIN: {vehicle.vin || 'N/A'}</span>
         </div>
         <span style={{
           padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: '600',
@@ -314,8 +326,9 @@ export default function VehicleDetailPage() {
               ['Color', vehicle.color],
               ['Mileage', vehicle.miles?.toLocaleString()],
               ['VIN', vehicle.vin],
-              ['Unit ID', vehicle.unit_id],
-              ['Date Acquired', formatDate(vehicle.date_acquired)],
+              ['Stock #', vehicle.stock_number],
+              ['Date Acquired', formatDate(vehicle.date_acquired || vehicle.created_at)],
+              ['Days on Lot', daysInStock != null ? `${daysInStock} days${vehicle.sale_date ? '' : ' (so far)'}` : null],
               ['Purchased From', vehicle.purchased_from],
             ].map(([k, v]) => (
               <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${theme.border}` }}>
@@ -335,7 +348,7 @@ export default function VehicleDetailPage() {
                   ['Sale Price', formatCurrency(vehicle.sale_price)],
                   ['Discount', vehicle.list_price ? formatCurrency(vehicle.list_price - (vehicle.sale_price || 0)) : '-'],
                   ['Sale Date', formatDate(vehicle.sale_date)],
-                  ['Customer', vehicle.client_customer],
+                  ['Customer', buyerName],
                   ['Profit', formatCurrency(profit)],
                 ].map(([k, v]) => (
                   <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${theme.border}` }}>
@@ -384,11 +397,11 @@ export default function VehicleDetailPage() {
               </div>
             )}
 
-            {/* Notes */}
-            {vehicle.notes && (
+            {/* Description / Notes (column on inventory is `description`, not `notes`) */}
+            {vehicle.description && (
               <div style={card}>
-                <h3 style={{ color: theme.text, fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>Notes</h3>
-                <p style={{ color: theme.textSecondary, fontSize: '13px', lineHeight: '1.6', margin: 0, whiteSpace: 'pre-wrap' }}>{vehicle.notes}</p>
+                <h3 style={{ color: theme.text, fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>Description</h3>
+                <p style={{ color: theme.textSecondary, fontSize: '13px', lineHeight: '1.6', margin: 0, whiteSpace: 'pre-wrap' }}>{vehicle.description}</p>
               </div>
             )}
           </div>
@@ -414,7 +427,7 @@ export default function VehicleDetailPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
-                    {['Date', 'Description', 'Category', 'Vendor', 'Amount'].map(h => (
+                    {['Date', 'Description', 'Category', 'Amount'].map(h => (
                       <th key={h} style={{ padding: '10px 12px', textAlign: h === 'Amount' ? 'right' : 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
                     ))}
                   </tr>
@@ -422,10 +435,9 @@ export default function VehicleDetailPage() {
                 <tbody>
                   {expenses.map(e => (
                     <tr key={e.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
-                      <td style={{ padding: '10px 12px', color: theme.textSecondary, fontSize: '13px' }}>{formatDate(e.created_at)}</td>
+                      <td style={{ padding: '10px 12px', color: theme.textSecondary, fontSize: '13px' }}>{formatDate(e.expense_date || e.created_at)}</td>
                       <td style={{ padding: '10px 12px', color: theme.text, fontSize: '13px', fontWeight: '500' }}>{e.description}</td>
                       <td style={{ padding: '10px 12px', color: theme.textSecondary, fontSize: '13px', textTransform: 'capitalize' }}>{e.category || '-'}</td>
-                      <td style={{ padding: '10px 12px', color: theme.textSecondary, fontSize: '13px' }}>{e.vendor || '-'}</td>
                       <td style={{ padding: '10px 12px', color: theme.text, fontSize: '13px', fontWeight: '600', textAlign: 'right' }}>{formatCurrency(e.amount)}</td>
                     </tr>
                   ))}
@@ -555,7 +567,6 @@ export default function VehicleDetailPage() {
             {[
               { key: 'description', label: 'Description', type: 'text' },
               { key: 'amount', label: 'Amount', type: 'number' },
-              { key: 'vendor', label: 'Vendor (optional)', type: 'text' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '6px' }}>{f.label}</label>
