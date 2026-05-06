@@ -21,6 +21,9 @@ export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [authChecking, setAuthChecking] = useState(true);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem('sidebarOpen');
     return saved !== null ? saved === 'true' : true;
@@ -118,6 +121,21 @@ export default function Layout() {
 
   useEffect(() => { localStorage.setItem('sidebarOpen', sidebarOpen); }, [sidebarOpen]);
 
+  // ⌘K / Ctrl+K opens the spotlight palette so power users can jump to any page.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen(p => !p);
+        setPaletteQuery('');
+      } else if (e.key === 'Escape' && paletteOpen) {
+        setPaletteOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paletteOpen]);
+
   useEffect(() => {
     localStorage.setItem('darkMode', darkMode);
     const root = document.documentElement;
@@ -148,82 +166,62 @@ export default function Layout() {
     navigate('/login');
   };
 
-  // Organized navigation with sections
-  const navSections = [
-    {
-      label: null, // No header for main
-      items: [
-        { to: '/dashboard', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
-      ]
-    },
-    {
-      label: 'SALES',
-      items: [
-        { to: '/inventory', label: 'Inventory', icon: 'M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10M13 16H3m10 0h6m-6 0v-4h6v4m0 0h2' },
-        { to: '/deal-finder', label: 'Deal Finder', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
-        { to: '/research', label: 'Research', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
-        { to: '/deals', label: 'Deals', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-        { to: '/customers', label: 'Customers', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' },
-        { to: '/email-marketing', label: 'Connect', icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
-        { to: '/sms', label: 'SMS', icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
-        { to: '/appointments', label: 'Appointments', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
-        { to: '/leads', label: 'Leads', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },
-        { to: '/trade-ins', label: 'Trade-Ins', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
-        { to: '/deal-timeline', label: 'Deal Activity', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-        { to: '/test-drives', label: 'Test Drives', icon: 'M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10' },
-      ]
-    },
-    {
-      label: 'FINANCE',
-      items: [
-        { to: '/bhph', label: 'BHPH', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
-        { to: '/books', label: 'Books', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
-        { to: '/commissions', label: 'Commissions', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-        { to: '/reports', label: 'Reports', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-        { to: '/analytics', label: 'Analytics', icon: 'M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
-        { to: '/floor-plan', label: 'Floor Plan', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
-        { to: '/fi-products', label: 'F&I Products', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-        { to: '/auctions', label: 'Auctions', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
-        { to: '/lenders', label: 'Lenders', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
-        { to: '/deal-jackets', label: 'Deal Jackets', icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
-        { to: '/admin/investors', label: 'Investors', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
-      ]
-    },
-    {
-      label: 'TEAM',
-      items: [
-        { to: '/team', label: 'Employees', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
-        { to: '/timeclock', label: 'Time Clock', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-        { to: '/payroll', label: 'Payroll', icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z' },
-        { to: '/tasks', label: 'Tasks', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4' },
-      ]
-    },
-    {
-      label: 'ADMIN',
-      items: [
-        { to: '/import', label: 'Import Data', icon: 'M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12' },
-        { to: '/marketplaces', label: 'Marketplaces', icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z' },
-        { to: '/document-rules', label: 'Doc Rules', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-        { to: '/esignature', label: 'E-Signatures', icon: 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z' },
-        { to: '/notifications', label: 'Notifications', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },
-        { to: '/compliance', label: 'Compliance', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-        { to: '/marketplace-listings', label: 'Listings', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
-        { to: '/crm-workflows', label: 'Workflows', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
-        { to: '/customer-portal', label: 'Portal', icon: 'M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
-        { to: '/reconditioning', label: 'Reconditioning', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
-        { to: '/vehicle-tracking', label: 'GPS Tracking', icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z' },
-        { to: '/photos', label: 'Photos', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
-        { to: '/titles', label: 'Titles & Reg', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-        { to: '/vendors', label: 'Vendors', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1' },
-        { to: '/keys', label: 'Keys & Lot', icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z' },
-        { to: '/warranty-claims', label: 'Warranty', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
-        { to: '/service-orders', label: 'Service', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0' },
-        { to: '/inspections', label: 'Inspections', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
-        { to: '/reviews', label: 'Reviews', icon: 'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z' },
-        { to: '/admin/state-updates', label: 'State Updates', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8' },
-        { to: '/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
-      ]
-    },
+  // PRIMARY NAV — the daily-six. Everything a BHPH dealer touches every day.
+  const primaryNav = [
+    { to: '/dashboard', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+    { to: '/inventory', label: 'Inventory', icon: 'M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10M13 16H3m10 0h6m-6 0v-4h6v4m0 0h2' },
+    { to: '/deals', label: 'Deals', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    { to: '/customers', label: 'Customers', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' },
+    { to: '/bhph', label: 'BHPH', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
+    { to: '/books', label: 'Books', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
+  ];
+
+  // EVERYTHING ELSE — searchable + reachable from the More menu, but NOT permanently in the sidebar.
+  // Alphabetized so users can find by name.
+  const moreNav = [
+    { to: '/admin/investors', label: 'Investors', group: 'Finance' },
+    { to: '/admin/state-updates', label: 'State Updates', group: 'Compliance' },
+    { to: '/analytics', label: 'Analytics', group: 'Reports' },
+    { to: '/appointments', label: 'Appointments', group: 'Sales' },
+    { to: '/auctions', label: 'Auctions', group: 'Sales' },
+    { to: '/commissions', label: 'Commissions', group: 'Team' },
+    { to: '/compliance', label: 'Compliance', group: 'Compliance' },
+    { to: '/crm-workflows', label: 'CRM Workflows', group: 'Marketing' },
+    { to: '/customer-portal', label: 'Customer Portal', group: 'Customers' },
+    { to: '/deal-finder', label: 'Deal Finder', group: 'Sales' },
+    { to: '/deal-jackets', label: 'Deal Jackets', group: 'Deals' },
+    { to: '/deal-timeline', label: 'Deal Timeline', group: 'Deals' },
+    { to: '/document-rules', label: 'Document Rules', group: 'Setup' },
+    { to: '/email-marketing', label: 'Email Marketing', group: 'Marketing' },
+    { to: '/esignature', label: 'E-Signatures', group: 'Deals' },
+    { to: '/fi-products', label: 'F&I Products', group: 'Finance' },
+    { to: '/floor-plan', label: 'Floor Plan', group: 'Finance' },
+    { to: '/import', label: 'Import Data', group: 'Setup' },
+    { to: '/inspections', label: 'Inspections', group: 'Operations' },
+    { to: '/keys', label: 'Keys & Lot', group: 'Operations' },
+    { to: '/leads', label: 'Leads', group: 'Sales' },
+    { to: '/lenders', label: 'Lenders', group: 'Finance' },
+    { to: '/marketplace-listings', label: 'Marketplace Listings', group: 'Marketing' },
+    { to: '/marketplaces', label: 'Marketplace Setup', group: 'Setup' },
+    { to: '/notifications', label: 'Notifications', group: 'Account' },
+    { to: '/payroll', label: 'Payroll', group: 'Team' },
+    { to: '/photos', label: 'Photo Management', group: 'Operations' },
+    { to: '/reconditioning', label: 'Reconditioning', group: 'Operations' },
+    { to: '/reports', label: 'Reports', group: 'Reports' },
+    { to: '/research', label: 'Vehicle Research', group: 'Sales' },
+    { to: '/reviews', label: 'Customer Reviews', group: 'Customers' },
+    { to: '/service-orders', label: 'Service Orders', group: 'Operations' },
+    { to: '/settings', label: 'Settings', group: 'Account' },
+    { to: '/sms', label: 'SMS', group: 'Marketing' },
+    { to: '/tasks', label: 'Tasks', group: 'Team' },
+    { to: '/team', label: 'Team', group: 'Team' },
+    { to: '/test-drives', label: 'Test Drives', group: 'Sales' },
+    { to: '/timeclock', label: 'Time Clock', group: 'Team' },
+    { to: '/titles', label: 'Titles & Registration', group: 'Operations' },
+    { to: '/trade-ins', label: 'Trade-Ins', group: 'Sales' },
+    { to: '/vehicle-tracking', label: 'GPS Tracking', group: 'Operations' },
+    { to: '/vendors', label: 'Vendors', group: 'Operations' },
+    { to: '/warranty-claims', label: 'Warranty Claims', group: 'Operations' },
   ];
 
   const theme = {
@@ -269,55 +267,106 @@ export default function Layout() {
       </div>
 
       <nav style={{ flex: 1, padding: '8px', overflowY: 'auto' }}>
-        {navSections.map((section, sectionIndex) => (
-          <div key={sectionIndex} style={{ marginBottom: '8px' }}>
-            {section.label && (sidebarOpen || isMobile) && (
-              <div style={{
-                padding: '8px 12px 4px',
-                fontSize: '11px',
-                fontWeight: '600',
-                color: theme.textMuted,
-                letterSpacing: '0.5px',
-                textTransform: 'uppercase'
-              }}>
-                {section.label}
-              </div>
-            )}
-            {!sidebarOpen && !isMobile && section.label && (
-              <div style={{ height: '1px', backgroundColor: theme.border, margin: '8px 12px' }} />
-            )}
-            {section.items.filter(item => {
-              const permKey = NAV_PERMISSION_MAP[item.to];
-              return !permKey || permissions[permKey];
-            }).map(item => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={onNavClick}
-                style={({ isActive }) => ({
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: (sidebarOpen || isMobile) ? '10px 12px' : '10px',
-                  borderRadius: '8px',
-                  color: isActive ? theme.text : theme.textSecondary,
-                  backgroundColor: isActive ? theme.accentBg : 'transparent',
-                  textDecoration: 'none',
-                  fontSize: '14px',
-                  fontWeight: isActive ? '600' : '500',
-                  marginBottom: '2px',
-                  justifyContent: (sidebarOpen || isMobile) ? 'flex-start' : 'center',
-                  borderLeft: isActive ? `3px solid ${theme.accent}` : '3px solid transparent',
-                  transition: 'all 0.15s ease'
-                })}
-                title={!sidebarOpen && !isMobile ? item.label : undefined}
-              >
-                <NavIcon path={item.icon} />
-                {(sidebarOpen || isMobile) && <span>{item.label}</span>}
-              </NavLink>
-            ))}
-          </div>
+        {/* Search trigger */}
+        {(sidebarOpen || isMobile) && (
+          <button
+            onClick={() => { setPaletteOpen(true); setPaletteQuery(''); onNavClick && onNavClick(); }}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 12px', marginBottom: '12px',
+              backgroundColor: theme.bg, border: `1px solid ${theme.border}`,
+              borderRadius: '8px', color: theme.textMuted, fontSize: '13px',
+              cursor: 'pointer', textAlign: 'left'
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span style={{ flex: 1 }}>Jump to…</span>
+            <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}` }}>⌘K</span>
+          </button>
+        )}
+
+        {/* Primary daily-six */}
+        {primaryNav.filter(item => {
+          const permKey = NAV_PERMISSION_MAP[item.to];
+          return !permKey || permissions[permKey];
+        }).map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            onClick={onNavClick}
+            style={({ isActive }) => ({
+              display: 'flex', alignItems: 'center', gap: '12px',
+              padding: (sidebarOpen || isMobile) ? '10px 12px' : '10px',
+              borderRadius: '8px',
+              color: isActive ? theme.text : theme.textSecondary,
+              backgroundColor: isActive ? theme.accentBg : 'transparent',
+              textDecoration: 'none', fontSize: '14px',
+              fontWeight: isActive ? '600' : '500', marginBottom: '2px',
+              justifyContent: (sidebarOpen || isMobile) ? 'flex-start' : 'center',
+              borderLeft: isActive ? `3px solid ${theme.accent}` : '3px solid transparent',
+              transition: 'all 0.15s ease'
+            })}
+            title={!sidebarOpen && !isMobile ? item.label : undefined}
+          >
+            <NavIcon path={item.icon} />
+            {(sidebarOpen || isMobile) && <span>{item.label}</span>}
+          </NavLink>
         ))}
+
+        {/* Collapsed "More" overflow */}
+        {(sidebarOpen || isMobile) && (
+          <>
+            <button
+              onClick={() => setMoreOpen(!moreOpen)}
+              style={{
+                width: '100%', marginTop: '12px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 12px', backgroundColor: 'transparent', border: 'none',
+                color: theme.textMuted, fontSize: '11px', fontWeight: '600',
+                letterSpacing: '0.5px', textTransform: 'uppercase', cursor: 'pointer'
+              }}
+            >
+              <span>More</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                style={{ transform: moreOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+            {moreOpen && (() => {
+              const allowed = moreNav.filter(item => {
+                const permKey = NAV_PERMISSION_MAP[item.to];
+                return !permKey || permissions[permKey];
+              });
+              const grouped = allowed.reduce((acc, item) => {
+                const g = item.group || 'Other';
+                (acc[g] = acc[g] || []).push(item);
+                return acc;
+              }, {});
+              return Object.keys(grouped).sort().map(group => (
+                <div key={group} style={{ marginBottom: '6px' }}>
+                  <div style={{ padding: '6px 12px 2px', fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{group}</div>
+                  {grouped[group].map(item => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      onClick={onNavClick}
+                      style={({ isActive }) => ({
+                        display: 'block', padding: '6px 12px 6px 24px',
+                        borderRadius: '6px',
+                        color: isActive ? theme.text : theme.textSecondary,
+                        backgroundColor: isActive ? theme.accentBg : 'transparent',
+                        textDecoration: 'none', fontSize: '13px',
+                        fontWeight: isActive ? '600' : '400'
+                      })}
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </div>
+              ));
+            })()}
+          </>
+        )}
 
         {isAdmin && (
           <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: `1px solid ${theme.border}` }}>
@@ -556,6 +605,74 @@ export default function Layout() {
         </div>
         <FeedbackButton />
         <AIAssistant isOpen={showAI} onClose={() => setShowAI(false)} />
+
+        {/* ⌘K Spotlight palette */}
+        {paletteOpen && (() => {
+          const allItems = [
+            ...primaryNav.map(i => ({ to: i.to, label: i.label, group: 'Primary' })),
+            ...moreNav,
+          ].filter(item => {
+            const permKey = NAV_PERMISSION_MAP[item.to];
+            return !permKey || permissions[permKey];
+          });
+          const q = paletteQuery.trim().toLowerCase();
+          const matches = !q
+            ? allItems
+            : allItems.filter(i =>
+                i.label.toLowerCase().includes(q) ||
+                i.to.toLowerCase().includes(q) ||
+                (i.group || '').toLowerCase().includes(q)
+              );
+          return (
+            <div
+              onClick={() => setPaletteOpen(false)}
+              style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '15vh' }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width: '100%', maxWidth: '560px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '12px', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 16px', borderBottom: `1px solid ${theme.border}` }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={theme.textMuted} strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input
+                    autoFocus
+                    value={paletteQuery}
+                    onChange={e => setPaletteQuery(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && matches[0]) {
+                        navigate(matches[0].to);
+                        setPaletteOpen(false);
+                      }
+                    }}
+                    placeholder="Jump to page… (try 'invoice', 'commission', 'arnie')"
+                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: theme.text, fontSize: '15px' }}
+                  />
+                  <span style={{ fontSize: '11px', color: theme.textMuted, padding: '2px 6px', border: `1px solid ${theme.border}`, borderRadius: '4px' }}>ESC</span>
+                </div>
+                <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+                  {matches.length === 0 ? (
+                    <div style={{ padding: '24px', textAlign: 'center', color: theme.textMuted, fontSize: '13px' }}>No matches.</div>
+                  ) : matches.slice(0, 50).map((item, i) => (
+                    <button
+                      key={item.to}
+                      onClick={() => { navigate(item.to); setPaletteOpen(false); }}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 16px', background: i === 0 && q ? theme.accentBg : 'transparent',
+                        border: 'none', color: theme.text, fontSize: '14px', textAlign: 'left', cursor: 'pointer'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.backgroundColor = theme.bgCardHover}
+                      onMouseLeave={e => e.currentTarget.style.backgroundColor = (i === 0 && q) ? theme.accentBg : 'transparent'}
+                    >
+                      <span>{item.label}</span>
+                      <span style={{ color: theme.textMuted, fontSize: '11px' }}>{item.group} · {item.to}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <style>{`
           @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
