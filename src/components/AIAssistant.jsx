@@ -545,7 +545,8 @@ export default function AIAssistant({ isOpen, onClose }) {
     if (q.includes('bhph') || q.includes('loan') || q.includes('owe') || q.includes('payment') || q.includes('financ')) {
       if (!perms.canViewFinancials) return "Nah, I can't share financial details with you. That's for the boss and finance team only.";
       const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
-      const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+      // bhph_loans schema: column is `balance`, not `current_balance`.
+      const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
       const monthly = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
 
       if (activeLoans.length === 0) return "No BHPH deals active right now. Clean slate.";
@@ -629,7 +630,8 @@ export default function AIAssistant({ isOpen, onClose }) {
       let summary = `Alright, here's the rundown: ${inStock.length} cars on the lot, ${(deals || []).length} deals done.`;
       if (perms.canViewFinancials) {
         const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
-        const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+        // bhph_loans schema: column is `balance`, not `current_balance`.
+        const totalOwed = activeLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
         summary += ` ${activeLoans.length} BHPH loans worth $${fmt(totalOwed)}.`;
       }
       if (perms.canViewAllEmployeeData) {

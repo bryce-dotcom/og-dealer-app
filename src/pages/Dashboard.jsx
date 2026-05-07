@@ -85,8 +85,9 @@ export default function Dashboard() {
   const activeLoans = bhphLoans.filter(l => l.status === 'Active');
 
   const fleetValue = forSale.reduce((sum, v) => sum + (v.sale_price || v.purchase_price || 0), 0);
-  const bhphBalance = activeLoans.reduce((sum, l) => sum + (l.current_balance || 0), 0);
-  const monthlyIncome = activeLoans.reduce((sum, l) => sum + (l.monthly_payment || 0), 0);
+  // bhph_loans schema: column is `balance`, NOT `current_balance`. Same fix below.
+  const bhphBalance = activeLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
+  const monthlyIncome = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
 
   const cardStyle = {
     backgroundColor: theme.bgCard,
@@ -358,12 +359,12 @@ export default function Dashboard() {
                   activeLoans.slice(0, 5).map(loan => (
                     <div key={loan.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
-                        <div style={{ fontWeight: '500', color: theme.text, fontSize: '14px' }}>{loan.customer_name || 'Unknown'}</div>
-                        <div style={{ fontSize: '12px', color: theme.textMuted }}>{loan.visible_id}</div>
+                        <div style={{ fontWeight: '500', color: theme.text, fontSize: '14px' }}>{loan.client_name || 'Unknown'}</div>
+                        <div style={{ fontSize: '12px', color: theme.textMuted }}>Loan #{loan.id}</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: '600', color: theme.accent, fontSize: '14px' }}>${(loan.monthly_payment || 0).toFixed(2)}/mo</div>
-                        <div style={{ fontSize: '12px', color: theme.textMuted }}>Bal: ${(loan.current_balance || 0).toLocaleString()}</div>
+                        <div style={{ fontWeight: '600', color: theme.accent, fontSize: '14px' }}>${(parseFloat(loan.monthly_payment) || 0).toFixed(2)}/mo</div>
+                        <div style={{ fontSize: '12px', color: theme.textMuted }}>Bal: ${(parseFloat(loan.balance) || 0).toLocaleString()}</div>
                       </div>
                     </div>
                   ))

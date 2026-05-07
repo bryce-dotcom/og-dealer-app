@@ -385,7 +385,8 @@ export default function BooksPage() {
 
       return sum + vehicleTotalCost;
     }, 0);
-  const bhphOwed = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
+  // bhph_loans schema column is `balance`, NOT `current_balance` — this was understating assets by the entire BHPH portfolio.
+  const bhphOwed = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
   const bhphMonthly = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
   const otherAssets = assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0);
   const otherLiabilities = liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);

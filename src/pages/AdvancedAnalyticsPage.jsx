@@ -59,20 +59,29 @@ export default function AdvancedAnalyticsPage() {
 
   // Calculate live metrics from store data
   const activeInventory = (inventory || []).filter(v => v.status === 'In Stock');
-  const totalInventoryValue = activeInventory.reduce((s, v) => s + (parseFloat(v.price) || 0), 0);
+  // inventory has sale_price/list_price/purchase_price — no `price` column.
+  const totalInventoryValue = activeInventory.reduce((s, v) => s + (parseFloat(v.sale_price || v.list_price || v.purchase_price) || 0), 0);
   const avgDaysOnLot = activeInventory.length > 0
     ? activeInventory.reduce((s, v) => s + Math.floor((Date.now() - new Date(v.created_at)) / 86400000), 0) / activeInventory.length
     : 0;
   const over60 = activeInventory.filter(v => (Date.now() - new Date(v.created_at)) / 86400000 > 60).length;
   const over90 = activeInventory.filter(v => (Date.now() - new Date(v.created_at)) / 86400000 > 90).length;
 
-  const recentDeals = (deals || []).filter(d => d.status === 'Sold' && new Date(d.created_at) > new Date(Date.now() - 30 * 86400000));
+  // deals table column is `stage` (not `status`); profit is derived not stored.
+  const recentDeals = (deals || []).filter(d => (d.stage === 'Sold' || d.stage === 'Delivered') && new Date(d.created_at) > new Date(Date.now() - 30 * 86400000));
   const totalRevenue = recentDeals.reduce((s, d) => s + (parseFloat(d.sale_price) || 0), 0);
-  const totalProfit = recentDeals.reduce((s, d) => s + (parseFloat(d.profit) || 0), 0);
+  // Compute per-deal profit by joining the vehicle's purchase_price (no `profit` column on deals).
+  const dealProfit = (d) => {
+    const v = (inventory || []).find(v => v.id === d.vehicle_id);
+    const purchase = parseFloat(v?.purchase_price) || 0;
+    return (parseFloat(d.sale_price) || 0) - purchase;
+  };
+  const totalProfit = recentDeals.reduce((s, d) => s + dealProfit(d), 0);
   const avgProfit = recentDeals.length > 0 ? totalProfit / recentDeals.length : 0;
 
-  const activeLoans = (bhphLoans || []).filter(l => l.status === 'active');
-  const totalLoanBalance = activeLoans.reduce((s, l) => s + (parseFloat(l.remaining_balance) || 0), 0);
+  // bhph_loans status default is 'Active' (capitalized) and column is `balance`, not `remaining_balance`.
+  const activeLoans = (bhphLoans || []).filter(l => l.status === 'Active');
+  const totalLoanBalance = activeLoans.reduce((s, l) => s + (parseFloat(l.balance) || 0), 0);
   const overdueLoans = activeLoans.filter(l => l.next_payment_date && new Date(l.next_payment_date) < new Date());
 
   // Make distribution for pie chart
@@ -373,17 +382,29 @@ export default function AdvancedAnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {recentDeals.slice(0, 10).map(d => (
+                {recentDeals.slice(0, 10).map(d => {
+                  // Look up the vehicle + buyer since deals doesn't carry vehicle_year/make/model or customer_name.
+                  const veh = (inventory || []).find(v => v.id === d.vehicle_id);
+                  const buyer = d.purchaser_name || (() => {
+                    const c = (customers || []).find(c => c.id === d.customer_id);
+                    return c ? (c.name || `${c.first_name || ''} ${c.last_name || ''}`.trim()) : '';
+                  })();
+                  const days = veh?.date_acquired
+                    ? Math.floor(((d.date_of_sale ? new Date(d.date_of_sale) : new Date()) - new Date(veh.date_acquired)) / 86400000)
+                    : null;
+                  const profit = dealProfit(d);
+                  return (
                   <tr key={d.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
                     <td style={{ padding: '10px 12px', fontWeight: '600', fontSize: '14px' }}>
-                      {d.vehicle_year} {d.vehicle_make} {d.vehicle_model}
+                      {veh ? [veh.year, veh.make, veh.model].filter(Boolean).join(' ') : `Deal #${d.id}`}
                     </td>
                     <td style={{ padding: '10px 12px', color: '#3b82f6', fontWeight: '600' }}>{formatCurrency(d.sale_price)}</td>
-                    <td style={{ padding: '10px 12px', color: (d.profit || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: '600' }}>{formatCurrency(d.profit)}</td>
-                    <td style={{ padding: '10px 12px', color: theme.textSecondary }}>{d.days_in_stock || '-'}</td>
-                    <td style={{ padding: '10px 12px', color: theme.textSecondary }}>{d.customer_name || '-'}</td>
+                    <td style={{ padding: '10px 12px', color: profit >= 0 ? '#22c55e' : '#ef4444', fontWeight: '600' }}>{formatCurrency(profit)}</td>
+                    <td style={{ padding: '10px 12px', color: theme.textSecondary }}>{days != null ? `${days}d` : '-'}</td>
+                    <td style={{ padding: '10px 12px', color: theme.textSecondary }}>{buyer || '-'}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

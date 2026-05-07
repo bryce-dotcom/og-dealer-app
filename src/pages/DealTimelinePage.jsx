@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase';
 
 export default function DealTimelinePage() {
   const { theme } = useTheme();
-  const { dealerId, deals } = useStore();
+  const { dealerId, deals, inventory, customers } = useStore();
   const [loading, setLoading] = useState(true);
   const [timeline, setTimeline] = useState([]);
   const [selectedDeal, setSelectedDeal] = useState('all');
@@ -56,15 +56,36 @@ export default function DealTimelinePage() {
     setLoading(false);
   }
 
-  // Pipeline counts
+  // Pipeline counts — deals table column is `stage` (not `status`).
   const dealsByStage = dealStages.map(stage => ({
     ...stage,
-    deals: (deals || []).filter(d => d.status === stage.key),
-    count: (deals || []).filter(d => d.status === stage.key).length
+    deals: (deals || []).filter(d => d.stage === stage.key),
+    count: (deals || []).filter(d => d.stage === stage.key).length
   }));
 
   const totalDeals = (deals || []).length;
-  const activeDeals = (deals || []).filter(d => !['Sold', 'Delivered', 'Cancelled'].includes(d.status)).length;
+  const activeDeals = (deals || []).filter(d => !['Sold', 'Delivered', 'Cancelled'].includes(d.stage)).length;
+
+  // Helper: human-readable label for a deal in the pipeline / select / event metadata.
+  // Deals don't have a `customer_name` column; pull it from purchaser_name or join customers.
+  // No `vehicle_info` either — look up the vehicle from inventory by vehicle_id.
+  const dealLabel = (d) => {
+    if (!d) return '';
+    const buyer = d.purchaser_name
+      || (() => {
+           const c = (customers || []).find(c => c.id === d.customer_id);
+           return c ? (c.name || `${c.first_name || ''} ${c.last_name || ''}`.trim()) : '';
+         })();
+    const v = (inventory || []).find(v => v.id === d.vehicle_id);
+    const vehicleStr = v ? [v.year, v.make, v.model].filter(Boolean).join(' ') : '';
+    return [vehicleStr, buyer].filter(Boolean).join(' · ') || `Deal #${d.id}`;
+  };
+  const buyerName = (d) => {
+    if (!d) return '';
+    if (d.purchaser_name) return d.purchaser_name;
+    const c = (customers || []).find(c => c.id === d.customer_id);
+    return c ? (c.name || `${c.first_name || ''} ${c.last_name || ''}`.trim()) : '';
+  };
   const recentEvents = timeline.filter(t => new Date(t.created_at) > new Date(Date.now() - 7 * 86400000)).length;
   const todayEvents = timeline.filter(t => new Date(t.created_at).toDateString() === new Date().toDateString()).length;
 
@@ -148,9 +169,9 @@ export default function DealTimelinePage() {
                   return (
                     <div key={deal.id} style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '10px', cursor: 'pointer' }} onClick={() => { setSelectedDeal(String(deal.id)); setActiveView('timeline'); }}>
                       <div style={{ color: theme.text, fontWeight: '600', fontSize: '13px', marginBottom: '4px' }}>
-                        {deal.vehicle_info || deal.customer_name || `Deal #${deal.id}`}
+                        {dealLabel(deal)}
                       </div>
-                      {deal.customer_name && <div style={{ fontSize: '11px', color: theme.textSecondary }}>{deal.customer_name}</div>}
+                      {buyerName(deal) && <div style={{ fontSize: '11px', color: theme.textSecondary }}>{buyerName(deal)}</div>}
                       {deal.sale_price && <div style={{ fontSize: '12px', color: theme.accent, fontWeight: '600', marginTop: '4px' }}>${parseFloat(deal.sale_price).toLocaleString()}</div>}
                       {recentEvent && (
                         <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -174,7 +195,7 @@ export default function DealTimelinePage() {
           <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
             <select value={selectedDeal} onChange={e => setSelectedDeal(e.target.value)} style={{ padding: '10px 14px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px' }}>
               <option value="all">All Deals</option>
-              {(deals || []).map(d => <option key={d.id} value={d.id}>Deal #{d.id} {d.customer_name ? `- ${d.customer_name}` : ''}</option>)}
+              {(deals || []).map(d => <option key={d.id} value={d.id}>Deal #{d.id}{buyerName(d) ? ` - ${buyerName(d)}` : ''}</option>)}
             </select>
             <select value={eventFilter} onChange={e => setEventFilter(e.target.value)} style={{ padding: '10px 14px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px' }}>
               <option value="all">All Events</option>
@@ -214,7 +235,7 @@ export default function DealTimelinePage() {
                             </div>
                             {event.description && <div style={{ color: theme.textSecondary, fontSize: '13px', marginTop: '6px' }}>{event.description}</div>}
                             <div style={{ display: 'flex', gap: '12px', marginTop: '6px', fontSize: '12px', color: theme.textMuted }}>
-                              {deal && <span>Deal #{event.deal_id} {deal.customer_name ? `• ${deal.customer_name}` : ''}</span>}
+                              {deal && <span>Deal #{event.deal_id}{buyerName(deal) ? ` • ${buyerName(deal)}` : ''}</span>}
                               {event.employee_name && <span>By: {event.employee_name}</span>}
                               {event.old_value && event.new_value && <span>{event.old_value} → {event.new_value}</span>}
                             </div>
@@ -240,7 +261,7 @@ export default function DealTimelinePage() {
                 <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Deal *</label>
                 <select value={eventForm.deal_id} onChange={e => setEventForm({ ...eventForm, deal_id: e.target.value })} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }}>
                   <option value="">Select deal...</option>
-                  {(deals || []).map(d => <option key={d.id} value={d.id}>Deal #{d.id} {d.customer_name ? `- ${d.customer_name}` : ''}</option>)}
+                  {(deals || []).map(d => <option key={d.id} value={d.id}>Deal #{d.id}{buyerName(d) ? ` - ${buyerName(d)}` : ''}</option>)}
                 </select>
               </div>
               <div>
