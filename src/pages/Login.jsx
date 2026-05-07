@@ -6,7 +6,7 @@ import { useStore } from '../lib/store';
 export default function Login() {
   const navigate = useNavigate();
   const { setDealer } = useStore();
-  
+
   const [mode, setMode] = useState('login'); // 'login', 'signup', or 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -15,15 +15,49 @@ export default function Login() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  // Check if already logged in
+  // True when we landed here from an email confirmation / magic link.
+  // Supabase processes the URL hash asynchronously; show a confirming state
+  // instead of the login form so users don't think they need to log in again.
+  const [confirming, setConfirming] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const hash = window.location.hash || '';
+    return /access_token=|type=signup|type=recovery|type=magiclink/.test(hash);
+  });
+
+  // Two paths to a session here:
+  //  1. Already-logged-in user navigates to /login → getSession returns it immediately
+  //  2. User just clicked a confirmation/magic link → Supabase processes the URL hash
+  //     asynchronously and fires SIGNED_IN later. We need to listen, not just poll once.
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await loadDealerForUser(session.user.id);
-      }
+    let mounted = true;
+
+    const handleSession = async (session) => {
+      if (!mounted || !session?.user) return;
+      await loadDealerForUser(session.user.id);
+      // If loadDealerForUser navigated, fine. Otherwise clear the confirming spinner
+      // so the user falls back to the login form rather than a frozen screen.
+      if (mounted) setConfirming(false);
     };
-    checkSession();
+
+    // Path 1: existing session
+    supabase.auth.getSession().then(({ data: { session } }) => handleSession(session));
+
+    // Path 2: future SIGNED_IN events (covers email confirmation + magic-link flows)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+        handleSession(session);
+      }
+    });
+
+    // Safety: if neither path produces a session within a few seconds, drop the
+    // confirming state so the user isn't stuck on a spinner.
+    const safety = setTimeout(() => mounted && setConfirming(false), 5000);
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe?.();
+      clearTimeout(safety);
+    };
   }, []);
 
   // Load dealer for authenticated user
@@ -264,6 +298,21 @@ export default function Login() {
     cursor: 'pointer',
     opacity: loading ? 0.7 : 1
   };
+
+  // Confirming state — user just clicked a magic/confirmation link, Supabase is
+  // processing the URL hash. Show a spinner until SIGNED_IN fires (or the safety
+  // timeout drops us back to the form).
+  if (confirming) {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: '60px', height: '60px', backgroundColor: '#f97316', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '24px', fontWeight: '700', color: '#fff' }}>OG</div>
+          <div style={{ color: '#fff', fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>Confirming your account…</div>
+          <div style={{ color: '#71717a', fontSize: '13px' }}>One sec, signing you in.</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
