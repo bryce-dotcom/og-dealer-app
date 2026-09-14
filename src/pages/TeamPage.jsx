@@ -197,7 +197,11 @@ export default function TeamPage() {
     if (!confirm(`Send app invite to ${emp.email}?`)) return;
     setInviting(true);
     try {
-      await supabase.functions.invoke('invite-employee', {
+      // supabase.functions.invoke() does NOT throw on non-2xx — it returns { data, error }.
+      // The old code just awaited the promise and always alerted success, which is why
+      // 401s from the edge function (e.g. UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM) were
+      // silently reported as "Invitation sent" while nothing actually got sent.
+      const res = await supabase.functions.invoke('invite-employee', {
         body: {
           dealer_id: dealerId, name: emp.name, email: emp.email,
           role: emp.roles?.[0] || 'Sales', access_level: emp.access_level || 'employee',
@@ -205,6 +209,30 @@ export default function TeamPage() {
           hourly_rate: emp.hourly_rate, employee_id: emp.id, existing_employee: true
         }
       });
+      // Non-2xx from the edge function or its gateway
+      if (res.error) {
+        // FunctionsHttpError carries the response body in .context for details
+        let detail = res.error.message || 'Unknown error';
+        try {
+          const body = res.error?.context ? await res.error.context.json() : null;
+          if (body?.error) detail = body.error;
+          else if (body?.message) detail = body.message;
+        } catch { /* body wasn't JSON */ }
+        alert(`Failed to send invite: ${detail}`);
+        setInviting(false);
+        return;
+      }
+      // The function returns { success: true, ... } or { error: '...' } in a 200 body
+      if (res.data?.error) {
+        alert(`Failed to send invite: ${res.data.error}`);
+        setInviting(false);
+        return;
+      }
+      if (!res.data?.success) {
+        alert('Failed to send invite: no success response from server');
+        setInviting(false);
+        return;
+      }
       alert(`Invitation sent to ${emp.email}!`);
       await refreshEmployees();
       const { data } = await supabase.from('employees').select('*').eq('id', emp.id).single();
