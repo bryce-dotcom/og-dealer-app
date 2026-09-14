@@ -44,6 +44,12 @@ export default function TeamPage() {
 
   useEffect(() => { if (dealerId) fetchPTORequests(); }, [dealerId]);
 
+  // The store's employees array is only populated by Dashboard.jsx -> fetchAllData().
+  // Landing on /team directly (deep link, reload, or cleared cache) leaves it empty
+  // and the page renders "0 active" even when the DB clearly has employees.
+  // Always refresh on mount so the Team page is self-sufficient.
+  useEffect(() => { if (dealerId) refreshEmployees(); }, [dealerId, refreshEmployees]);
+
   useEffect(() => {
     if (currentEmployee && !selectedEmployee) setSelectedEmployee({ ...currentEmployee });
   }, [currentEmployee]);
