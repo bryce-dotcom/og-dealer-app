@@ -268,6 +268,25 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
 // ============================================
 // RESOLVE FIELD VALUE FROM CONTEXT
 // ============================================
+// Party guard: given a resolved value and the (possibly inferred) side of the
+// PDF field, treat the value as invalid if it originates from the wrong party.
+// Callers pass the ordered list of context keys that were tried; we return the
+// first value whose source key doesn't cross the party line.
+function pickValidValue(
+  fieldSide: 'buyer' | 'seller' | null,
+  tried: Array<{ key: string; value: string }>
+): string {
+  for (const { key, value } of tried) {
+    if (!value) continue;
+    if (fieldSide) {
+      const p = partyOf(key);
+      if (p && p !== fieldSide) continue; // wrong party, skip
+    }
+    return value;
+  }
+  return '';
+}
+
 function resolveFieldValue(mapping: any, context: Record<string, any>): string {
   if (!mapping) return '';
 
@@ -322,6 +341,120 @@ function resolveFieldValue(mapping: any, context: Record<string, any>): string {
   }
 
   return values.join(separator);
+}
+
+// ============================================
+// GUESS CONTEXT KEY FROM PDF FIELD NAME
+// ============================================
+// When a PDF field is unmapped or "dismissed" in the DB config but the field
+// name obviously points to a specific data value (e.g., "no tenths" → odometer
+// digit box on a Utah TC-843 Bill of Sale), we still try to fill it. This
+// backstops broken/incomplete mappings.
+//
+// Returns { keys, side } — keys is a list of context keys to try in order,
+// side is 'buyer' | 'seller' | null. When set, side prevents the wrong-party
+// fallback (buyer field never accepts dealer values, and vice versa).
+function guessContextKeys(pdfFieldName: string): { keys: string[]; side: 'buyer' | 'seller' | null } {
+  const raw = String(pdfFieldName || '').trim();
+  if (!raw) return { keys: [], side: null };
+  const n = raw.toLowerCase();
+  // Common suffix "_2" often flags the SECOND occurrence of a repeated label —
+  // usually the buyer side on Utah dealer forms (seller info listed first).
+  const hasTwoSuffix = /(_?2|two|second|purch|buy)$/.test(n) || /_2$/.test(raw);
+  // Explicit buyer/seller signals in the field name.
+  const buyerHints = /(buyer|purchas|customer|client|owner|lessee|applicant)/i.test(raw);
+  const sellerHints = /(seller|dealer|lienholder|dealership|business|assignor)/i.test(raw);
+  const side: 'buyer' | 'seller' | null = buyerHints
+    ? 'buyer'
+    : sellerHints
+      ? 'seller'
+      : null;
+
+  const keys: string[] = [];
+  const push = (...xs: string[]) => { for (const x of xs) if (!keys.includes(x)) keys.push(x); };
+
+  // Odometer / mileage variants — Utah TC-843 uses "odo" and "no tenths"; others
+  // use "odometer reading" or "mileage".
+  if (/^(odo|no\s*tenths?|odometer|mileage|miles)\b|^(odo|no\s*tenths?)$/i.test(n)) {
+    push('odometer', 'mileage', 'vehicle.mileage', 'vehicle.miles', 'vehicle_mileage');
+  }
+  // Sale price — the Utah Bill of Sale exports its price box as "undefined"
+  // because the source PDF field has no label. Match on that literal too, but
+  // only in Bill-of-Sale-like contexts (near-blank field name).
+  if (/(sale\s*price|sales\s*price|purchase\s*price|amount\s*due|price\b)/i.test(n)) {
+    push('sale_price', 'price', 'total_price', 'total_sale', 'deal.price');
+  }
+  if (/^undefined(_?\d+)?$/i.test(n)) {
+    // Ambiguous — but Utah TC-843's unlabeled money box IS the sale price.
+    // Try sale price first; if empty, the render step still leaves it blank.
+    push('sale_price', 'price', 'total_price');
+  }
+  // VIN
+  if (/\bvin\b|vehicle.?hull|hin|identification.?number/i.test(n)) {
+    push('vin', 'vehicle.vin', 'vehicle_vin');
+  }
+  // Year / Make / Model / Trim / Color
+  if (/\byear\b/i.test(n)) push('year', 'vehicle.year');
+  if (/\bmake\b/i.test(n)) push('make', 'vehicle.make');
+  if (/\bmodel\b/i.test(n)) push('model', 'vehicle.model');
+  if (/\btrim\b|series/i.test(n)) push('trim', 'vehicle.trim');
+  if (/\bcolor\b/i.test(n)) push('color', 'vehicle.color');
+  if (/\bstock\b/i.test(n)) push('stock_number', 'vehicle.stock_number');
+  if (/body\s*type|body\s*style/i.test(n)) push('body_type', 'vehicle.body_type');
+  // Address blocks — split routing by side
+  if (/street|address/i.test(n) && !/email|url/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_address', 'deal.purchaser_address', 'customer_address');
+    else if (side === 'seller') push('dealer.address', 'dealer_address', 'seller_address');
+    else push('dealer.address', 'buyer_address'); // dealer bias when no signal
+  }
+  if (/\bcity\b/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_city');
+    else if (side === 'seller') push('dealer.city', 'dealer_city', 'seller_city');
+    else push('dealer.city', 'buyer_city');
+  }
+  if (/\bstate\b/i.test(n) && !/statement/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_state');
+    else if (side === 'seller') push('dealer.state', 'dealer_state', 'seller_state');
+    else push('dealer.state', 'buyer_state');
+  }
+  if (/\bzip\b|postal/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_zip');
+    else if (side === 'seller') push('dealer.zip', 'dealer_zip', 'seller_zip');
+    else push('dealer.zip', 'buyer_zip');
+  }
+  if (/\bphone\b|\btel\b|\bcell\b/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_phone', 'customer_phone');
+    else if (side === 'seller') push('dealer.phone', 'dealer_phone', 'seller_phone');
+    else push('dealer.phone', 'buyer_phone');
+  }
+  if (/\bemail\b/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_email', 'customer_email');
+    else push('dealer.email', 'buyer_email');
+  }
+  if (/\bname\b/i.test(n)) {
+    if (side === 'buyer' || hasTwoSuffix) push('buyer_name', 'deal.purchaser_name', 'purchaser_name', 'customer_name');
+    else if (side === 'seller') push('dealer.dealer_name', 'dealer_name', 'seller_name');
+  }
+  // Sale date
+  if (/(sale|purchas|deal)\s*date|date.*(sale|purchas)/i.test(n)) {
+    push('date_of_sale', 'sale_date', 'deal.date_of_sale', 'today');
+  }
+  // Doc fee / tax fields — for total-due box on Bill of Sale
+  if (/doc.*fee|documentary/i.test(n)) push('doc_fee', 'fees.doc_fee');
+  if (/tax/i.test(n) && !/state\s*id/i.test(n)) push('sales_tax', 'tax_amount');
+  if (/balance\s*due|total\s*due|amount\s*due/i.test(n)) push('balance_due', 'total_price');
+
+  return { keys, side };
+}
+
+// Enforce that a resolved value doesn't come from the WRONG party.
+// When guessContextKeys says a field is buyer-side, the value must not have
+// come from a dealer-* key, and vice versa. Used to guard against DB mappings
+// that historically routed buyer fields to dealer values.
+function partyOf(contextKey: string): 'buyer' | 'seller' | null {
+  if (/buyer|purchaser|customer|client|applicant|lessee/i.test(contextKey)) return 'buyer';
+  if (/dealer|seller|lienholder/i.test(contextKey)) return 'seller';
+  return null;
 }
 
 // ============================================
@@ -470,6 +603,80 @@ async function fillPdfForm(
 
     if (highlightCount > 0) {
       console.log(`[FILL] Highlighted ${highlightCount} fields`);
+    }
+
+    // ============================================================
+    // GUESS PASS: for every PDF field that's STILL EMPTY (whether it
+    // had no mapping, was dismissed, or its universal_field returned
+    // an empty context value), infer the intended data from the PDF
+    // field name and try to fill it. Backstops incomplete/broken
+    // mappings without needing every DB row edited by hand.
+    // Party-side guard: buyer fields never accept dealer values and
+    // vice versa, so a bad DB mapping like buyer_city → dealer.city
+    // gets overridden here.
+    // ============================================================
+    let guessedCount = 0;
+    for (const field of fields) {
+      const fieldName = field.getName();
+      let textField;
+      try { textField = form.getTextField(fieldName); } catch { continue; }
+      // Only fill empties — don't clobber whatever the mapped pass already wrote.
+      let currentText = '';
+      try { currentText = textField.getText() || ''; } catch { currentText = ''; }
+      if (currentText.trim()) {
+        // If the mapped pass wrote a value that VIOLATES the party guard, clear
+        // it. This catches mappings that route a buyer field to dealer values.
+        const gg = guessContextKeys(fieldName);
+        if (gg.side) {
+          const trimmed = currentText.trim();
+          // Detect wrong-party pollution: value equals a dealer_* context value
+          // when the field is buyer-side (or vice versa) AND the correct-party
+          // context value differs (so we're not clobbering a legit copy).
+          const wrongParty = gg.side === 'buyer' ? 'seller' : 'buyer';
+          const wrongContextValues = Object.entries(context)
+            .filter(([k]) => partyOf(k) === wrongParty)
+            .map(([, v]) => String(v || '').trim())
+            .filter(Boolean);
+          if (wrongContextValues.includes(trimmed)) {
+            const rightValue = pickValidValue(
+              gg.side,
+              gg.keys.map(k => ({ key: k, value: String(context[k] ?? '') }))
+            );
+            if (rightValue) {
+              try {
+                textField.setText(rightValue);
+                console.log(`[GUESS/CORRECT] ${fieldName}: replaced wrong-party "${trimmed}" with "${rightValue.substring(0, 30)}" (side=${gg.side})`);
+                continue;
+              } catch { /* fall through */ }
+            } else {
+              // Blank out — better legally to leave empty than to lie.
+              try {
+                textField.setText('');
+                console.log(`[GUESS/CLEAR] ${fieldName}: cleared wrong-party value "${trimmed}" (side=${gg.side}, no correct value available)`);
+              } catch { /* ignore */ }
+            }
+          }
+        }
+        continue;
+      }
+      const guess = guessContextKeys(fieldName);
+      if (guess.keys.length === 0) continue;
+      const tried = guess.keys.map(k => ({ key: k, value: String(context[k] ?? '') }));
+      const value = pickValidValue(guess.side, tried);
+      if (!value) continue;
+      try {
+        textField.setText(value);
+        guessedCount++;
+        console.log(`[GUESS/FILL] ${fieldName} = "${value.substring(0, 40)}" (via ${guess.keys.join(',')}, side=${guess.side || 'any'})`);
+      } catch {
+        // Checkbox / radio / other non-text — try checkbox for common "actual mileage" pattern
+        if (/actual\s*mileage|reflects.*actual/i.test(fieldName) && /^(yes|true|x|1|checked)$/i.test(value)) {
+          try { form.getCheckBox(fieldName).check(); guessedCount++; } catch { /* ignore */ }
+        }
+      }
+    }
+    if (guessedCount > 0) {
+      console.log(`[FILL] Guess pass filled ${guessedCount} additional fields`);
     }
 
     // SECOND PASS: Resolve reference fields (fields that copy from other fields)
