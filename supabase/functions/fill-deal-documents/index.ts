@@ -374,62 +374,64 @@ function guessContextKeys(pdfFieldName: string): { keys: string[]; side: 'buyer'
   const push = (...xs: string[]) => { for (const x of xs) if (!keys.includes(x)) keys.push(x); };
 
   // Odometer / mileage variants — Utah TC-843 uses "odo" and "no tenths"; others
-  // use "odometer reading" or "mileage".
-  if (/^(odo|no\s*tenths?|odometer|mileage|miles)\b|^(odo|no\s*tenths?)$/i.test(n)) {
+  // use "odometer reading" or "mileage". Skip on _2/trade suffix (trade-in odo).
+  const isTradeOdo = hasTwoSuffix || /trade/i.test(n);
+  if (!isTradeOdo && (/^(odo|no\s*tenths?|odometer|mileage|miles)\b|^(odo|no\s*tenths?)$/i.test(n))) {
     push('odometer', 'mileage', 'vehicle.mileage', 'vehicle.miles', 'vehicle_mileage');
   }
-  // Sale price — the Utah Bill of Sale exports its price box as "undefined"
-  // because the source PDF field has no label. Match on that literal too, but
-  // only in Bill-of-Sale-like contexts (near-blank field name).
-  if (/(sale\s*price|sales\s*price|purchase\s*price|amount\s*due|price\b)/i.test(n)) {
+  // Sale price — exclude MSRP-like labels; require an explicit "sale" or
+  // "purchase" (or "amount due"), not the bare word "price".
+  const isMsrp = /\bmsrp\b|manufactur/i.test(n);
+  if (!isMsrp && /(sale\s*price|sales\s*price|purchase\s*price|amount\s*due|total\s*price|total\s*sale)/i.test(n)) {
     push('sale_price', 'price', 'total_price', 'total_sale', 'deal.price');
   }
-  if (/^undefined(_?\d+)?$/i.test(n)) {
-    // Ambiguous — but Utah TC-843's unlabeled money box IS the sale price.
-    // Try sale price first; if empty, the render step still leaves it blank.
-    push('sale_price', 'price', 'total_price');
-  }
+  // NOTE: Do NOT guess on "undefined"/"undefined_N" field names. On Utah forms
+  // like TC-843, one unlabeled box is the sale-price money box and another is
+  // the seller-name box, and only the DB mapping knows which is which. Fix
+  // via form_library.field_mappings, not here.
+  // Vehicle description fields — skip when field name has _2 or "trade" hint,
+  // because on multi-vehicle forms (e.g., MVOS trade-in section) those refer
+  // to the trade-in vehicle, not the vehicle being sold.
+  const isVehicleTradeIn = hasTwoSuffix || /trade/i.test(n);
   // VIN
-  if (/\bvin\b|vehicle.?hull|hin|identification.?number/i.test(n)) {
+  if (!isVehicleTradeIn && /\bvin\b|vehicle.?hull|hin|identification.?number/i.test(n)) {
     push('vin', 'vehicle.vin', 'vehicle_vin');
   }
   // Year / Make / Model / Trim / Color
-  if (/\byear\b/i.test(n)) push('year', 'vehicle.year');
-  if (/\bmake\b/i.test(n)) push('make', 'vehicle.make');
-  if (/\bmodel\b/i.test(n)) push('model', 'vehicle.model');
-  if (/\btrim\b|series/i.test(n)) push('trim', 'vehicle.trim');
-  if (/\bcolor\b/i.test(n)) push('color', 'vehicle.color');
-  if (/\bstock\b/i.test(n)) push('stock_number', 'vehicle.stock_number');
-  if (/body\s*type|body\s*style/i.test(n)) push('body_type', 'vehicle.body_type');
-  // Address blocks — split routing by side
-  if (/street|address/i.test(n) && !/email|url/i.test(n)) {
+  if (!isVehicleTradeIn && /\byear\b/i.test(n)) push('year', 'vehicle.year');
+  if (!isVehicleTradeIn && /\bmake\b/i.test(n)) push('make', 'vehicle.make');
+  if (!isVehicleTradeIn && /\bmodel\b/i.test(n)) push('model', 'vehicle.model');
+  if (!isVehicleTradeIn && (/\btrim\b|series/i.test(n))) push('trim', 'vehicle.trim');
+  if (!isVehicleTradeIn && /\bcolor\b/i.test(n)) push('color', 'vehicle.color');
+  if (!isVehicleTradeIn && /\bstock\b/i.test(n)) push('stock_number', 'vehicle.stock_number');
+  if (!isVehicleTradeIn && (/body\s*type|body\s*style/i.test(n))) push('body_type', 'vehicle.body_type');
+  // Party-scoped PII fields: only fill when the field name explicitly signals
+  // which party (buyer or seller). No side signal → don't guess, because
+  // filling with the wrong party's data is legally worse than leaving blank.
+  if (/\bstreet\b|\baddress\b/i.test(n) && !/email|url/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_address', 'deal.purchaser_address', 'customer_address');
     else if (side === 'seller') push('dealer.address', 'dealer_address', 'seller_address');
-    else push('dealer.address', 'buyer_address'); // dealer bias when no signal
+    // else: skip — no side signal
   }
   if (/\bcity\b/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_city');
     else if (side === 'seller') push('dealer.city', 'dealer_city', 'seller_city');
-    else push('dealer.city', 'buyer_city');
   }
   if (/\bstate\b/i.test(n) && !/statement/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_state');
     else if (side === 'seller') push('dealer.state', 'dealer_state', 'seller_state');
-    else push('dealer.state', 'buyer_state');
   }
   if (/\bzip\b|postal/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_zip');
     else if (side === 'seller') push('dealer.zip', 'dealer_zip', 'seller_zip');
-    else push('dealer.zip', 'buyer_zip');
   }
   if (/\bphone\b|\btel\b|\bcell\b/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_phone', 'customer_phone');
     else if (side === 'seller') push('dealer.phone', 'dealer_phone', 'seller_phone');
-    else push('dealer.phone', 'buyer_phone');
   }
   if (/\bemail\b/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_email', 'customer_email');
-    else push('dealer.email', 'buyer_email');
+    else if (side === 'seller') push('dealer.email');
   }
   if (/\bname\b/i.test(n)) {
     if (side === 'buyer' || hasTwoSuffix) push('buyer_name', 'deal.purchaser_name', 'purchaser_name', 'customer_name');
@@ -441,7 +443,8 @@ function guessContextKeys(pdfFieldName: string): { keys: string[]; side: 'buyer'
   }
   // Doc fee / tax fields — for total-due box on Bill of Sale
   if (/doc.*fee|documentary/i.test(n)) push('doc_fee', 'fees.doc_fee');
-  if (/tax/i.test(n) && !/state\s*id/i.test(n)) push('sales_tax', 'tax_amount');
+  // Match "tax" but NOT "taxable" (which refers to an amount, not the tax itself).
+  if (/tax/i.test(n) && !/state\s*id|taxable/i.test(n)) push('sales_tax', 'tax_amount');
   if (/balance\s*due|total\s*due|amount\s*due/i.test(n)) push('balance_due', 'total_price');
 
   return { keys, side };
