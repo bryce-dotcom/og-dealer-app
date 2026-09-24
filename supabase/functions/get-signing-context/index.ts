@@ -48,7 +48,7 @@ serve(async (req) => {
   }
 
   const [{ data: dealer }, { data: vehicle }] = await Promise.all([
-    supabase.from("dealers").select("id, dealer_name, address, city, state, phone").eq("id", deal.dealer_id).single(),
+    supabase.from("dealer_settings").select("id, dealer_name, address, city, state, phone").eq("id", deal.dealer_id).single(),
     deal.vehicle_id
       ? supabase.from("inventory").select("id, year, make, model, trim, vin, miles").eq("id", deal.vehicle_id).single()
       : Promise.resolve({ data: null }),
