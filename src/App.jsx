@@ -10,6 +10,7 @@ import DealFinderPage from './pages/DealFinderPage';
 import SettingsPage from './pages/SettingsPage';
 import EmbedInventory from './pages/EmbedInventory';
 import EmbedFindRig from './pages/EmbedFindRig';
+import SignPage from './pages/SignPage';
 import CustomersPage from './pages/CustomersPage';
 import EmailMarketingPage from './pages/EmailMarketingPage';
 import TeamPage from './pages/TeamPage';
@@ -77,6 +78,7 @@ export default function App() {
         <Route path="/employee-setup" element={<EmployeeSetupPage />} />
         <Route path="/embed/:dealerId" element={<EmbedInventory />} />
         <Route path="/find-rig/:dealerId" element={<EmbedFindRig />} />
+        <Route path="/sign/:token" element={<SignPage />} />
 
         {/* Investor Portal routes (no layout) */}
         <Route path="/investor/login" element={<InvestorLogin />} />

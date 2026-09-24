@@ -1261,14 +1261,64 @@ export default function DealsPage() {
     }
   };
 
-  const sendForSignature = async () => {
+  // Fetch (or generate on the fly if missing) the deal's public signing token.
+  // The token was added by migration 20260924000001, but a deal created before
+  // that migration ran might have null; the migration backfills, so in
+  // practice this always returns a value.
+  const getSigningToken = async () => {
+    if (!editingDeal?.id) throw new Error('Save the deal first');
+    const { data, error } = await supabase
+      .from('deals')
+      .select('esign_token, signed_at')
+      .eq('id', editingDeal.id)
+      .single();
+    if (error) throw new Error(error.message);
+    if (!data?.esign_token) throw new Error('No signing token on this deal');
+    return { token: data.esign_token, signed_at: data.signed_at };
+  };
+
+  const openInOfficeSigning = async () => {
+    try {
+      const { token, signed_at } = await getSigningToken();
+      if (signed_at && !confirm('This deal has already been signed. Open the signing page anyway?')) return;
+      const url = `${window.location.origin}/sign/${token}`;
+      window.open(url, '_blank', 'noopener');
+      showToast('Signing page opened — hand the device to the buyer.');
+    } catch (e) {
+      showToast(e.message || 'Could not open signing page', 'error');
+    }
+  };
+
+  const emailSigningLink = async () => {
     if (!dealForm.customer_email) {
-      showToast('Customer email required for e-signature', 'error');
+      showToast('Add a customer email above first, then click again.', 'error');
       return;
     }
+    if (!editingDeal?.id) return;
+    try {
+      const res = await supabase.functions.invoke('send-esign-email', {
+        body: { deal_id: editingDeal.id },
+      });
+      if (res.error || res.data?.error) {
+        const msg = res.data?.error || res.error?.message || 'send failed';
+        showToast(`Email failed: ${msg}`, 'error');
+        return;
+      }
+      showToast(`Signing link sent to ${dealForm.customer_email}`);
+    } catch (e) {
+      showToast(`Email failed: ${e.message}`, 'error');
+    }
+  };
 
-    // TODO: Integrate with DocuSeal or similar e-signature service
-    showToast('E-Signature integration coming soon');
+  const copySigningLink = async () => {
+    try {
+      const { token } = await getSigningToken();
+      const url = `${window.location.origin}/sign/${token}`;
+      await navigator.clipboard.writeText(url);
+      showToast('Signing link copied. Text or paste anywhere.');
+    } catch (e) {
+      showToast(e.message || 'Could not copy link', 'error');
+    }
   };
 
   // Delete a generated document
@@ -1984,13 +2034,27 @@ export default function DealsPage() {
                   {/* Signing & Delivery Options */}
                   <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '12px' }}>
                     <div style={{ color: theme.textSecondary, fontSize: '11px', fontWeight: '600', marginBottom: '10px' }}>
-                      Send for Signature
+                      Sign the paperwork
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {/* Email Option */}
-                      <button onClick={sendForSignature}
-                        style={{ ...buttonStyle, width: '100%', backgroundColor: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                        <span>📧</span> Email for E-Signature
+                      {/* In-office (touchscreen handoff) — primary action */}
+                      <button onClick={openInOfficeSigning}
+                        style={{ ...buttonStyle, width: '100%', backgroundColor: '#0a7c2f', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span>✍️</span> Sign on this device
+                      </button>
+
+                      {/* Email link to buyer's phone */}
+                      <button onClick={emailSigningLink}
+                        disabled={!dealForm.customer_email}
+                        title={!dealForm.customer_email ? 'Add a customer email first' : ''}
+                        style={{ ...buttonStyle, width: '100%', backgroundColor: '#8b5cf6', opacity: dealForm.customer_email ? 1 : 0.5, cursor: dealForm.customer_email ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span>📧</span> Email signing link to buyer
+                      </button>
+
+                      {/* Copy link — for texting or pasting anywhere */}
+                      <button onClick={copySigningLink}
+                        style={{ ...buttonStyle, width: '100%', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span>🔗</span> Copy signing link
                       </button>
 
                       {/* Print Option */}
@@ -2021,7 +2085,7 @@ export default function DealsPage() {
                       {/* Customer email status */}
                       {!dealForm.customer_email && (
                         <div style={{ color: '#f59e0b', fontSize: '10px', textAlign: 'center', padding: '6px', backgroundColor: '#f59e0b15', borderRadius: '4px' }}>
-                          Add customer email to enable e-signature
+                          Add customer email above to enable the email option (in-office signing works without it).
                         </div>
                       )}
                     </div>

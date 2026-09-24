@@ -57,6 +57,10 @@ function buildFormContext(deal: any, vehicle: any, dealer: any) {
   const miles = formatNumber(vehicle?.miles || vehicle?.mileage || 0);
 
   return {
+    // === E-SIGNATURE (buyer's captured signature, if signed) ===
+    signature_png: deal.signature_png || '',
+    signed_at: deal.signed_at || '',
+    signed_by_name: deal.signed_by_name || '',
     // === DEALER (dot-prefix + aliases) ===
     'dealer.dealer_name': dealer?.dealer_name || dealer?.name || '',
     'dealer.dealer_license': dealer?.dealer_license || '',
@@ -544,8 +548,23 @@ async function fillPdfForm(
       };
     };
 
-    // Collect highlighted fields to draw after flatten
-    const highlightsToDraw: Array<{ fieldName: string; color: { r: number; g: number; b: number }; label: string }> = [];
+    // Collect highlighted fields to draw after flatten.
+    // isBuyerSignature=true means the buyer's captured PNG signature should be
+    // painted over this widget once the deal is signed; otherwise the widget
+    // gets the yellow "please sign here" placeholder rectangle.
+    const highlightsToDraw: Array<{
+      fieldName: string;
+      color: { r: number; g: number; b: number };
+      label: string;
+      isBuyerSignature: boolean;
+    }> = [];
+    const isBuyerSignatureField = (name: string): boolean => {
+      const n = name.toLowerCase();
+      if (!/signat|\bsign\b|initial|^x$|^of\s/i.test(n)) return false;
+      // Explicit seller/dealer signature → NOT the buyer's — leave for the dealer to sign.
+      if (/seller|dealer|salesperson|representative|authorized/i.test(n)) return false;
+      return true;
+    };
 
     // Fill each field
     let highlightCount = 0;
@@ -557,7 +576,12 @@ async function fillPdfForm(
         // HIGHLIGHTED: collect for post-flatten drawing
         if (mapping.status === 'highlight') {
           const color = hexToRgb(mapping.highlight_color || '#ffff00');
-          highlightsToDraw.push({ fieldName, color, label: mapping.highlight_label || '' });
+          highlightsToDraw.push({
+            fieldName,
+            color,
+            label: mapping.highlight_label || '',
+            isBuyerSignature: isBuyerSignatureField(fieldName),
+          });
           highlightCount++;
           console.log(`[FILL] ${fieldName} = HIGHLIGHT (${mapping.highlight_color || '#ffff00'}${mapping.highlight_label ? ', "' + mapping.highlight_label + '"' : ''})`);
           continue;
@@ -715,7 +739,16 @@ async function fillPdfForm(
     }
 
     // Capture field positions BEFORE flattening (flatten removes form fields)
-    const highlightRects: Array<{ pageIndex: number; x: number; y: number; width: number; height: number; color: { r: number; g: number; b: number }; label: string }> = [];
+    const highlightRects: Array<{
+      pageIndex: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      color: { r: number; g: number; b: number };
+      label: string;
+      isBuyerSignature: boolean;
+    }> = [];
     for (const hl of highlightsToDraw) {
       try {
         const tf = form.getTextField(hl.fieldName);
@@ -737,7 +770,8 @@ async function fillPdfForm(
             width: rect.width,
             height: rect.height,
             color: hl.color,
-            label: hl.label
+            label: hl.label,
+            isBuyerSignature: hl.isBuyerSignature,
           });
         }
       } catch (e) {
@@ -747,13 +781,44 @@ async function fillPdfForm(
 
     form.flatten();
 
-    // Draw highlight rectangles on pages after flatten
+    // Pre-embed the buyer's PNG signature once — reused across every widget it
+    // paints on. context.signature_png is a "data:image/png;base64,…" URL set
+    // by the sign-deal edge function after the buyer signs.
+    let embeddedSig: any = null;
+    const sigDataUrl = String(context.signature_png || '');
+    if (sigDataUrl.startsWith('data:image/png;base64,')) {
+      try {
+        const b64 = sigDataUrl.slice('data:image/png;base64,'.length);
+        const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        embeddedSig = await pdfDoc.embedPng(bin);
+      } catch (e) {
+        console.log(`[FILL] Failed to embed signature PNG:`, e);
+      }
+    }
+
+    // Draw highlight rectangles / signatures on pages after flatten
     if (highlightRects.length > 0) {
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
       for (const hr of highlightRects) {
         try {
           const page = pdfDoc.getPages()[hr.pageIndex];
-          // Draw colored rectangle
+
+          // Signed buyer widget: paint the signature image, scaled to fit
+          // the widget rect while preserving aspect ratio.
+          if (hr.isBuyerSignature && embeddedSig) {
+            const scale = Math.min(hr.width / embeddedSig.width, hr.height / embeddedSig.height);
+            const w = embeddedSig.width * scale;
+            const h = embeddedSig.height * scale;
+            page.drawImage(embeddedSig, {
+              x: hr.x + (hr.width - w) / 2,
+              y: hr.y + (hr.height - h) / 2,
+              width: w,
+              height: h,
+            });
+            continue;
+          }
+
+          // Otherwise draw the "please sign here" placeholder rectangle
           page.drawRectangle({
             x: hr.x,
             y: hr.y,
@@ -762,7 +827,6 @@ async function fillPdfForm(
             color: rgb(hr.color.r, hr.color.g, hr.color.b),
             opacity: 0.4,
           });
-          // Draw label text if provided
           if (hr.label) {
             const fontSize = Math.min(10, hr.height - 2);
             page.drawText(hr.label, {
