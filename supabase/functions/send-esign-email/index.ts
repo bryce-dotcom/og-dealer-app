@@ -13,7 +13,11 @@ const corsHeaders = {
 };
 
 const APP_ORIGIN = Deno.env.get('APP_ORIGIN') || 'https://app.ogdix.com';
-const FROM_ADDRESS = Deno.env.get('ESIGN_FROM_ADDRESS') || 'OG DiX <noreply@ogdix.com>';
+// Default to Resend's sandbox sender (works with any Resend account without
+// DNS verification, but Resend only lets it deliver to the account owner's
+// email). Set ESIGN_FROM_ADDRESS to `OG DiX <noreply@yourdomain.com>` once
+// you've verified your domain at https://resend.com/domains.
+const FROM_ADDRESS = Deno.env.get('ESIGN_FROM_ADDRESS') || 'OG DiX <onboarding@resend.dev>';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
