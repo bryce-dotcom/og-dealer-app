@@ -89,10 +89,10 @@ export default function EmployeeSetupPage() {
 
   const heading = type === 'invite'
     ? `Welcome${firstName ? `, ${firstName}` : ''}!`
-    : 'Choose a new password';
+    : 'Choose your password';
   const sub = type === 'invite'
     ? `Choose a password to finish joining ${dealerName || 'your dealership'}.`
-    : `Pick a new password for your ${dealerName || 'OG DiX'} account.`;
+    : `Pick a password for your ${dealerName || 'OG DiX'} account.`;
 
   return (
     <div style={page}>
@@ -148,7 +148,7 @@ export default function EmployeeSetupPage() {
           disabled={busy}
           style={{ width: '100%', padding: '15px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '16px', fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1 }}
         >
-          {busy ? 'Saving…' : type === 'invite' ? 'Save password & sign in' : 'Save new password & sign in'}
+          {busy ? 'Saving…' : 'Save password & sign in'}
         </button>
       </form>
     </div>
