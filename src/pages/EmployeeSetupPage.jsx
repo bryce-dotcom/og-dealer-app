@@ -1,238 +1,156 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useStore } from '../lib/store';
-import { Check } from 'lucide-react';
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Landing page for invite and password-reset emails. The link carries a
+// one-time token in the query string. On submit we send token + password to
+// the complete-account-setup edge function (which verifies the token and sets
+// the password server-side), then sign in with email + password like normal.
+// Nothing here depends on the browser holding a session between page load and
+// submit — that handoff is what failed on iPhone Safari.
 export default function EmployeeSetupPage() {
   const navigate = useNavigate();
-  const { setDealer } = useStore();
+  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const tokenHash = params.get('token_hash');
+  const type = params.get('type') === 'recovery' ? 'recovery' : 'invite';
+  const email = params.get('email') || '';
+  const firstName = params.get('name') || '';
+  const dealerName = params.get('dealer') || '';
 
-  const [loading, setLoading] = useState(true);
-  const [settingPassword, setSettingPassword] = useState(false);
-  const [error, setError] = useState('');
-  const [employeeData, setEmployeeData] = useState(null);
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [linkDead, setLinkDead] = useState(!tokenHash);
 
-  useEffect(() => {
-    checkInvitation();
-  }, []);
-
-  async function checkInvitation() {
-    setLoading(true);
-    try {
-      // Check if user is authenticated (came from invitation link)
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session?.user) {
-        setError('Invalid or expired invitation link. Please contact your manager.');
-        setLoading(false);
-        return;
-      }
-
-      // Get employee record linked to this user
-      const { data: employee, error: empError } = await supabase
-        .from('employees')
-        .select('*, dealer_settings!inner(dealer_name, id)')
-        .eq('user_id', session.user.id)
-        .single();
-
-      if (empError || !employee) {
-        console.error('Employee lookup error:', empError);
-        setError('Employee record not found. Please contact your manager.');
-        setLoading(false);
-        return;
-      }
-
-      setEmployeeData(employee);
-      setLoading(false);
-    } catch (err) {
-      console.error('Setup error:', err);
-      setError('Failed to load invitation. Please try again.');
-      setLoading(false);
-    }
-  }
-
-  async function completeSetup() {
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    setSettingPassword(true);
+  async function handleSubmit(e) {
+    e.preventDefault();
     setError('');
+    if (password.length < 8) { setError('Use at least 8 characters.'); return; }
+    if (password !== confirm) { setError("The two passwords don't match."); return; }
 
+    setBusy(true);
     try {
-      // Update user password
-      const { error: pwError } = await supabase.auth.updateUser({
-        password: password
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/complete-account-setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
+        body: JSON.stringify({ token_hash: tokenHash, type, password }),
       });
-
-      if (pwError) {
-        throw pwError;
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (j.code === 'link_expired' || j.code === 'link_invalid') { setLinkDead(true); return; }
+        throw new Error(j.error || 'Something went wrong. Please try again.');
       }
 
-      // Set dealer in store for this employee
-      if (employeeData?.dealer_settings) {
-        setDealer(employeeData.dealer_settings);
+      const loginEmail = j.email || email;
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
+      if (signInError) {
+        throw new Error(`Your password is saved. Sign in on the next screen with ${loginEmail}.`);
       }
-
-      // Redirect to dashboard
-      navigate('/dashboard');
+      // /login knows how to route owners and employees to their dealership.
+      navigate('/login?signed_in=1', { replace: true });
     } catch (err) {
-      console.error('Password setup error:', err);
-      setError(err.message || 'Failed to set password. Please try again.');
-      setSettingPassword(false);
+      setError(err.message);
+    } finally {
+      setBusy(false);
     }
   }
 
-  const inputStyle = {
-    width: '100%',
-    padding: '14px 16px',
-    backgroundColor: '#18181b',
-    border: '1px solid #27272a',
-    borderRadius: '8px',
-    color: '#fff',
-    fontSize: '15px',
-    outline: 'none'
-  };
+  const page = { minHeight: '100vh', backgroundColor: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' };
+  const card = { width: '100%', maxWidth: '440px', backgroundColor: '#18181b', borderRadius: '16px', padding: '32px 24px', border: '1px solid #27272a' };
+  const input = { width: '100%', padding: '14px 16px', backgroundColor: '#09090b', border: '1px solid #3f3f46', borderRadius: '10px', color: '#fff', fontSize: '16px', outline: 'none', boxSizing: 'border-box' };
+  const label = { display: 'block', color: '#d4d4d8', fontSize: '14px', marginBottom: '6px' };
 
-  const buttonStyle = {
-    width: '100%',
-    padding: '14px',
-    backgroundColor: '#f97316',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '15px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    opacity: settingPassword ? 0.7 : 1
-  };
-
-  if (loading) {
+  if (linkDead) {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-        <div style={{ color: '#a1a1aa' }}>Loading your invitation...</div>
-      </div>
-    );
-  }
-
-  if (error && !employeeData) {
-    return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-        <div style={{ width: '100%', maxWidth: '400px', backgroundColor: '#18181b', borderRadius: '16px', padding: '40px', border: '1px solid #27272a', textAlign: 'center' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
-          <h2 style={{ color: '#fff', fontSize: '20px', fontWeight: '600', margin: '0 0 12px' }}>Invitation Error</h2>
-          <p style={{ color: '#a1a1aa', fontSize: '14px', margin: 0 }}>{error}</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-      <div style={{ width: '100%', maxWidth: '450px', backgroundColor: '#18181b', borderRadius: '16px', padding: '40px', border: '1px solid #27272a' }}>
-        {/* Welcome Header */}
-        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <div style={{ width: '60px', height: '60px', backgroundColor: '#f97316', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '24px', fontWeight: '700', color: '#fff' }}>
-            {employeeData?.name?.[0]?.toUpperCase() || '?'}
-          </div>
-          <h1 style={{ color: '#fff', fontSize: '24px', fontWeight: '700', margin: '0 0 8px' }}>
-            Welcome, {employeeData?.name}!
-          </h1>
-          <p style={{ color: '#71717a', fontSize: '14px', margin: 0 }}>
-            You've been invited to join <strong style={{ color: '#f97316' }}>{employeeData?.dealer_settings?.dealer_name}</strong>
+      <div style={page}>
+        <div style={{ ...card, textAlign: 'center' }}>
+          <h1 style={{ color: '#fff', fontSize: '22px', margin: '0 0 12px' }}>This link has expired</h1>
+          <p style={{ color: '#a1a1aa', fontSize: '15px', lineHeight: 1.55, margin: '0 0 8px' }}>
+            Setup links work once and expire after 24 hours. If you got more than one email, only the newest link works.
           </p>
-        </div>
-
-        {/* Employee Info */}
-        <div style={{ backgroundColor: '#09090b', borderRadius: '12px', padding: '16px', marginBottom: '24px', border: '1px solid #27272a' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <Check size={16} style={{ color: '#22c55e' }} />
-            <span style={{ color: '#a1a1aa', fontSize: '13px' }}>Role:</span>
-            <span style={{ color: '#fff', fontSize: '13px', fontWeight: '600' }}>{employeeData?.role}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <Check size={16} style={{ color: '#22c55e' }} />
-            <span style={{ color: '#a1a1aa', fontSize: '13px' }}>Access Level:</span>
-            <span style={{ color: '#fff', fontSize: '13px', fontWeight: '600' }}>
-              {employeeData?.access_level === 'admin' && 'Admin'}
-              {employeeData?.access_level === 'manager' && 'Manager'}
-              {employeeData?.access_level === 'employee' && 'Employee'}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Check size={16} style={{ color: '#22c55e' }} />
-            <span style={{ color: '#a1a1aa', fontSize: '13px' }}>Email:</span>
-            <span style={{ color: '#fff', fontSize: '13px' }}>{employeeData?.email}</span>
-          </div>
-        </div>
-
-        {/* Password Setup Form */}
-        <div style={{ marginBottom: '24px' }}>
-          <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: '0 0 16px' }}>
-            Choose Your Password
-          </h3>
-
-          {error && (
-            <div style={{ padding: '12px 16px', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', color: '#ef4444', fontSize: '14px', marginBottom: '16px' }}>
-              {error}
-            </div>
-          )}
-
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password (min 6 characters)"
-              style={inputStyle}
-              minLength={6}
-              required
-            />
-          </div>
-
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', color: '#a1a1aa', fontSize: '13px', marginBottom: '6px' }}>
-              Confirm Password
-            </label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter password"
-              style={inputStyle}
-              minLength={6}
-              required
-            />
-          </div>
-
+          <p style={{ color: '#a1a1aa', fontSize: '15px', lineHeight: 1.55, margin: '0 0 24px' }}>
+            Ask your manager to send you a new invite, or reset your password yourself:
+          </p>
           <button
-            onClick={completeSetup}
-            disabled={settingPassword || !password || !confirmPassword}
-            style={buttonStyle}
+            onClick={() => navigate('/login?forgot=1' + (email ? `&email=${encodeURIComponent(email)}` : ''))}
+            style={{ width: '100%', padding: '14px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' }}
           >
-            {settingPassword ? 'Setting up...' : 'Complete Setup & Sign In'}
+            Email me a new link
           </button>
         </div>
-
-        {/* Footer */}
-        <div style={{ textAlign: 'center', paddingTop: '24px', borderTop: '1px solid #27272a' }}>
-          <p style={{ color: '#52525b', fontSize: '12px', margin: 0 }}>
-            Having trouble? Contact your manager for assistance.
-          </p>
-        </div>
       </div>
+    );
+  }
+
+  const heading = type === 'invite'
+    ? `Welcome${firstName ? `, ${firstName}` : ''}!`
+    : 'Choose a new password';
+  const sub = type === 'invite'
+    ? `Choose a password to finish joining ${dealerName || 'your dealership'}.`
+    : `Pick a new password for your ${dealerName || 'OG DiX'} account.`;
+
+  return (
+    <div style={page}>
+      <form onSubmit={handleSubmit} style={card}>
+        <h1 style={{ color: '#fff', fontSize: '24px', fontWeight: 700, margin: '0 0 8px', textAlign: 'center' }}>{heading}</h1>
+        <p style={{ color: '#a1a1aa', fontSize: '15px', margin: '0 0 24px', textAlign: 'center', lineHeight: 1.5 }}>{sub}</p>
+
+        {email && (
+          <div style={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '10px', padding: '12px 14px', marginBottom: '20px' }}>
+            <div style={{ color: '#71717a', fontSize: '12px', marginBottom: '2px' }}>You'll sign in with</div>
+            <div style={{ color: '#fff', fontSize: '15px', wordBreak: 'break-all' }}>{email}</div>
+          </div>
+        )}
+
+        <div style={{ marginBottom: '16px' }}>
+          <label style={label} htmlFor="new-password">New password</label>
+          <input
+            id="new-password"
+            type={showPassword ? 'text' : 'password'}
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            style={input}
+          />
+        </div>
+
+        <div style={{ marginBottom: '12px' }}>
+          <label style={label} htmlFor="confirm-password">Type it again</label>
+          <input
+            id="confirm-password"
+            type={showPassword ? 'text' : 'password'}
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            style={input}
+          />
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a1a1aa', fontSize: '14px', marginBottom: '20px', cursor: 'pointer' }}>
+          <input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} />
+          Show password
+        </label>
+
+        {error && (
+          <div style={{ padding: '12px 14px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', color: '#fca5a5', fontSize: '14px', marginBottom: '16px', lineHeight: 1.5 }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={busy}
+          style={{ width: '100%', padding: '15px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '16px', fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1 }}
+        >
+          {busy ? 'Saving…' : type === 'invite' ? 'Save password & sign in' : 'Save new password & sign in'}
+        </button>
+      </form>
     </div>
   );
 }

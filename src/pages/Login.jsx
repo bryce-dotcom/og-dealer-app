@@ -7,8 +7,9 @@ export default function Login() {
   const navigate = useNavigate();
   const { setDealer } = useStore();
 
-  const [mode, setMode] = useState('login'); // 'login', 'signup', or 'forgot'
-  const [email, setEmail] = useState('');
+  const initialParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const [mode, setMode] = useState(initialParams.get('forgot') ? 'forgot' : 'login'); // 'login', 'signup', or 'forgot'
+  const [email, setEmail] = useState(initialParams.get('email') || '');
   const [password, setPassword] = useState('');
   const [dealerName, setDealerName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,7 +22,9 @@ export default function Login() {
   const [confirming, setConfirming] = useState(() => {
     if (typeof window === 'undefined') return false;
     const hash = window.location.hash || '';
-    return /access_token=|type=signup|type=recovery|type=magiclink/.test(hash);
+    // signed_in=1: just finished /employee-setup; a session already exists.
+    return /access_token=|type=signup|type=recovery|type=magiclink/.test(hash)
+      || new URLSearchParams(window.location.search).get('signed_in') === '1';
   });
 
   // Two paths to a session here:
@@ -185,17 +188,20 @@ export default function Login() {
     setError('');
     setMessage('');
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`
+    // Sent via Resend by our own edge function: Supabase's built-in emailer
+    // is unreliable here, and its recovery links landed on /login, which has
+    // no way to actually choose a new password.
+    const { data, error: resetError } = await supabase.functions.invoke('request-password-reset', {
+      body: { email }
     });
 
-    if (resetError) {
-      setError(resetError.message);
+    if (resetError || data?.error) {
+      setError(data?.error || 'Could not send the reset email. Please try again.');
       setLoading(false);
       return;
     }
 
-    setMessage('Check your email for a password reset link.');
+    setMessage(`If ${email} has an account, a reset link is on its way. Open the newest email and tap "Choose a new password".`);
     setLoading(false);
   };
 
