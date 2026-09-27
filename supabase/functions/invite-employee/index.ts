@@ -126,11 +126,18 @@ serve(async (req) => {
         );
       }
 
+      // Check if the employee has actually FINISHED accepting the invite (set
+      // a password). Having a user_id alone doesn't mean accepted — our own
+      // generateLink() creates the auth.users row on first invite send, so
+      // that row exists as soon as we've *tried* to invite them.
       if (employee.user_id) {
-        return new Response(
-          JSON.stringify({ error: 'Employee has already accepted invitation' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        const { data: authUser } = await supabase.auth.admin.getUserById(employee.user_id);
+        if (authUser?.user?.last_sign_in_at) {
+          return new Response(
+            JSON.stringify({ error: 'Employee has already accepted invitation' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
 
       const dealerName = await getDealerName(supabase, employee.dealer_id);
