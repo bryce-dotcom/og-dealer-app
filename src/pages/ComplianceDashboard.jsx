@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase';
 
 export default function ComplianceDashboard() {
   const { theme } = useTheme();
-  const { dealerId, inventory } = useStore();
+  const { dealerId, dealer, inventory } = useStore();
+  const dealerState = dealer?.state || '';
   const [loading, setLoading] = useState(true);
   const [tracking, setTracking] = useState([]);
   const [checklist, setChecklist] = useState([]);
@@ -34,33 +35,36 @@ export default function ComplianceDashboard() {
     category: 'licensing',
     requirement: '',
     description: '',
-    state_code: 'UT',
+    state_code: dealerState,
     due_date: '',
     recurring: 'once'
   });
 
   useEffect(() => { if (dealerId) loadData(); }, [dealerId]);
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(quiet = false) {
+    // quiet refreshes after a save/tick keep the page on screen
+    if (!quiet) setLoading(true);
     try {
-      const [{ data: trackData }, { data: checkData }] = await Promise.all([
+      // Update expiring/expired statuses first so the lists below are current
+      const { error: rpcError } = await supabase.rpc('check_compliance_expirations', { p_dealer_id: dealerId });
+      if (rpcError) console.error('check_compliance_expirations failed:', rpcError);
+
+      const [{ data: trackData, error: trackError }, { data: checkData, error: checkError }] = await Promise.all([
         supabase.from('compliance_tracking').select('*').eq('dealer_id', dealerId).order('expiration_date'),
         supabase.from('compliance_checklist_items').select('*').eq('dealer_id', dealerId).order('category').order('created_at')
       ]);
+      if (trackError || checkError) alert('Could not load compliance data: ' + (trackError || checkError).message);
       setTracking(trackData || []);
       setChecklist(checkData || []);
-
-      // Check expirations
-      await supabase.rpc('check_compliance_expirations', { p_dealer_id: dealerId });
     } catch (err) {
       console.error('Failed to load compliance data:', err);
     }
     setLoading(false);
   }
 
-  // Title compliance from inventory
-  const titleItems = (inventory || []).filter(v => v.status === 'In Stock' && v.date_acquired).map(v => {
+  // Title compliance from inventory: every car still on the lot ('In Stock' or 'For Sale')
+  const titleItems = (inventory || []).filter(v => ['In Stock', 'For Sale'].includes(v.status) && v.date_acquired).map(v => {
     const days = Math.floor((new Date() - new Date(v.date_acquired)) / (1000 * 60 * 60 * 24));
     return { ...v, daysOwned: days, titleStatus: days > 45 ? 'overdue' : days > 30 ? 'urgent' : 'ok' };
   });
@@ -111,50 +115,54 @@ export default function ComplianceDashboard() {
       if (!payload.expiration_date) delete payload.expiration_date;
       if (!payload.renewal_date) delete payload.renewal_date;
 
-      if (selectedItem) {
-        await supabase.from('compliance_tracking').update(payload).eq('id', selectedItem.id);
-      } else {
-        await supabase.from('compliance_tracking').insert(payload);
-      }
+      const { error } = selectedItem
+        ? await supabase.from('compliance_tracking').update(payload).eq('id', selectedItem.id).eq('dealer_id', dealerId)
+        : await supabase.from('compliance_tracking').insert(payload);
+      if (error) throw error;
       setShowAddModal(false);
       setSelectedItem(null);
       setForm({ compliance_type: 'dealer_license', name: '', description: '', effective_date: '', expiration_date: '', renewal_date: '', reminder_days: 30, document_number: '', issuing_authority: '', cost: '', auto_renew: false, notes: '' });
-      loadData();
+      loadData(true);
     } catch (err) {
       alert('Failed to save: ' + err.message);
     }
   }
 
   async function handleDeleteTracking(id) {
-    if (!confirm('Delete this compliance item?')) return;
-    await supabase.from('compliance_tracking').delete().eq('id', id);
-    loadData();
+    if (!confirm('Delete this compliance item? This cannot be undone.')) return;
+    const { error } = await supabase.from('compliance_tracking').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete: ' + error.message); return; }
+    loadData(true);
   }
 
   async function handleSaveChecklist() {
     try {
-      const payload = { dealer_id: dealerId, ...checkForm };
+      const payload = { dealer_id: dealerId, ...checkForm, state_code: checkForm.state_code || dealerState || null };
       if (!payload.due_date) delete payload.due_date;
-      await supabase.from('compliance_checklist_items').insert(payload);
+      const { error } = await supabase.from('compliance_checklist_items').insert(payload);
+      if (error) throw error;
       setShowChecklistModal(false);
-      setCheckForm({ category: 'licensing', requirement: '', description: '', state_code: 'UT', due_date: '', recurring: 'once' });
-      loadData();
+      setCheckForm({ category: 'licensing', requirement: '', description: '', state_code: dealerState, due_date: '', recurring: 'once' });
+      loadData(true);
     } catch (err) {
       alert('Failed to save: ' + err.message);
     }
   }
 
   async function toggleChecklistItem(item) {
-    await supabase.from('compliance_checklist_items').update({
+    const { error } = await supabase.from('compliance_checklist_items').update({
       completed: !item.completed,
       completed_at: !item.completed ? new Date().toISOString() : null
-    }).eq('id', item.id);
-    loadData();
+    }).eq('id', item.id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update: ' + error.message); return; }
+    loadData(true);
   }
 
-  async function handleDeleteChecklist(id) {
-    await supabase.from('compliance_checklist_items').delete().eq('id', id);
-    loadData();
+  async function handleDeleteChecklist(item) {
+    if (!confirm(`Delete checklist item "${item.requirement}"? This cannot be undone.`)) return;
+    const { error } = await supabase.from('compliance_checklist_items').delete().eq('id', item.id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete: ' + error.message); return; }
+    loadData(true);
   }
 
   function openEdit(item) {
@@ -340,7 +348,7 @@ export default function ComplianceDashboard() {
           {filteredTracking.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>
               <div style={{ fontSize: '48px', marginBottom: '12px' }}>🛡️</div>
-              <p>No compliance items tracked yet. Add your first item above.</p>
+              <p>{tracking.length === 0 ? 'No compliance items tracked yet. Click + Track Item to add your dealer license, bond or insurance.' : 'Nothing matches this filter.'}</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -391,6 +399,9 @@ export default function ComplianceDashboard() {
       {/* Titles Tab */}
       {activeTab === 'titles' && (
         <>
+          <p style={{ color: theme.textMuted, fontSize: '13px', margin: '0 0 16px' }}>
+            Days since each car on the lot (In Stock or For Sale) was acquired. 31-45 days is flagged Urgent and over 45 is Overdue, so title paperwork doesn't fall behind.
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
             <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '12px', padding: '20px', textAlign: 'center' }}>
               <div style={{ fontSize: '32px', fontWeight: '700', color: '#ef4444' }}>{overdueTitles.length}</div>
@@ -429,6 +440,13 @@ export default function ComplianceDashboard() {
                     </td>
                   </tr>
                 ))}
+                {titleItems.length === 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ padding: '32px 16px', textAlign: 'center', color: theme.textMuted, fontSize: '13px' }}>
+                      No cars on the lot with an acquired date. Add the date acquired on each vehicle in Inventory to track it here.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -470,7 +488,7 @@ export default function ComplianceDashboard() {
                     {item.recurring && item.recurring !== 'once' && (
                       <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: theme.accentBg, color: theme.accent }}>{item.recurring}</span>
                     )}
-                    <button onClick={() => handleDeleteChecklist(item.id)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '16px' }}>×</button>
+                    <button onClick={() => handleDeleteChecklist(item)} title="Delete checklist item" style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '16px' }}>×</button>
                   </div>
                 ))}
               </div>
@@ -480,7 +498,7 @@ export default function ComplianceDashboard() {
           {checklist.length === 0 && (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>
               <div style={{ fontSize: '48px', marginBottom: '12px' }}>☑️</div>
-              <p>No checklist items yet. Add requirements to track compliance.</p>
+              <p>No checklist items yet. Click + Checklist Item to add a requirement you need to keep up with.</p>
             </div>
           )}
         </>
@@ -501,7 +519,7 @@ export default function ComplianceDashboard() {
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Name *</label>
-                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g., Utah Dealer License 2026" style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px' }} />
+                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder={`e.g., ${dealerState ? dealerState + ' ' : ''}Dealer License ${new Date().getFullYear()}`} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px' }} />
               </div>
               {[
                 { key: 'document_number', label: 'Document/Policy #' },

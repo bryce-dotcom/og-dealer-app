@@ -6,7 +6,7 @@ import { useTheme } from '../components/Layout';
 
 export default function AdminDevConsole() {
   const navigate = useNavigate();
-  const { dealerId, dealer } = useStore();
+  const { dealerId, dealer, currentEmployee } = useStore();
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
     bg: '#09090b', bgCard: '#18181b', border: '#27272a',
@@ -26,10 +26,10 @@ export default function AdminDevConsole() {
 
   // Admin check - only Bryce can access
   useEffect(() => {
-    if (!dealerId || dealer?.dealer_name !== 'OG DiX Motor Club') {
+    if (!dealerId || Number(dealer?.id) !== 1 || currentEmployee) {
       navigate('/dashboard');
     }
-  }, [dealerId, dealer, navigate]);
+  }, [dealerId, dealer, currentEmployee, navigate]);
 
   // Fetch real errors from Sentry via Edge Function
   const fetchErrors = async () => {

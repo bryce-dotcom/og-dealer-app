@@ -3,6 +3,13 @@ import { useTheme } from '../components/Layout';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 
+// Local calendar date as YYYY-MM-DD (toISOString() is UTC and flips to tomorrow in the evening in Utah).
+const localYMD = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Parse a date-only 'YYYY-MM-DD' as a local date (new Date('YYYY-MM-DD') is UTC midnight = previous day in Utah).
+const parseLocalDate = (s) => (s ? new Date(`${String(s).slice(0, 10)}T00:00:00`) : null);
+const vehiclePrice = (v) => v?.sale_price ?? v?.list_price ?? null;
+const isAvailable = (v) => v?.status === 'In Stock' || v?.status === 'For Sale';
+
 export default function LeadsPage() {
   const { theme } = useTheme();
   const { dealerId, inventory, employees } = useStore();
@@ -66,10 +73,11 @@ export default function LeadsPage() {
 
   async function loadLeads() {
     setLoading(true);
-    const { data } = await supabase.from('leads')
+    const { data, error } = await supabase.from('leads')
       .select('*')
       .eq('dealer_id', dealerId)
       .order('created_at', { ascending: false });
+    if (error) console.error('Error loading leads:', error);
     setLeads(data || []);
     setLoading(false);
   }
@@ -80,7 +88,8 @@ export default function LeadsPage() {
   }));
   const totalLeads = leads.length;
   const hotLeads = leads.filter(l => l.temperature === 'hot').length;
-  const todayFollowUps = leads.filter(l => l.next_follow_up && new Date(l.next_follow_up).toDateString() === new Date().toDateString()).length;
+  const todayStr = localYMD();
+  const todayFollowUps = leads.filter(l => l.next_follow_up && String(l.next_follow_up).slice(0, 10) === todayStr).length;
   const conversionRate = totalLeads > 0 ? Math.round(leads.filter(l => l.status === 'won').length / totalLeads * 100) : 0;
 
   // Filter
@@ -93,10 +102,12 @@ export default function LeadsPage() {
   }
 
   async function handleSave() {
+    if (!form.first_name.trim()) { alert('Please enter a first name.'); return; }
     try {
+      const assignedChanged = !selectedLead || String(selectedLead.assigned_to || '') !== String(form.assigned_to || '');
       const payload = {
         dealer_id: dealerId,
-        first_name: form.first_name,
+        first_name: form.first_name.trim(),
         last_name: form.last_name || null,
         email: form.email || null,
         phone: form.phone || null,
@@ -116,41 +127,50 @@ export default function LeadsPage() {
         lead_score: 50
       };
 
+      if (!assignedChanged) delete payload.assigned_at;
+
+      let error;
       if (selectedLead) {
         delete payload.status;
         delete payload.temperature;
         delete payload.lead_score;
-        await supabase.from('leads').update(payload).eq('id', selectedLead.id);
+        payload.updated_at = new Date().toISOString();
+        ({ error } = await supabase.from('leads').update(payload).eq('id', selectedLead.id).eq('dealer_id', dealerId));
       } else {
-        await supabase.from('leads').insert(payload);
+        ({ error } = await supabase.from('leads').insert(payload));
       }
+      if (error) throw error;
 
       setShowModal(false);
       setSelectedLead(null);
       resetForm();
       loadLeads();
     } catch (err) {
-      alert('Failed to save: ' + err.message);
+      alert('Failed to save lead: ' + err.message);
     }
   }
 
   async function updateLeadStatus(id, status) {
     const updates = { status, updated_at: new Date().toISOString() };
     if (status === 'contacted') updates.last_contact_at = new Date().toISOString();
-    await supabase.from('leads').update(updates).eq('id', id);
-    // Recalculate score
-    await supabase.rpc('calculate_lead_score', { p_lead_id: id });
+    const { error } = await supabase.from('leads').update(updates).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update lead: ' + error.message); return; }
+    // Recalculate score (not critical - the status change already saved)
+    const { error: scoreError } = await supabase.rpc('calculate_lead_score', { p_lead_id: id });
+    if (scoreError) console.warn('Lead score recalculation failed:', scoreError);
     loadLeads();
   }
 
   async function updateTemperature(id, temperature) {
-    await supabase.from('leads').update({ temperature, updated_at: new Date().toISOString() }).eq('id', id);
+    const { error } = await supabase.from('leads').update({ temperature, updated_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update lead: ' + error.message); return; }
     loadLeads();
   }
 
   async function handleDelete(id) {
-    if (!confirm('Delete this lead?')) return;
-    await supabase.from('leads').delete().eq('id', id);
+    if (!confirm('Delete this lead? This cannot be undone.')) return;
+    const { error } = await supabase.from('leads').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete lead: ' + error.message); return; }
     loadLeads();
   }
 
@@ -179,7 +199,8 @@ export default function LeadsPage() {
     setForm({ first_name: '', last_name: '', email: '', phone: '', preferred_contact: 'phone', source: 'walk_in', source_details: '', interested_vehicle_id: '', budget_min: '', budget_max: '', financing_needed: false, assigned_to: '', notes: '', next_follow_up: '' });
   }
 
-  const availableVehicles = (inventory || []).filter(v => v.status === 'In Stock');
+  // 'For Sale' and 'In Stock' both mean available. Keep the lead's current vehicle in the list when editing.
+  const availableVehicles = (inventory || []).filter(v => isAvailable(v) || (form.interested_vehicle_id && v.id === form.interested_vehicle_id));
   const activeEmployees = (employees || []).filter(e => e.active);
 
   if (loading) {
@@ -194,7 +215,7 @@ export default function LeadsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Leads</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Track, score & convert leads into customers</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>People interested in buying who haven't bought yet. Track each one from first contact to sale.</p>
         </div>
         <button onClick={() => { setSelectedLead(null); resetForm(); setShowModal(true); }} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ New Lead</button>
       </div>
@@ -242,7 +263,9 @@ export default function LeadsPage() {
       {filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>🎯</div>
-          <p>No active leads. Add your first lead to start tracking.</p>
+          <p>{(search || sourceFilter !== 'all' || tempFilter !== 'all')
+            ? 'No leads match your search or filters. Try clearing them.'
+            : 'No open leads. Click "+ New Lead" when someone calls, walks in, or messages about a vehicle.'}</p>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -250,17 +273,17 @@ export default function LeadsPage() {
             const src = sources[lead.source] || sources.other;
             const temp = temperatures[lead.temperature] || temperatures.warm;
             const st = statuses[lead.status] || statuses.new;
-            const vehicle = availableVehicles.find(v => v.id === lead.interested_vehicle_id);
-            const emp = activeEmployees.find(e => e.id === lead.assigned_to);
-            const followUpDate = lead.next_follow_up ? new Date(lead.next_follow_up) : null;
-            const isOverdue = followUpDate && followUpDate < new Date();
+            const vehicle = (inventory || []).find(v => v.id === lead.interested_vehicle_id);
+            const emp = (employees || []).find(e => e.id === lead.assigned_to);
+            const followUpDate = parseLocalDate(lead.next_follow_up);
+            const isOverdue = !!lead.next_follow_up && String(lead.next_follow_up).slice(0, 10) < todayStr;
 
             return (
               <div key={lead.id} style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '10px', padding: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ display: 'flex', gap: '12px', flex: 1 }}>
                     {/* Score Circle */}
-                    <div style={{ width: '44px', height: '44px', borderRadius: '50%', border: `3px solid ${temp.color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <div title={`Lead score ${lead.lead_score || 0} out of 100: a rough guess at how likely this person is to buy (higher is better). Ring color shows how "hot" the lead is: ${temp.label}.`} style={{ width: '44px', height: '44px', borderRadius: '50%', border: `3px solid ${temp.color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <span style={{ fontSize: '14px', fontWeight: '700', color: temp.color }}>{lead.lead_score || 0}</span>
                     </div>
                     <div style={{ flex: 1 }}>
@@ -286,11 +309,11 @@ export default function LeadsPage() {
                   </div>
                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                     {/* Status quick-change */}
-                    <select value={lead.status} onChange={e => updateLeadStatus(lead.id, e.target.value)} style={{ padding: '4px 8px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, fontSize: '12px' }}>
+                    <select value={lead.status} onChange={e => updateLeadStatus(lead.id, e.target.value)} title="Change where this lead is in the sales process" style={{ padding: '4px 8px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, fontSize: '12px' }}>
                       {Object.entries(statuses).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                     </select>
                     <button onClick={() => openEdit(lead)} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px' }}>Edit</button>
-                    <button onClick={() => handleDelete(lead.id)} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Del</button>
+                    <button onClick={() => handleDelete(lead.id)} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Delete</button>
                   </div>
                 </div>
               </div>
@@ -358,7 +381,10 @@ export default function LeadsPage() {
                 <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Interested Vehicle</label>
                 <select value={form.interested_vehicle_id} onChange={e => setForm({ ...form, interested_vehicle_id: e.target.value })} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }}>
                   <option value="">None selected</option>
-                  {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} {v.trim || ''} - ${v.price?.toLocaleString() || 'N/A'}</option>)}
+                  {availableVehicles.map(v => {
+                    const price = vehiclePrice(v);
+                    return <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} {v.trim || ''}{v.stock_number ? ` #${v.stock_number}` : ''} - {price != null ? `$${Number(price).toLocaleString()}` : 'No price set'}{!isAvailable(v) ? ` (${v.status})` : ''}</option>;
+                  })}
                 </select>
               </div>
               <div>

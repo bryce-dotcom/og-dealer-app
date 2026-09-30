@@ -3,6 +3,17 @@ import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 
+// Local calendar date as YYYY-MM-DD (toISOString() is UTC and flips to tomorrow in the evening in Utah).
+const localYMD = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const displayName = (c) => (c && (c.name || [c.first_name, c.last_name].filter(Boolean).join(' '))) || 'Unnamed customer';
+// 'HH:MM' + minutes -> 'HH:MM' (clamped to 23:59 so it never rolls into the next day).
+function addMinutes(time, minutes) {
+  const [h, m] = String(time || '').split(':').map(n => parseInt(n, 10));
+  if (isNaN(h) || isNaN(m)) return null;
+  const total = Math.min(h * 60 + m + (parseInt(minutes, 10) || 0), 23 * 60 + 59);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 export default function AppointmentsPage() {
   const { dealerId, customers, employees } = useStore();
   const { theme } = useTheme();
@@ -28,16 +39,17 @@ export default function AppointmentsPage() {
       setLoading(true);
       const weekStart = getWeekStart(selectedDate);
       const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 7);
+      weekEnd.setDate(weekEnd.getDate() + 6);
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('appointments')
         .select('*')
         .eq('dealer_id', dealerId)
-        .gte('scheduled_date', weekStart.toISOString().split('T')[0])
-        .lte('scheduled_date', weekEnd.toISOString().split('T')[0])
+        .gte('scheduled_date', localYMD(weekStart))
+        .lte('scheduled_date', localYMD(weekEnd))
         .order('scheduled_date').order('start_time');
 
+      if (error) throw error;
       setAppointments(data || []);
     } catch (error) {
       console.error('Error loading appointments:', error);
@@ -69,30 +81,45 @@ export default function AppointmentsPage() {
     }
 
     try {
+      const startTime = String(form.start_time).slice(0, 5);
       const payload = {
         dealer_id: dealerId,
         ...form,
-        customer_id: form.customer_id || null,
-        employee_id: form.employee_id || null,
+        start_time: startTime,
+        // end_time is a Postgres time column: '' is rejected, so work it out from start + duration.
+        end_time: addMinutes(startTime, form.duration_minutes),
+        customer_id: form.customer_id ? parseInt(form.customer_id, 10) : null,
+        employee_id: form.employee_id ? parseInt(form.employee_id, 10) : null,
         vehicle_id: form.vehicle_id || null,
+        customer_name: form.customer_name || null,
+        customer_phone: form.customer_phone || null,
+        customer_email: form.customer_email || null,
+        employee_name: form.employee_name || null,
+        description: form.description || null,
+        location: form.location || null,
+        notes: form.notes || null,
       };
 
+      let error;
       if (editingAppt) {
-        await supabase.from('appointments').update(payload).eq('id', editingAppt.id);
+        payload.updated_at = new Date().toISOString();
+        ({ error } = await supabase.from('appointments').update(payload).eq('id', editingAppt.id).eq('dealer_id', dealerId));
       } else {
-        await supabase.from('appointments').insert(payload);
+        ({ error } = await supabase.from('appointments').insert(payload));
       }
+      if (error) throw error;
 
-      // Log interaction if customer selected
-      if (form.customer_id) {
-        await supabase.from('customer_interactions').insert({
+      // Log interaction on the customer's history when a new appointment is booked
+      if (!editingAppt && payload.customer_id) {
+        const { error: logError } = await supabase.from('customer_interactions').insert({
           dealer_id: dealerId,
-          customer_id: parseInt(form.customer_id),
+          customer_id: payload.customer_id,
           interaction_type: form.appointment_type === 'test_drive' ? 'test_drive' : 'visit',
-          summary: `Appointment scheduled: ${form.title} on ${form.scheduled_date} at ${form.start_time}`,
-          employee_id: form.employee_id ? parseInt(form.employee_id) : null,
-          employee_name: form.employee_name,
+          summary: `Appointment scheduled: ${form.title} on ${form.scheduled_date} at ${startTime}`,
+          employee_id: payload.employee_id,
+          employee_name: payload.employee_name,
         });
+        if (logError) console.warn('Appointment saved, but logging it to the customer history failed:', logError);
       }
 
       setShowForm(false);
@@ -100,12 +127,14 @@ export default function AppointmentsPage() {
       resetForm();
       loadAppointments();
     } catch (error) {
-      alert('Failed to save: ' + error.message);
+      alert('Failed to save appointment: ' + error.message);
     }
   }
 
   async function updateStatus(id, status) {
-    await supabase.from('appointments').update({ status }).eq('id', id);
+    if (status === 'cancelled' && !confirm('Cancel this appointment?')) return;
+    const { error } = await supabase.from('appointments').update({ status, updated_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update appointment: ' + error.message); return; }
     loadAppointments();
   }
 
@@ -120,7 +149,7 @@ export default function AppointmentsPage() {
 
   function openNewAppt(date) {
     resetForm();
-    setForm(f => ({ ...f, scheduled_date: date ? date.toISOString().split('T')[0] : new Date().toISOString().split('T')[0] }));
+    setForm(f => ({ ...f, scheduled_date: localYMD(date || new Date()) }));
     setEditingAppt(null);
     setShowForm(true);
   }
@@ -132,7 +161,7 @@ export default function AppointmentsPage() {
       employee_id: appt.employee_id || '', employee_name: appt.employee_name || '',
       appointment_type: appt.appointment_type, title: appt.title,
       description: appt.description || '', scheduled_date: appt.scheduled_date,
-      start_time: appt.start_time, end_time: appt.end_time || '',
+      start_time: appt.start_time ? String(appt.start_time).slice(0, 5) : '10:00', end_time: appt.end_time || '',
       duration_minutes: appt.duration_minutes || 30, location: appt.location || '',
       vehicle_id: appt.vehicle_id || '', notes: appt.notes || '',
     });
@@ -141,7 +170,7 @@ export default function AppointmentsPage() {
   }
 
   function selectCustomer(c) {
-    setForm(f => ({ ...f, customer_id: c.id, customer_name: c.name, customer_phone: c.phone || '', customer_email: c.email || '' }));
+    setForm(f => ({ ...f, customer_id: c.id, customer_name: displayName(c), customer_phone: c.phone || '', customer_email: c.email || '' }));
   }
 
   const typeColors = {
@@ -162,7 +191,9 @@ export default function AppointmentsPage() {
   };
 
   const weekDays = getWeekDays();
-  const today = new Date().toISOString().split('T')[0];
+  const today = localYMD();
+  const selectedDayStr = localYMD(selectedDate);
+  const listAppts = view === 'day' ? appointments.filter(a => a.scheduled_date === selectedDayStr) : appointments;
 
   const todayAppts = appointments.filter(a => a.scheduled_date === today);
   const upcomingAppts = appointments.filter(a => a.scheduled_date >= today && a.status !== 'cancelled');
@@ -173,8 +204,11 @@ export default function AppointmentsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Appointments</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>
-            {todayAppts.length} today | {upcomingAppts.length} upcoming this week
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>
+            Book test drives, deliveries, and meetings with customers so the whole team can see the schedule.
+          </p>
+          <p style={{ color: theme.textMuted, fontSize: '13px', margin: '2px 0 0' }}>
+            {todayAppts.length} today | {upcomingAppts.length} upcoming this week. Customers are not sent reminders automatically.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -210,7 +244,7 @@ export default function AppointmentsPage() {
       {view === 'week' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
           {weekDays.map(day => {
-            const dateStr = day.toISOString().split('T')[0];
+            const dateStr = localYMD(day);
             const dayAppts = appointments.filter(a => a.scheduled_date === dateStr);
             const isToday = dateStr === today;
 
@@ -228,7 +262,7 @@ export default function AppointmentsPage() {
                       {day.getDate()}
                     </div>
                   </div>
-                  <button onClick={() => openNewAppt(day)} style={{
+                  <button onClick={() => openNewAppt(day)} title="Add an appointment on this day" style={{
                     width: '24px', height: '24px', borderRadius: '50%', border: `1px solid ${theme.border}`,
                     backgroundColor: 'transparent', color: theme.textMuted, cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>+</button>
@@ -262,10 +296,7 @@ export default function AppointmentsPage() {
       {/* List View */}
       {(view === 'list' || view === 'day') && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {(view === 'day'
-            ? appointments.filter(a => a.scheduled_date === selectedDate.toISOString().split('T')[0])
-            : appointments
-          ).map(appt => {
+          {listAppts.map(appt => {
             const tc = typeColors[appt.appointment_type] || typeColors.other;
             const sc = statusColors[appt.status] || statusColors.scheduled;
             return (
@@ -299,7 +330,7 @@ export default function AppointmentsPage() {
                 <div style={{ display: 'flex', gap: '6px' }}>
                   {appt.status === 'scheduled' && (
                     <>
-                      <button onClick={() => updateStatus(appt.id, 'confirmed')} style={{ padding: '6px 12px', backgroundColor: '#22c55e20', color: '#22c55e', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Confirm</button>
+                      <button onClick={() => updateStatus(appt.id, 'confirmed')} title="Mark that the customer confirmed they're coming. Nothing is sent to the customer." style={{ padding: '6px 12px', backgroundColor: '#22c55e20', color: '#22c55e', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Confirm</button>
                       <button onClick={() => updateStatus(appt.id, 'cancelled')} style={{ padding: '6px 12px', backgroundColor: '#ef444420', color: '#ef4444', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                     </>
                   )}
@@ -311,9 +342,10 @@ export default function AppointmentsPage() {
               </div>
             );
           })}
-          {appointments.length === 0 && (
+          {!loading && listAppts.length === 0 && (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>
-              <p style={{ fontSize: '16px' }}>No appointments this week</p>
+              <p style={{ fontSize: '16px' }}>{view === 'day' ? 'No appointments on this day' : 'No appointments this week'}</p>
+              <p style={{ fontSize: '13px' }}>Click "+ New Appointment" to book one, or use the arrows to look at another week.</p>
             </div>
           )}
         </div>
@@ -356,10 +388,10 @@ export default function AppointmentsPage() {
                 <select value={form.customer_id} onChange={(e) => {
                   const c = (customers || []).find(c => c.id === parseInt(e.target.value));
                   if (c) selectCustomer(c);
-                  else setForm(f => ({ ...f, customer_id: '' }));
+                  else setForm(f => ({ ...f, customer_id: '', customer_name: '', customer_phone: '', customer_email: '' }));
                 }} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px' }}>
                   <option value="">Select customer...</option>
-                  {(customers || []).map(c => <option key={c.id} value={c.id}>{c.name} {c.phone ? `(${c.phone})` : ''}</option>)}
+                  {(customers || []).map(c => <option key={c.id} value={c.id}>{displayName(c)} {c.phone ? `(${c.phone})` : ''}</option>)}
                 </select>
               </div>
 

@@ -3,12 +3,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
+import { getPermissions } from '../lib/permissions';
+import AccessDenied from '../components/AccessDenied';
 import BillingPage from './BillingPage';
+
+const maskAccount = (s) => (s ? `••••${String(s).slice(-4)}` : '—');
 
 export default function SettingsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { dealerId, dealer, fetchAllData } = useStore();
+  const { dealerId, dealer, fetchAllData, currentEmployee } = useStore();
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'general');
   const themeContext = useTheme();
   const theme = themeContext?.theme || {
@@ -26,9 +30,13 @@ export default function SettingsPage() {
     zip: '',
     county: '',
     phone: '',
-    email: '',
-    website: ''
+    email: ''
   });
+
+  // Owner-only page. getPermissions() treats "no employee record" as the owner; we also confirm
+  // the signed-in login actually owns this dealership before showing bank numbers or exports.
+  const [access, setAccess] = useState({ checked: false, isOwner: false });
+  const [showAccount, setShowAccount] = useState(false);
 
   // Investor Portal bank info
   const [bankForm, setBankForm] = useState({
@@ -60,7 +68,28 @@ export default function SettingsPage() {
     width: '100%',
     height: '800'
   });
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(null); // which embed code was just copied
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAccess() {
+      if (!getPermissions(currentEmployee).isOwner) {
+        if (!cancelled) setAccess({ checked: true, isOwner: false });
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data: ownerRow } = await supabase
+        .from('dealer_settings')
+        .select('owner_user_id')
+        .eq('id', dealerId)
+        .maybeSingle();
+      if (!cancelled) {
+        setAccess({ checked: true, isOwner: !!session?.user?.id && ownerRow?.owner_user_id === session.user.id });
+      }
+    }
+    if (dealerId) checkAccess();
+    return () => { cancelled = true; };
+  }, [dealerId, currentEmployee]);
 
   // Load dealer data
   useEffect(() => {
@@ -78,8 +107,7 @@ export default function SettingsPage() {
         zip: dealer.zip || '',
         county: dealer.county || '',
         phone: dealer.phone || '',
-        email: dealer.email || '',
-        website: dealer.website || ''
+        email: dealer.email || ''
       });
       setLogoPreview(dealer.logo_url || null);
       setBankForm({
@@ -102,7 +130,7 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('dealer_settings')
         .update({
           dealer_name: form.dealer_name,
@@ -113,12 +141,13 @@ export default function SettingsPage() {
           zip: form.zip,
           county: form.county,
           phone: form.phone,
-          email: form.email,
-          website: form.website
+          email: form.email
         })
-        .eq('id', dealerId);
-      
+        .eq('id', dealerId)
+        .select('id');
+
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('nothing was saved. Your login may not be allowed to change dealership settings.');
       await fetchAllData();
       showMessage('Settings saved successfully!', 'success');
     } catch (err) {
@@ -131,7 +160,7 @@ export default function SettingsPage() {
   const handleSaveBank = async () => {
     setSavingBank(true);
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('dealer_settings')
         .update({
           investor_portal_enabled: bankForm.investor_portal_enabled,
@@ -141,8 +170,10 @@ export default function SettingsPage() {
           investor_bank_account: bankForm.investor_bank_account,
           investor_bank_type: bankForm.investor_bank_type,
         })
-        .eq('id', dealerId);
+        .eq('id', dealerId)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('nothing was saved. Your login may not be allowed to change dealership settings.');
       await fetchAllData();
       showMessage('Investor portal settings saved!', 'success');
     } catch (err) {
@@ -151,17 +182,20 @@ export default function SettingsPage() {
     setSavingBank(false);
   };
 
-  // Logo upload - FIXED VERSION
+  // Logo upload
   const handleLogoUpload = async (e) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
       showMessage('Please select an image file (PNG, JPG, etc.)', 'error');
+      input.value = '';
       return;
     }
     if (file.size > 2 * 1024 * 1024) {
       showMessage('Image must be under 2MB', 'error');
+      input.value = '';
       return;
     }
 
@@ -173,77 +207,41 @@ export default function SettingsPage() {
       const fileName = `dealer-${dealerId}-logo-${Date.now()}.${fileExt}`;
       const filePath = `logos/${fileName}`;
 
-      // Try to upload to dealer-assets bucket
-      let uploadResult = await supabase.storage
-        .from('dealer-assets')
-        .upload(filePath, file, { upsert: true });
-
-      // If bucket doesn't exist, try public bucket
+      // Upload to the dealer-assets bucket; fall back to the public bucket if it doesn't exist.
+      let bucket = 'dealer-assets';
+      let uploadResult = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true });
       if (uploadResult.error && uploadResult.error.message.includes('not found')) {
-        console.log('dealer-assets bucket not found, trying public bucket');
-        uploadResult = await supabase.storage
-          .from('public')
-          .upload(filePath, file, { upsert: true });
-        
-        if (uploadResult.error) {
-          throw new Error('Storage upload failed: ' + uploadResult.error.message);
-        }
-
-        const { data: urlData } = supabase.storage
-          .from('public')
-          .getPublicUrl(filePath);
-
-        // Update database with logo URL
-        const { error: updateError } = await supabase
-          .from('dealer_settings')
-          .update({ logo_url: urlData.publicUrl })
-          .eq('id', dealerId);
-
-        if (updateError) {
-          throw new Error('Database update failed: ' + updateError.message);
-        }
-
-        setLogoPreview(urlData.publicUrl);
-        await fetchAllData();
-        showMessage('Logo uploaded successfully!', 'success');
-        return;
+        bucket = 'public';
+        uploadResult = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true });
       }
-
       if (uploadResult.error) {
         throw new Error('Storage upload failed: ' + uploadResult.error.message);
       }
 
-      // Get public URL from dealer-assets bucket
-      const { data: urlData } = supabase.storage
-        .from('dealer-assets')
-        .getPublicUrl(filePath);
+      const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
 
-      console.log('Logo URL:', urlData.publicUrl);
-
-      // Update database with logo URL
-      const { data: updateData, error: updateError } = await supabase
+      const { data: updated, error: updateError } = await supabase
         .from('dealer_settings')
         .update({ logo_url: urlData.publicUrl })
         .eq('id', dealerId)
-        .select();
-
+        .select('id');
       if (updateError) {
         throw new Error('Database update failed: ' + updateError.message);
       }
-
-      console.log('Update result:', updateData);
+      if (!updated || updated.length === 0) {
+        throw new Error('the logo was uploaded but not saved to your dealership. Your login may not be allowed to change settings.');
+      }
 
       setLogoPreview(urlData.publicUrl);
-      
-      // Force refresh dealer data
       await fetchAllData();
-      
       showMessage('Logo uploaded and saved!', 'success');
     } catch (err) {
       console.error('Logo upload error:', err);
       showMessage('Upload failed: ' + err.message, 'error');
+    } finally {
+      setUploading(false);
+      input.value = '';
     }
-    setUploading(false);
   };
 
   // Remove logo
@@ -251,12 +249,14 @@ export default function SettingsPage() {
     if (!window.confirm('Remove your dealership logo?')) return;
     
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('dealer_settings')
         .update({ logo_url: null })
-        .eq('id', dealerId);
-      
+        .eq('id', dealerId)
+        .select('id');
+
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('nothing was changed. Your login may not be allowed to change settings.');
       setLogoPreview(null);
       await fetchAllData();
       showMessage('Logo removed', 'success');
@@ -269,20 +269,25 @@ export default function SettingsPage() {
   const handleExportData = async () => {
     setExportingData(true);
     try {
-      const { data: inventory } = await supabase.from('inventory').select('*').eq('dealer_id', dealerId);
-      const { data: deals } = await supabase.from('deals').select('*').eq('dealer_id', dealerId);
-      const { data: customers } = await supabase.from('customers').select('*').eq('dealer_id', dealerId);
-      const { data: employees } = await supabase.from('employees').select('*').eq('dealer_id', dealerId);
-      const { data: bhphLoans } = await supabase.from('bhph_loans').select('*').eq('dealer_id', dealerId);
+      const [inv, dls, cust, emps, loans] = await Promise.all([
+        supabase.from('inventory').select('*').eq('dealer_id', dealerId),
+        supabase.from('deals').select('*').eq('dealer_id', dealerId),
+        supabase.from('customers').select('*').eq('dealer_id', dealerId),
+        supabase.from('employees').select('*').eq('dealer_id', dealerId),
+        supabase.from('bhph_loans').select('*').eq('dealer_id', dealerId)
+      ]);
+      const failed = [['inventory', inv], ['deals', dls], ['customers', cust], ['employees', emps], ['BHPH loans', loans]].find(([, r]) => r.error);
+      if (failed) throw new Error(`could not read ${failed[0]} (${failed[1].error.message}). No file was downloaded.`);
 
       const exportData = {
         exportDate: new Date().toISOString(),
+        includes: 'Dealership profile, inventory, deals, customers, employees, BHPH loans',
         dealer: dealer,
-        inventory: inventory || [],
-        deals: deals || [],
-        customers: customers || [],
-        employees: employees || [],
-        bhphLoans: bhphLoans || []
+        inventory: inv.data || [],
+        deals: dls.data || [],
+        customers: cust.data || [],
+        employees: emps.data || [],
+        bhphLoans: loans.data || []
       };
 
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -325,13 +330,33 @@ export default function SettingsPage() {
   title="Find Me a Rig"
 ></iframe>`;
 
-  const copyCode = (code) => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyCode = (code, which) => {
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(code))
+      .then(() => {
+        setCopied(which);
+        setTimeout(() => setCopied(c => (c === which ? null : c)), 2000);
+      })
+      .catch(() => showMessage("Couldn't copy automatically. Select the code in the box and copy it by hand.", 'error'));
   };
 
   if (!dealerId) return null;
+
+  if (!access.checked) {
+    return (
+      <div style={{ padding: '60px 32px', textAlign: 'center', backgroundColor: theme.bg, minHeight: '100vh' }}>
+        <div style={{ fontSize: '14px', color: theme.textMuted }}>Checking access...</div>
+      </div>
+    );
+  }
+
+  if (!access.isOwner) {
+    return (
+      <div style={{ backgroundColor: theme.bg, minHeight: '100vh' }}>
+        <AccessDenied theme={theme} />
+      </div>
+    );
+  }
 
   // Styles
   const inputStyle = {
@@ -549,14 +574,37 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label style={labelStyle}>Account Number *</label>
-                  <input
-                    type="text"
-                    value={bankForm.investor_bank_account}
-                    onChange={e => setBankForm({ ...bankForm, investor_bank_account: e.target.value.replace(/\D/g, '') })}
-                    style={inputStyle}
-                    placeholder="Account number"
-                  />
+                  <label style={{ ...labelStyle, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Account Number *</span>
+                    {bankForm.investor_bank_account && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAccount(s => !s)}
+                        style={{ background: 'none', border: 'none', color: theme.accent, fontSize: '12px', cursor: 'pointer', padding: 0 }}
+                      >
+                        {showAccount ? 'Hide' : 'Show / edit'}
+                      </button>
+                    )}
+                  </label>
+                  {bankForm.investor_bank_account && !showAccount ? (
+                    <input
+                      type="text"
+                      value={maskAccount(bankForm.investor_bank_account)}
+                      readOnly
+                      onFocus={() => setShowAccount(true)}
+                      style={{ ...inputStyle, fontFamily: 'monospace' }}
+                      aria-label="Account number (hidden)"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      value={bankForm.investor_bank_account}
+                      onChange={e => setBankForm({ ...bankForm, investor_bank_account: e.target.value.replace(/\D/g, '') })}
+                      style={inputStyle}
+                      placeholder="Account number"
+                      autoComplete="off"
+                    />
+                  )}
                 </div>
                 <div>
                   <label style={labelStyle}>Account Type</label>
@@ -597,7 +645,7 @@ export default function SettingsPage() {
                   </div>
                   <div>
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>Account Number</div>
-                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, fontFamily: 'monospace' }}>{bankForm.investor_bank_account || '—'}</div>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: theme.text, fontFamily: 'monospace' }}>{showAccount ? (bankForm.investor_bank_account || '—') : maskAccount(bankForm.investor_bank_account)}</div>
                   </div>
                 </div>
               </div>
@@ -736,13 +784,6 @@ export default function SettingsPage() {
                     </button>
                   )}
                 </div>
-
-                {/* Debug info */}
-                {logoPreview && (
-                  <p style={{ color: theme.textMuted, fontSize: '11px', marginTop: '12px', wordBreak: 'break-all' }}>
-                    Current: {logoPreview.substring(0, 60)}...
-                  </p>
-                )}
               </div>
             </div>
           </div>
@@ -855,17 +896,6 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
-
-              <div>
-                <label style={labelStyle}>Website</label>
-                <input
-                  type="url"
-                  value={form.website}
-                  onChange={e => setForm({ ...form, website: e.target.value })}
-                  style={inputStyle}
-                  placeholder="https://yourdealer.com"
-                />
-              </div>
             </div>
 
             <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
@@ -884,15 +914,19 @@ export default function SettingsPage() {
             <h2 style={{ fontSize: '18px', fontWeight: '600', color: theme.text, marginBottom: '12px' }}>
               Data Export
             </h2>
-            <p style={{ color: theme.textMuted, fontSize: '13px', margin: '0 0 16px' }}>
-              Download all your dealership data as a JSON backup file.
+            <p style={{ color: theme.textMuted, fontSize: '13px', margin: '0 0 8px' }}>
+              Download a backup file (JSON) of your dealership profile, inventory, deals, customers, employees and BHPH loans.
+              It does not include Books, payroll, commissions, documents or photos.
             </p>
-            <button 
-              onClick={handleExportData} 
+            <p style={{ color: '#eab308', fontSize: '12px', margin: '0 0 16px' }}>
+              The file has private information (employee SSN last 4, birth dates, bank and pay details, and your investor bank account). Keep it somewhere safe.
+            </p>
+            <button
+              onClick={handleExportData}
               disabled={exportingData}
               style={{ ...buttonSecondary, opacity: exportingData ? 0.6 : 1 }}
             >
-              {exportingData ? 'Exporting...' : 'Export All Data'}
+              {exportingData ? 'Exporting...' : 'Download Backup'}
             </button>
           </div>
         </div>
@@ -1061,20 +1095,20 @@ export default function SettingsPage() {
             <div style={{ marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <label style={{ fontSize: '12px', color: theme.textSecondary, fontWeight: '600', textTransform: 'uppercase' }}>Inventory Widget Embed Code</label>
-                <button 
-                  onClick={() => copyCode(inventoryIframeCode)}
-                  style={{ 
-                    padding: '6px 14px', 
-                    backgroundColor: copied ? '#22c55e' : theme.accent, 
-                    border: 'none', 
-                    borderRadius: '6px', 
-                    color: '#fff', 
-                    fontSize: '12px', 
-                    fontWeight: '600', 
-                    cursor: 'pointer' 
+                <button
+                  onClick={() => copyCode(inventoryIframeCode, 'inventory')}
+                  style={{
+                    padding: '6px 14px',
+                    backgroundColor: copied === 'inventory' ? '#22c55e' : theme.accent,
+                    border: 'none',
+                    borderRadius: '6px',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
                   }}
                 >
-                  {copied ? 'Copied!' : 'Copy Code'}
+                  {copied === 'inventory' ? 'Copied!' : 'Copy Code'}
                 </button>
               </div>
               <textarea
@@ -1114,20 +1148,20 @@ export default function SettingsPage() {
             <div style={{ marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <label style={{ fontSize: '12px', color: theme.textSecondary, fontWeight: '600', textTransform: 'uppercase' }}>Find Rig Widget Embed Code</label>
-                <button 
-                  onClick={() => copyCode(findRigIframeCode)}
-                  style={{ 
-                    padding: '6px 14px', 
-                    backgroundColor: copied ? '#22c55e' : theme.accent, 
-                    border: 'none', 
-                    borderRadius: '6px', 
-                    color: '#fff', 
-                    fontSize: '12px', 
-                    fontWeight: '600', 
-                    cursor: 'pointer' 
+                <button
+                  onClick={() => copyCode(findRigIframeCode, 'findrig')}
+                  style={{
+                    padding: '6px 14px',
+                    backgroundColor: copied === 'findrig' ? '#22c55e' : theme.accent,
+                    border: 'none',
+                    borderRadius: '6px',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
                   }}
                 >
-                  {copied ? 'Copied!' : 'Copy Code'}
+                  {copied === 'findrig' ? 'Copied!' : 'Copy Code'}
                 </button>
               </div>
               <textarea

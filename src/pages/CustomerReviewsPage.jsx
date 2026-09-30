@@ -3,10 +3,14 @@ import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { useTheme } from '../components/Layout';
 
+// Local calendar date as YYYY-MM-DD (toISOString() is UTC and flips to tomorrow in the evening in Utah).
+const localYMD = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Many customers only have `name` set (first_name/last_name are often null).
+const displayName = (c) => (c && (c.name || [c.first_name, c.last_name].filter(Boolean).join(' '))) || 'Unnamed customer';
+
 export default function CustomerReviewsPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +33,7 @@ export default function CustomerReviewsPage() {
   const [form, setForm] = useState({
     customer_id: '', salesperson_id: '', deal_id: '',
     platform: 'google', reviewer_name: '', rating: '5', title: '',
-    review_text: '', review_date: new Date().toISOString().split('T')[0],
+    review_text: '', review_date: localYMD(),
     external_url: '', verified_purchase: false, featured: false, notes: ''
   });
 
@@ -37,18 +41,19 @@ export default function CustomerReviewsPage() {
 
   const fetchReviews = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('customer_reviews')
       .select('*')
       .eq('dealer_id', dealerId)
       .order('review_date', { ascending: false });
+    if (error) console.error('Error loading reviews:', error);
     setReviews(data || []);
     setLoading(false);
   };
 
   const fetchRelated = async () => {
     const [c, e] = await Promise.all([
-      supabase.from('customers').select('id, first_name, last_name').eq('dealer_id', dealerId),
+      supabase.from('customers').select('id, name, first_name, last_name').eq('dealer_id', dealerId).order('name'),
       supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true)
     ]);
     setCustomers(c.data || []);
@@ -56,6 +61,7 @@ export default function CustomerReviewsPage() {
   };
 
   const handleSave = async () => {
+    if (!form.reviewer_name.trim()) { alert("Please enter the reviewer's name."); return; }
     const sentiment = parseInt(form.rating) >= 4 ? 'positive' : parseInt(form.rating) >= 3 ? 'neutral' : 'negative';
     const payload = {
       dealer_id: dealerId,
@@ -63,22 +69,25 @@ export default function CustomerReviewsPage() {
       salesperson_id: form.salesperson_id ? parseInt(form.salesperson_id) : null,
       deal_id: form.deal_id ? parseInt(form.deal_id) : null,
       platform: form.platform,
-      reviewer_name: form.reviewer_name,
+      reviewer_name: form.reviewer_name.trim(),
       rating: parseInt(form.rating),
       title: form.title || null,
       review_text: form.review_text || null,
-      review_date: form.review_date,
+      review_date: form.review_date || localYMD(),
       external_url: form.external_url || null,
       verified_purchase: form.verified_purchase,
       featured: form.featured,
       sentiment,
       notes: form.notes || null
     };
+    let error;
     if (editingReview) {
-      await supabase.from('customer_reviews').update(payload).eq('id', editingReview.id);
+      payload.updated_at = new Date().toISOString();
+      ({ error } = await supabase.from('customer_reviews').update(payload).eq('id', editingReview.id).eq('dealer_id', dealerId));
     } else {
-      await supabase.from('customer_reviews').insert(payload);
+      ({ error } = await supabase.from('customer_reviews').insert(payload));
     }
+    if (error) { alert('Could not save review: ' + error.message); return; }
     setShowModal(false);
     setEditingReview(null);
     resetForm();
@@ -88,7 +97,7 @@ export default function CustomerReviewsPage() {
   const resetForm = () => setForm({
     customer_id: '', salesperson_id: '', deal_id: '',
     platform: 'google', reviewer_name: '', rating: '5', title: '',
-    review_text: '', review_date: new Date().toISOString().split('T')[0],
+    review_text: '', review_date: localYMD(),
     external_url: '', verified_purchase: false, featured: false, notes: ''
   });
 
@@ -107,8 +116,9 @@ export default function CustomerReviewsPage() {
   };
 
   const deleteReview = async (id) => {
-    if (!confirm('Delete this review?')) return;
-    await supabase.from('customer_reviews').delete().eq('id', id);
+    if (!confirm('Delete this review? This cannot be undone.')) return;
+    const { error } = await supabase.from('customer_reviews').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not delete review: ' + error.message); return; }
     fetchReviews();
   };
 
@@ -119,23 +129,27 @@ export default function CustomerReviewsPage() {
   };
 
   const saveResponse = async () => {
-    await supabase.from('customer_reviews').update({
+    const { error } = await supabase.from('customer_reviews').update({
       responded: true,
       response_text: responseText,
-      responded_at: new Date().toISOString()
-    }).eq('id', respondingTo.id);
+      responded_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq('id', respondingTo.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not save response: ' + error.message); return; }
     setShowResponseModal(false);
     setRespondingTo(null);
     fetchReviews();
   };
 
   const toggleFeatured = async (id, current) => {
-    await supabase.from('customer_reviews').update({ featured: !current }).eq('id', id);
+    const { error } = await supabase.from('customer_reviews').update({ featured: !current }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not update review: ' + error.message); return; }
     fetchReviews();
   };
 
   const toggleFlag = async (id, current) => {
-    await supabase.from('customer_reviews').update({ flagged: !current }).eq('id', id);
+    const { error } = await supabase.from('customer_reviews').update({ flagged: !current }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not update review: ' + error.message); return; }
     fetchReviews();
   };
 
@@ -171,7 +185,7 @@ export default function CustomerReviewsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Customer Reviews</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Reputation management and review tracking</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Keep track of what customers say about you online. Reviews are added by hand; OG Dealer doesn't pull them from Google or other sites.</p>
         </div>
         <button onClick={() => { resetForm(); setEditingReview(null); setShowModal(true); }} style={{
           padding: '10px 20px', backgroundColor: theme.accent, color: '#fff',
@@ -197,7 +211,7 @@ export default function CustomerReviewsPage() {
           <div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>{stats.fiveStar}</div>
         </div>
         <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '12px', padding: '16px' }}>
-          <div style={{ fontSize: '12px', color: theme.textSecondary }}>Needs Response</div>
+          <div style={{ fontSize: '12px', color: theme.textSecondary }} title="Reviews of 3 stars or less that you haven't replied to yet">Needs Response</div>
           <div style={{ fontSize: '24px', fontWeight: '700', color: stats.needsResponse > 0 ? '#ef4444' : '#22c55e' }}>{stats.needsResponse}</div>
         </div>
       </div>
@@ -237,7 +251,11 @@ export default function CustomerReviewsPage() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: theme.textSecondary }}>Loading...</div>
       ) : filtered.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No reviews found</div>
+        <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+          {reviews.length > 0
+            ? 'No reviews match these filters. Set them back to "All" to see every review.'
+            : 'No reviews yet. When a customer leaves you a review on Google, Facebook, or anywhere else, click "+ Add Review" to log it here.'}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {filtered.map(review => (
@@ -258,18 +276,18 @@ export default function CustomerReviewsPage() {
                   <div style={{ fontSize: '12px', color: theme.textMuted }}>{new Date(review.review_date + 'T00:00:00').toLocaleDateString()}</div>
                 </div>
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  <button onClick={() => toggleFeatured(review.id, review.featured)} style={{ background: 'none', border: 'none', color: review.featured ? '#f59e0b' : theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>{review.featured ? 'Unfeat' : 'Feat'}</button>
-                  <button onClick={() => toggleFlag(review.id, review.flagged)} style={{ background: 'none', border: 'none', color: review.flagged ? '#ef4444' : theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>Flag</button>
-                  <button onClick={() => openResponse(review)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '13px' }}>Reply</button>
+                  <button onClick={() => toggleFeatured(review.id, review.featured)} title="Mark as one of your best reviews" style={{ background: 'none', border: 'none', color: review.featured ? '#f59e0b' : theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>{review.featured ? 'Unfeature' : 'Feature'}</button>
+                  <button onClick={() => toggleFlag(review.id, review.flagged)} title="Mark a review that needs attention (fake, unfair, or a problem to fix)" style={{ background: 'none', border: 'none', color: review.flagged ? '#ef4444' : theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>{review.flagged ? 'Unflag' : 'Flag'}</button>
+                  <button onClick={() => openResponse(review)} title="Write and save your reply" style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '13px' }}>Reply</button>
                   <button onClick={() => openEdit(review)} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '13px' }}>Edit</button>
-                  <button onClick={() => deleteReview(review.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '13px' }}>Del</button>
+                  <button onClick={() => deleteReview(review.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '13px' }}>Delete</button>
                 </div>
               </div>
               {review.title && <div style={{ fontWeight: '600', color: theme.text, fontSize: '14px', marginBottom: '4px' }}>{review.title}</div>}
               {review.review_text && <div style={{ fontSize: '14px', color: theme.textSecondary, lineHeight: '1.5' }}>{review.review_text}</div>}
               {review.responded && (
                 <div style={{ marginTop: '12px', padding: '10px', backgroundColor: theme.bg, borderRadius: '8px', borderLeft: `3px solid ${theme.accent}` }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: theme.accent, marginBottom: '4px' }}>Dealer Response</div>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: theme.accent, marginBottom: '4px' }} title="Saved in OG Dealer only. It is not posted to the review site.">Dealer Response (saved here)</div>
                   <div style={{ fontSize: '13px', color: theme.textSecondary }}>{review.response_text}</div>
                 </div>
               )}
@@ -295,8 +313,11 @@ export default function CustomerReviewsPage() {
                 {[5, 4, 3, 2, 1].map(r => <option key={r} value={r}>{r} Star{r > 1 ? 's' : ''}</option>)}
               </select></div>
               <div><label style={labelStyle}>Date</label><input type="date" value={form.review_date} onChange={e => setForm({ ...form, review_date: e.target.value })} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Customer</label><select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} style={inputStyle}>
-                <option value="">Select</option>{customers.map(c => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
+              <div><label style={labelStyle}>Customer</label><select value={form.customer_id} onChange={e => {
+                const c = customers.find(x => String(x.id) === e.target.value);
+                setForm({ ...form, customer_id: e.target.value, reviewer_name: form.reviewer_name || (c ? displayName(c) : '') });
+              }} style={inputStyle}>
+                <option value="">Select</option>{customers.map(c => <option key={c.id} value={c.id}>{displayName(c)}</option>)}
               </select></div>
               <div><label style={labelStyle}>Salesperson</label><select value={form.salesperson_id} onChange={e => setForm({ ...form, salesperson_id: e.target.value })} style={inputStyle}>
                 <option value="">Select</option>{employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
@@ -306,7 +327,7 @@ export default function CustomerReviewsPage() {
               <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>External URL</label><input value={form.external_url} onChange={e => setForm({ ...form, external_url: e.target.value })} style={inputStyle} placeholder="https://..." /></div>
               <div style={{ display: 'flex', gap: '16px', gridColumn: '1 / -1' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: theme.text, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={form.verified_purchase} onChange={e => setForm({ ...form, verified_purchase: e.target.checked })} /> Verified Purchase
+                  <input type="checkbox" checked={form.verified_purchase} onChange={e => setForm({ ...form, verified_purchase: e.target.checked })} /> <span title="Check if you confirmed this person actually bought from you">Verified Purchase</span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: theme.text, cursor: 'pointer' }}>
                   <input type="checkbox" checked={form.featured} onChange={e => setForm({ ...form, featured: e.target.checked })} /> Featured
@@ -335,6 +356,9 @@ export default function CustomerReviewsPage() {
             </div>
             <label style={labelStyle}>Your Response</label>
             <textarea value={responseText} onChange={e => setResponseText(e.target.value)} style={{ ...inputStyle, minHeight: '100px', resize: 'vertical' }} placeholder="Thank you for your feedback..." />
+            <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '6px' }}>
+              This saves your reply in OG Dealer only. To reply publicly, copy it and post it on {platforms[respondingTo?.platform] || 'the review site'} yourself.
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '16px' }}>
               <button onClick={() => setShowResponseModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveResponse} disabled={!responseText} style={{ padding: '10px 20px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', opacity: !responseText ? 0.5 : 1 }}>Save Response</button>

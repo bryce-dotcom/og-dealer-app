@@ -22,7 +22,10 @@ export default function VehicleDetailPage() {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
-  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', category: 'repair' });
+  // Today's LOCAL date as YYYY-MM-DD (toISOString would give the UTC date, which is tomorrow in the evening)
+  const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', category: 'repair', expense_date: localToday() });
+  const [savingExpense, setSavingExpense] = useState(false);
 
   useEffect(() => {
     if (dealerId && id) loadAll();
@@ -44,7 +47,8 @@ export default function VehicleDetailPage() {
     const [expRes, reconRes, listRes, tradeRes, gpsRes] = await Promise.all([
       supabase.from('inventory_expenses').select('*').eq('inventory_id', id).eq('dealer_id', dealerId).order('created_at', { ascending: false }),
       supabase.from('reconditioning_tasks').select('*').eq('vehicle_id', id).eq('dealer_id', dealerId).order('sort_order'),
-      supabase.from('marketplace_listings').select('*').eq('vehicle_id', id).eq('dealer_id', dealerId).order('created_at', { ascending: false }),
+      // marketplace_listings keys vehicles by inventory_id (NOT vehicle_id) and names the platform `marketplace`
+      supabase.from('marketplace_listings').select('*').eq('inventory_id', id).eq('dealer_id', dealerId).order('created_at', { ascending: false }),
       supabase.from('trade_ins').select('*').eq('inventory_id', id).eq('dealer_id', dealerId),
       supabase.from('vehicle_gps_tracking').select('*').eq('vehicle_id', id).eq('dealer_id', dealerId).maybeSingle(),
     ]);
@@ -75,21 +79,28 @@ export default function VehicleDetailPage() {
 
   const formatDate = (d) => {
     if (!d) return '-';
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    // Date-only values (YYYY-MM-DD) are parsed as LOCAL dates so they don't show as the day before
+    const parsed = typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + 'T00:00:00') : new Date(d);
+    return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
   const handleAddExpense = async () => {
-    if (!expenseForm.description || !expenseForm.amount) return;
+    if (!expenseForm.description) { alert('Please enter a description.'); return; }
+    if (!expenseForm.amount || isNaN(parseFloat(expenseForm.amount))) { alert('Please enter an amount.'); return; }
+    setSavingExpense(true);
     // inventory_expenses keys vehicles by inventory_id, NOT vehicle_id.
     // Note: schema does not have a `vendor` column on inventory_expenses; drop it.
-    await supabase.from('inventory_expenses').insert({
+    const { error } = await supabase.from('inventory_expenses').insert({
       dealer_id: dealerId,
       inventory_id: id,
       description: expenseForm.description,
       amount: parseFloat(expenseForm.amount),
       category: expenseForm.category,
+      expense_date: expenseForm.expense_date || localToday(),
     });
-    setExpenseForm({ description: '', amount: '', category: 'repair' });
+    setSavingExpense(false);
+    if (error) { alert('Failed to add expense: ' + error.message); return; }
+    setExpenseForm({ description: '', amount: '', category: 'repair', expense_date: localToday() });
     setShowExpenseModal(false);
     loadAll();
   };
@@ -130,16 +141,16 @@ export default function VehicleDetailPage() {
   // Look up the buyer via the deal that sold this vehicle (vehicle has no client_customer column).
   const dealForVehicle = (deals || []).find(d => d.vehicle_id === id);
   const buyerCustomer = dealForVehicle ? (customers || []).find(c => c.id === dealForVehicle.customer_id) : null;
-  const buyerName = buyerCustomer
-    ? [buyerCustomer.first_name, buyerCustomer.last_name].filter(Boolean).join(' ')
-    : (dealForVehicle?.purchaser_name || '-');
+  const buyerName = (buyerCustomer
+    ? (buyerCustomer.name || [buyerCustomer.first_name, buyerCustomer.last_name].filter(Boolean).join(' '))
+    : '') || dealForVehicle?.purchaser_name || '-';
 
   const reconCompleted = reconTasks.filter(t => t.status === 'completed').length;
   const reconTotal = reconTasks.length;
   const reconPercent = reconTotal > 0 ? Math.round((reconCompleted / reconTotal) * 100) : 0;
 
   const statusColors = {
-    'In Stock': '#3b82f6', 'Sold': '#22c55e', 'BHPH': '#eab308', 'Pending': '#f97316', 'Wholesale': '#ef4444'
+    'In Stock': '#3b82f6', 'For Sale': '#06b6d4', 'Sold': '#22c55e', 'BHPH': '#eab308', 'Pending': '#f97316', 'Wholesale': '#ef4444', 'Fleet': '#8b5cf6'
   };
 
   const tabs = [
@@ -366,8 +377,8 @@ export default function VehicleDetailPage() {
                 {listings.map(l => (
                   <div key={l.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${theme.border}` }}>
                     <div>
-                      <div style={{ color: theme.text, fontSize: '13px', fontWeight: '500', textTransform: 'capitalize' }}>{l.platform}</div>
-                      <div style={{ color: theme.textMuted, fontSize: '11px' }}>Listed {formatDate(l.created_at)}</div>
+                      <div style={{ color: theme.text, fontSize: '13px', fontWeight: '500', textTransform: 'capitalize' }}>{l.marketplace}</div>
+                      <div style={{ color: theme.textMuted, fontSize: '11px' }}>Added {formatDate(l.created_at)}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <span style={{
@@ -375,7 +386,6 @@ export default function VehicleDetailPage() {
                         backgroundColor: l.status === 'active' ? 'rgba(34,197,94,0.15)' : 'rgba(161,161,170,0.15)',
                         color: l.status === 'active' ? '#22c55e' : theme.textMuted,
                       }}>{l.status}</span>
-                      {l.views > 0 && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '2px' }}>{l.views} views</div>}
                     </div>
                   </div>
                 ))}
@@ -421,7 +431,7 @@ export default function VehicleDetailPage() {
           </div>
 
           {expenses.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No expenses recorded</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No expenses recorded yet. Click "+ Add Expense" to log repairs, parts, detailing and other costs for this car.</div>
           ) : (
             <div style={card}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -469,7 +479,7 @@ export default function VehicleDetailPage() {
           )}
 
           {reconTasks.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No reconditioning tasks</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No reconditioning tasks. Add repair/prep tasks for this car on the Reconditioning page.</div>
           ) : (
             reconTasks.map(t => (
               <div key={t.id} style={{ ...card, display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -502,23 +512,21 @@ export default function VehicleDetailPage() {
       {activeTab === 'listings' && (
         <div>
           {listings.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>Not listed on any marketplace</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No marketplace listing records for this car.</div>
           ) : (
             listings.map(l => (
               <div key={l.id} style={{ ...card, display: 'flex', alignItems: 'center', gap: '16px' }}>
                 <div style={{ width: '40px', height: '40px', borderRadius: '8px', backgroundColor: theme.border, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textSecondary, fontSize: '18px', fontWeight: '700' }}>
-                  {(l.platform || '?')[0].toUpperCase()}
+                  {(l.marketplace || '?')[0].toUpperCase()}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ color: theme.text, fontSize: '14px', fontWeight: '500', textTransform: 'capitalize' }}>{l.platform}</div>
+                  <div style={{ color: theme.text, fontSize: '14px', fontWeight: '500', textTransform: 'capitalize' }}>{l.marketplace}</div>
                   <div style={{ color: theme.textMuted, fontSize: '12px' }}>
-                    Listed {formatDate(l.created_at)} • {formatCurrency(l.listed_price)}
+                    Added {formatDate(l.created_at)}{l.metadata?.price != null ? ` • ${formatCurrency(l.metadata.price)}` : ''}
                   </div>
+                  {l.error_message && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '2px' }}>{l.error_message}</div>}
                 </div>
                 <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                  {l.views > 0 && <div style={{ textAlign: 'center' }}><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{l.views}</div><div style={{ color: theme.textMuted, fontSize: '10px' }}>Views</div></div>}
-                  {l.inquiries > 0 && <div style={{ textAlign: 'center' }}><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{l.inquiries}</div><div style={{ color: theme.textMuted, fontSize: '10px' }}>Inquiries</div></div>}
-                  {l.leads_generated > 0 && <div style={{ textAlign: 'center' }}><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{l.leads_generated}</div><div style={{ color: theme.textMuted, fontSize: '10px' }}>Leads</div></div>}
                   <span style={{
                     padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: '600',
                     backgroundColor: l.status === 'active' ? 'rgba(34,197,94,0.15)' : l.status === 'sold' ? 'rgba(59,130,246,0.15)' : 'rgba(161,161,170,0.15)',
@@ -565,8 +573,9 @@ export default function VehicleDetailPage() {
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '16px', padding: '24px', width: '420px', maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ color: theme.text, fontSize: '18px', fontWeight: '600', marginBottom: '20px' }}>Add Expense</h3>
             {[
-              { key: 'description', label: 'Description', type: 'text' },
-              { key: 'amount', label: 'Amount', type: 'number' },
+              { key: 'description', label: 'Description *', type: 'text' },
+              { key: 'amount', label: 'Amount *', type: 'number' },
+              { key: 'expense_date', label: 'Date', type: 'date' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '6px' }}>{f.label}</label>
@@ -588,7 +597,7 @@ export default function VehicleDetailPage() {
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button onClick={() => setShowExpenseModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
-              <button onClick={handleAddExpense} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>Add Expense</button>
+              <button onClick={handleAddExpense} disabled={savingExpense} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600', opacity: savingExpense ? 0.6 : 1 }}>{savingExpense ? 'Saving...' : 'Add Expense'}</button>
             </div>
           </div>
         </div>

@@ -19,8 +19,10 @@ export default function CRMWorkflowsPage() {
     trigger_type: 'new_lead',
     trigger_conditions: {},
     steps: [{ step: 1, action: 'send_sms', template: '', delay_hours: 0 }],
-    active: true
+    active: false
   });
+
+  // NOTE: nothing executes crm_workflows yet (no edge function / cron reads them), so this page only stores plans.
 
   const triggerTypes = {
     new_lead: { label: 'New Lead', icon: '🎯', desc: 'When a new lead is created' },
@@ -49,10 +51,12 @@ export default function CRMWorkflowsPage() {
 
   async function loadData() {
     setLoading(true);
-    const [{ data: wf }, { data: rn }] = await Promise.all([
+    const [{ data: wf, error: wfError }, { data: rn, error: rnError }] = await Promise.all([
       supabase.from('crm_workflows').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }),
       supabase.from('crm_workflow_runs').select('*').eq('dealer_id', dealerId).order('started_at', { ascending: false }).limit(50)
     ]);
+    if (wfError) console.error('Error loading workflows:', wfError);
+    if (rnError) console.error('Error loading workflow runs:', rnError);
     setWorkflows(wf || []);
     setRuns(rn || []);
     setLoading(false);
@@ -76,39 +80,45 @@ export default function CRMWorkflowsPage() {
   }
 
   async function handleSave() {
+    if (!form.name.trim()) { alert('Please give the workflow a name.'); return; }
     try {
       const payload = {
         dealer_id: dealerId,
-        name: form.name,
-        description: form.description,
+        name: form.name.trim(),
+        description: form.description || null,
         trigger_type: form.trigger_type,
         trigger_conditions: form.trigger_conditions,
         steps: form.steps,
         active: form.active
       };
 
+      let error;
       if (selectedWorkflow) {
-        await supabase.from('crm_workflows').update(payload).eq('id', selectedWorkflow.id);
+        payload.updated_at = new Date().toISOString();
+        ({ error } = await supabase.from('crm_workflows').update(payload).eq('id', selectedWorkflow.id).eq('dealer_id', dealerId));
       } else {
-        await supabase.from('crm_workflows').insert(payload);
+        ({ error } = await supabase.from('crm_workflows').insert(payload));
       }
+      if (error) throw error;
       setShowModal(false);
       setSelectedWorkflow(null);
       resetForm();
       loadData();
     } catch (err) {
-      alert('Failed to save: ' + err.message);
+      alert('Failed to save workflow: ' + err.message);
     }
   }
 
   async function toggleActive(wf) {
-    await supabase.from('crm_workflows').update({ active: !wf.active }).eq('id', wf.id);
+    const { error } = await supabase.from('crm_workflows').update({ active: !wf.active, updated_at: new Date().toISOString() }).eq('id', wf.id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update workflow: ' + error.message); return; }
     loadData();
   }
 
   async function handleDelete(id) {
-    if (!confirm('Delete this workflow?')) return;
-    await supabase.from('crm_workflows').delete().eq('id', id);
+    if (!confirm('Delete this workflow? This cannot be undone.')) return;
+    const { error } = await supabase.from('crm_workflows').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete workflow: ' + error.message); return; }
     loadData();
   }
 
@@ -120,13 +130,13 @@ export default function CRMWorkflowsPage() {
       trigger_type: wf.trigger_type,
       trigger_conditions: wf.trigger_conditions || {},
       steps: wf.steps || [{ step: 1, action: 'send_sms', template: '', delay_hours: 0 }],
-      active: wf.active
+      active: !!wf.active
     });
     setShowModal(true);
   }
 
   function resetForm() {
-    setForm({ name: '', description: '', trigger_type: 'new_lead', trigger_conditions: {}, steps: [{ step: 1, action: 'send_sms', template: '', delay_hours: 0 }], active: true });
+    setForm({ name: '', description: '', trigger_type: 'new_lead', trigger_conditions: {}, steps: [{ step: 1, action: 'send_sms', template: '', delay_hours: 0 }], active: false });
   }
 
   function getRunStatusStyle(status) {
@@ -155,16 +165,22 @@ export default function CRMWorkflowsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>CRM Workflows</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Automated customer follow-ups & engagement</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Plan follow-up steps for customers, like "text new leads, then call them the next day."</p>
         </div>
         <button onClick={() => { setSelectedWorkflow(null); resetForm(); setShowModal(true); }} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ New Workflow</button>
+      </div>
+
+      {/* Honesty notice: workflows are saved but never executed yet */}
+      <div style={{ marginBottom: '24px', padding: '14px 16px', borderRadius: '10px', border: '1px solid #eab30860', backgroundColor: '#eab30815', color: theme.text, fontSize: '13px', lineHeight: '1.5' }}>
+        <strong style={{ color: '#eab308' }}>Workflows don't run yet.</strong> You can plan and save them here, but OG Dealer will not send texts or emails,
+        create tasks, or do anything else on its own, even for workflows that are turned on. Keep following up with customers by hand for now.
       </div>
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '24px' }}>
         {[
-          { label: 'Active Workflows', value: activeWorkflows.length, color: '#22c55e' },
-          { label: 'Inactive', value: inactiveWorkflows.length, color: '#71717a' },
+          { label: 'Turned On (not running yet)', value: activeWorkflows.length, color: '#22c55e' },
+          { label: 'Turned Off', value: inactiveWorkflows.length, color: '#71717a' },
           { label: 'Total Runs', value: workflows.reduce((sum, w) => sum + (w.runs_count || 0), 0), color: '#3b82f6' },
           { label: 'Running Now', value: runs.filter(r => r.status === 'running').length, color: '#f59e0b' },
           { label: 'Completed', value: runs.filter(r => r.status === 'completed').length, color: '#22c55e' },
@@ -190,7 +206,7 @@ export default function CRMWorkflowsPage() {
           {workflows.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
               <div style={{ fontSize: '48px', marginBottom: '12px' }}>🤖</div>
-              <p>No workflows yet. Create your first automated workflow.</p>
+              <p>No workflows yet. Click "+ New Workflow" to plan your follow-up steps. They won't run automatically yet.</p>
             </div>
           ) : (
             <div style={{ display: 'grid', gap: '12px' }}>
@@ -204,13 +220,13 @@ export default function CRMWorkflowsPage() {
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ color: theme.text, fontWeight: '700', fontSize: '16px' }}>{wf.name}</span>
-                            <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600', backgroundColor: wf.active ? 'rgba(34,197,94,0.15)' : 'rgba(113,113,122,0.15)', color: wf.active ? '#22c55e' : '#71717a' }}>
-                              {wf.active ? 'Active' : 'Inactive'}
+                            <span title="Workflows don't run yet, even when turned on" style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600', backgroundColor: wf.active ? 'rgba(34,197,94,0.15)' : 'rgba(113,113,122,0.15)', color: wf.active ? '#22c55e' : '#71717a' }}>
+                              {wf.active ? 'On (not running yet)' : 'Off'}
                             </span>
                           </div>
                           {wf.description && <div style={{ color: theme.textMuted, fontSize: '13px', marginTop: '4px' }}>{wf.description}</div>}
                           <div style={{ color: theme.textSecondary, fontSize: '13px', marginTop: '6px' }}>
-                            Trigger: <strong>{trigger.label}</strong> • {(wf.steps || []).length} steps • {wf.runs_count || 0} runs
+                            Starts when: <strong>{trigger.label}</strong> • {(wf.steps || []).length} steps • {wf.runs_count || 0} runs
                           </div>
 
                           {/* Visual Steps */}
@@ -235,10 +251,10 @@ export default function CRMWorkflowsPage() {
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button onClick={() => toggleActive(wf)} style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: wf.active ? '#f59e0b' : '#22c55e', cursor: 'pointer', fontSize: '12px' }}>
-                          {wf.active ? 'Disable' : 'Enable'}
+                          {wf.active ? 'Turn Off' : 'Turn On'}
                         </button>
                         <button onClick={() => openEdit(wf)} style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px' }}>Edit</button>
-                        <button onClick={() => handleDelete(wf.id)} style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Del</button>
+                        <button onClick={() => handleDelete(wf.id)} style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Delete</button>
                       </div>
                     </div>
                   </div>
@@ -254,7 +270,7 @@ export default function CRMWorkflowsPage() {
         <>
           {runs.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
-              <p>No workflow runs yet.</p>
+              <p>No workflow runs. Workflows don't run yet, so nothing will show up here for now.</p>
             </div>
           ) : (
             <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '12px', overflow: 'hidden' }}>
@@ -310,7 +326,7 @@ export default function CRMWorkflowsPage() {
 
             {/* Trigger */}
             <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '8px' }}>Trigger</label>
+              <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '8px' }}>Trigger (what starts this workflow)</label>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                 {Object.entries(triggerTypes).map(([key, trigger]) => (
                   <button key={key} onClick={() => setForm({ ...form, trigger_type: key })} style={{ padding: '10px', borderRadius: '8px', border: `2px solid ${form.trigger_type === key ? theme.accent : theme.border}`, backgroundColor: form.trigger_type === key ? theme.accentBg : 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -327,8 +343,11 @@ export default function CRMWorkflowsPage() {
             {/* Steps */}
             <div style={{ marginBottom: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <label style={{ fontSize: '12px', color: theme.textMuted }}>Steps</label>
+                <label style={{ fontSize: '12px', color: theme.textMuted }}>Steps (what should happen, in order)</label>
                 <button onClick={addStep} style={{ background: 'none', border: 'none', color: theme.accent, cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>+ Add Step</button>
+              </div>
+              <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px' }}>
+                For each step pick an action, how many hours to wait before it, and the message to use.
               </div>
               {form.steps.map((step, i) => (
                 <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
@@ -336,7 +355,7 @@ export default function CRMWorkflowsPage() {
                   <select value={step.action} onChange={e => updateStep(i, 'action', e.target.value)} style={{ flex: 1, padding: '8px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.text, fontSize: '13px' }}>
                     {Object.entries(actionTypes).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
                   </select>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title="Hours to wait before this step">
                     <input type="number" value={step.delay_hours} onChange={e => updateStep(i, 'delay_hours', parseInt(e.target.value) || 0)} min="0" style={{ width: '60px', padding: '8px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.text, fontSize: '13px', textAlign: 'center' }} />
                     <span style={{ color: theme.textMuted, fontSize: '12px' }}>hrs</span>
                   </div>
@@ -351,8 +370,11 @@ export default function CRMWorkflowsPage() {
             {/* Active Toggle */}
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
               <input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} style={{ accentColor: theme.accent }} />
-              <span style={{ color: theme.textSecondary, fontSize: '14px' }}>Active (start running immediately)</span>
+              <span style={{ color: theme.textSecondary, fontSize: '14px' }}>Turned on</span>
             </label>
+            <div style={{ color: '#eab308', fontSize: '12px', margin: '-12px 0 20px 24px' }}>
+              Workflows don't run yet. Turning this on does not send or do anything today.
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button onClick={() => { setShowModal(false); setSelectedWorkflow(null); }} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer' }}>Cancel</button>

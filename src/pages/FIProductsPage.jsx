@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function FIProductsPage() {
   const { theme } = useTheme();
-  const { dealer, deals } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId, deals, inventory } = useStore();
 
   const [activeTab, setActiveTab] = useState('catalog');
   const [products, setProducts] = useState([]);
@@ -43,6 +42,7 @@ export default function FIProductsPage() {
       supabase.from('fi_products').select('*').eq('dealer_id', dealerId).order('sort_order'),
       supabase.from('fi_deal_products').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }),
     ]);
+    if (pRes.error || dpRes.error) alert('Could not load F&I products: ' + (pRes.error || dpRes.error).message);
     setProducts(pRes.data || []);
     setDealProducts(dpRes.data || []);
     setLoading(false);
@@ -50,8 +50,18 @@ export default function FIProductsPage() {
 
   const formatCurrency = (amt) => amt == null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amt);
 
+  const dealLabel = (d) => {
+    if (!d) return '';
+    const v = (inventory || []).find(x => x.id === d.vehicle_id);
+    const car = v ? [v.year, v.make, v.model].filter(Boolean).join(' ') : '';
+    return `${d.purchaser_name || 'No buyer name'}${car ? ` (${car})` : ''}`;
+  };
+
   const handleSaveProduct = async () => {
-    if (!prodForm.name || !prodForm.product_type) return;
+    const missing = [];
+    if (!prodForm.product_type) missing.push('Type');
+    if (!prodForm.name) missing.push('Product Name');
+    if (missing.length) { alert('Please fill in: ' + missing.join(', ')); return; }
     const cost = parseFloat(prodForm.dealer_cost) || 0;
     const retail = parseFloat(prodForm.retail_price) || 0;
     const payload = {
@@ -67,11 +77,10 @@ export default function FIProductsPage() {
       mileage_limit: prodForm.mileage_limit ? parseInt(prodForm.mileage_limit) : null,
       deductible: prodForm.deductible ? parseFloat(prodForm.deductible) : null,
     };
-    if (editingProduct) {
-      await supabase.from('fi_products').update(payload).eq('id', editingProduct.id);
-    } else {
-      await supabase.from('fi_products').insert(payload);
-    }
+    const { error } = editingProduct
+      ? await supabase.from('fi_products').update(payload).eq('id', editingProduct.id).eq('dealer_id', dealerId)
+      : await supabase.from('fi_products').insert(payload);
+    if (error) { alert('Could not save product: ' + error.message); return; }
     setShowProductModal(false);
     setEditingProduct(null);
     setProdForm({ product_type: 'warranty', name: '', provider: '', description: '', dealer_cost: '', retail_price: '', term_months: '', mileage_limit: '', deductible: '' });
@@ -79,13 +88,18 @@ export default function FIProductsPage() {
   };
 
   const handleSellProduct = async () => {
-    if (!sellForm.deal_id || !sellForm.product_id) return;
+    const missing = [];
+    if (!sellForm.deal_id) missing.push('Deal');
+    if (!sellForm.product_id) missing.push('Product');
+    if (missing.length) { alert('Please choose: ' + missing.join(' and ')); return; }
     const prod = products.find(p => p.id === sellForm.product_id);
+    const deal = (deals || []).find(d => String(d.id) === String(sellForm.deal_id));
     const cost = parseFloat(sellForm.dealer_cost) || parseFloat(prod?.dealer_cost) || 0;
     const sell = parseFloat(sellForm.sell_price) || parseFloat(prod?.retail_price) || 0;
-    await supabase.from('fi_deal_products').insert({
+    const { error } = await supabase.from('fi_deal_products').insert({
       dealer_id: dealerId,
       deal_id: parseInt(sellForm.deal_id),
+      vehicle_id: deal?.vehicle_id || null,
       product_id: sellForm.product_id,
       product_type: prod?.product_type || 'custom',
       product_name: prod?.name || 'Product',
@@ -98,16 +112,27 @@ export default function FIProductsPage() {
       provider: prod?.provider || null,
       effective_date: new Date().toISOString().split('T')[0],
     });
+    if (error) { alert('Could not sell product: ' + error.message); return; }
     setShowSellModal(false);
     setSellForm({ deal_id: '', product_id: '', sell_price: '', dealer_cost: '', term_months: '', deductible: '', contract_number: '' });
     loadData();
   };
 
   const handleCancelProduct = async (dp) => {
-    await supabase.from('fi_deal_products').update({
+    if (!confirm(`Cancel ${dp.product_name} on Deal #${dp.deal_id}? It will stop counting toward F&I revenue and profit.`)) return;
+    const refundInput = prompt('Refund amount given back to the customer ($). Leave blank if none.', '');
+    if (refundInput === null) return; // user backed out
+    const refund = refundInput.trim() === '' ? null : parseFloat(refundInput.replace(/[$,]/g, ''));
+    if (refund !== null && (isNaN(refund) || refund < 0)) {
+      alert('Refund amount must be a number (for example 450 or 450.00).');
+      return;
+    }
+    const { error } = await supabase.from('fi_deal_products').update({
       status: 'cancelled',
       cancelled_date: new Date().toISOString().split('T')[0],
-    }).eq('id', dp.id);
+      refund_amount: refund,
+    }).eq('id', dp.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not cancel product: ' + error.message); return; }
     loadData();
   };
 
@@ -127,7 +152,10 @@ export default function FIProductsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>F&I Products</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Manage GAP, warranties, service contracts, and backend profit</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>
+            F&I (Finance &amp; Insurance) products are add-ons sold with a car, like GAP and extended warranties.
+            The profit on them is called "backend" profit, on top of what you make on the car itself.
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={() => setShowSellModal(true)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>
@@ -175,7 +203,9 @@ export default function FIProductsPage() {
             </select>
           </div>
           {filteredProducts.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No products configured</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+              {products.length === 0 ? 'No products yet. Click + Add Product to set up the GAP, warranties and other add-ons you sell.' : 'No products of this type.'}
+            </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
               {filteredProducts.map(p => (
@@ -210,7 +240,7 @@ export default function FIProductsPage() {
 
       {activeTab === 'sold' && (
         dealProducts.length === 0 ? (
-          <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No products sold yet</div>
+          <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No products sold yet. Click Sell to Deal to add a product to a customer's deal.</div>
         ) : (
           <div style={card}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -224,7 +254,10 @@ export default function FIProductsPage() {
               <tbody>
                 {dealProducts.map(dp => (
                   <tr key={dp.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
-                    <td style={{ padding: '10px 8px', color: theme.text, fontSize: '13px', fontWeight: '500' }}>#{dp.deal_id}</td>
+                    <td style={{ padding: '10px 8px', color: theme.text, fontSize: '13px', fontWeight: '500' }}>
+                      #{dp.deal_id}
+                      {(() => { const d = (deals || []).find(x => x.id === dp.deal_id); return d?.purchaser_name ? <div style={{ fontSize: '11px', color: theme.textMuted, fontWeight: '400' }}>{d.purchaser_name}</div> : null; })()}
+                    </td>
                     <td style={{ padding: '10px 8px', color: theme.text, fontSize: '13px' }}>{dp.product_name}</td>
                     <td style={{ padding: '10px 8px', color: theme.textSecondary, fontSize: '13px', textTransform: 'capitalize' }}>{dp.product_type?.replace('_', ' ')}</td>
                     <td style={{ padding: '10px 8px', color: theme.textSecondary, fontSize: '13px' }}>{dp.provider || '-'}</td>
@@ -238,6 +271,9 @@ export default function FIProductsPage() {
                         backgroundColor: dp.status === 'active' ? 'rgba(34,197,94,0.15)' : dp.status === 'cancelled' ? 'rgba(239,68,68,0.15)' : 'rgba(161,161,170,0.15)',
                         color: dp.status === 'active' ? '#22c55e' : dp.status === 'cancelled' ? '#ef4444' : theme.textMuted,
                       }}>{dp.status}</span>
+                      {dp.status === 'cancelled' && dp.refund_amount != null && (
+                        <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '2px' }}>Refund {formatCurrency(dp.refund_amount)}</div>
+                      )}
                     </td>
                     <td style={{ padding: '10px 8px' }}>
                       {dp.status === 'active' && (
@@ -295,7 +331,7 @@ export default function FIProductsPage() {
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Deal *</label>
               <select value={sellForm.deal_id} onChange={e => setSellForm(p => ({ ...p, deal_id: e.target.value }))} style={inputStyle}>
                 <option value="">Select deal...</option>
-                {(deals || []).map(d => <option key={d.id} value={d.id}>#{d.id} - {d.customer_name || 'Unknown'}</option>)}
+                {(deals || []).filter(d => !d.archived).map(d => <option key={d.id} value={d.id}>#{d.id} - {dealLabel(d)}</option>)}
               </select>
             </div>
             <div style={{ marginBottom: '12px' }}>
@@ -304,6 +340,9 @@ export default function FIProductsPage() {
                 <option value="">Select product...</option>
                 {products.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.retail_price)})</option>)}
               </select>
+              {products.filter(p => p.active).length === 0 && (
+                <div style={{ fontSize: '11px', color: '#f59e0b', marginTop: '4px' }}>No products yet. Add one with + Add Product first.</div>
+              )}
             </div>
             {[
               { key: 'sell_price', label: 'Sell Price ($)', type: 'number' },

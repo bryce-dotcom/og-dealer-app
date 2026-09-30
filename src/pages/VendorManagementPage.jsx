@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function VendorManagementPage() {
   const { theme } = useTheme();
-  const { dealer, inventory } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId, inventory } = useStore();
 
   const [activeTab, setActiveTab] = useState('vendors');
   const [vendors, setVendors] = useState([]);
@@ -35,6 +34,7 @@ export default function VendorManagementPage() {
       supabase.from('vendors').select('*').eq('dealer_id', dealerId).order('name'),
       supabase.from('vendor_payments').select('*').eq('dealer_id', dealerId).order('payment_date', { ascending: false }),
     ]);
+    if (vRes.error || pRes.error) alert('Could not load vendors: ' + (vRes.error || pRes.error).message);
     setVendors(vRes.data || []);
     setPayments(pRes.data || []);
     setLoading(false);
@@ -44,31 +44,40 @@ export default function VendorManagementPage() {
   const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 
   const handleSaveVendor = async () => {
-    if (!vendorForm.name) return;
-    const payload = { dealer_id: dealerId, name: vendorForm.name, company: vendorForm.company || null, vendor_type: vendorForm.vendor_type, phone: vendorForm.phone || null, email: vendorForm.email || null, address: vendorForm.address || null, city: vendorForm.city || null, state: vendorForm.state || null, zip: vendorForm.zip || null, payment_terms: vendorForm.payment_terms || null, tax_id: vendorForm.tax_id || null, w9_on_file: vendorForm.w9_on_file };
-    if (editingVendor) {
-      await supabase.from('vendors').update(payload).eq('id', editingVendor.id);
-    } else {
-      await supabase.from('vendors').insert(payload);
-    }
+    if (!vendorForm.name.trim()) { alert('Please fill in: Name'); return; }
+    const payload = { dealer_id: dealerId, name: vendorForm.name.trim(), company: vendorForm.company || null, vendor_type: vendorForm.vendor_type, phone: vendorForm.phone || null, email: vendorForm.email || null, address: vendorForm.address || null, city: vendorForm.city || null, state: vendorForm.state || null, zip: vendorForm.zip || null, payment_terms: vendorForm.payment_terms || null, tax_id: vendorForm.tax_id || null, w9_on_file: vendorForm.w9_on_file };
+    const { error } = editingVendor
+      ? await supabase.from('vendors').update(payload).eq('id', editingVendor.id).eq('dealer_id', dealerId)
+      : await supabase.from('vendors').insert(payload);
+    if (error) { alert('Could not save vendor: ' + error.message); return; }
     setShowVendorModal(false); setEditingVendor(null);
     setVendorForm({ name: '', company: '', vendor_type: 'general', phone: '', email: '', address: '', city: '', state: '', zip: '', payment_terms: '', tax_id: '', w9_on_file: false });
     loadData();
   };
 
   const handleSavePayment = async () => {
-    if (!payForm.vendor_id || !payForm.description || !payForm.amount) return;
-    await supabase.from('vendor_payments').insert({
+    const missing = [];
+    if (!payForm.vendor_id) missing.push('Vendor');
+    if (!payForm.description.trim()) missing.push('Description');
+    if (!payForm.amount) missing.push('Amount');
+    if (!payForm.payment_date) missing.push('Date');
+    if (missing.length) { alert('Please fill in: ' + missing.join(', ')); return; }
+    const amount = parseFloat(payForm.amount);
+    if (isNaN(amount) || amount <= 0) { alert('Amount must be a number greater than 0.'); return; }
+
+    const { error } = await supabase.from('vendor_payments').insert({
       dealer_id: dealerId, vendor_id: payForm.vendor_id, vehicle_id: payForm.vehicle_id || null,
-      description: payForm.description, amount: parseFloat(payForm.amount),
+      description: payForm.description.trim(), amount,
       payment_date: payForm.payment_date, payment_method: payForm.payment_method,
       reference_number: payForm.reference_number || null, invoice_number: payForm.invoice_number || null,
       category: payForm.category || null,
     });
+    if (error) { alert('Could not save payment: ' + error.message); return; }
     // Update vendor total
     const vendor = vendors.find(v => v.id === payForm.vendor_id);
     if (vendor) {
-      await supabase.from('vendors').update({ total_paid: (parseFloat(vendor.total_paid) || 0) + parseFloat(payForm.amount), total_jobs: (vendor.total_jobs || 0) + 1, last_used_at: new Date().toISOString() }).eq('id', vendor.id);
+      const { error: totalError } = await supabase.from('vendors').update({ total_paid: (parseFloat(vendor.total_paid) || 0) + amount, total_jobs: (vendor.total_jobs || 0) + 1, last_used_at: new Date().toISOString() }).eq('id', vendor.id).eq('dealer_id', dealerId);
+      if (totalError) alert('Payment saved, but the vendor total could not be updated: ' + totalError.message);
     }
     setShowPaymentModal(false);
     setPayForm({ vendor_id: '', vehicle_id: '', description: '', amount: '', payment_date: new Date().toISOString().split('T')[0], payment_method: 'check', reference_number: '', invoice_number: '', category: '' });
@@ -89,7 +98,7 @@ export default function VendorManagementPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>Vendor Management</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Track vendors, service providers, and payment history</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>The shops and suppliers you pay (mechanics, body shops, detailers), and what you've paid them.</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={() => setShowPaymentModal(true)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>+ Payment</button>
@@ -127,7 +136,9 @@ export default function VendorManagementPage() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
             {filtered.length === 0 ? (
-              <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No vendors found</div>
+              <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>
+                {vendors.length === 0 ? 'No vendors yet. Click + Add Vendor to add your mechanics, body shops and other suppliers.' : 'No vendors of this type.'}
+              </div>
             ) : filtered.map(v => {
               const vPayments = payments.filter(p => p.vendor_id === v.id);
               return (
@@ -157,7 +168,7 @@ export default function VendorManagementPage() {
 
       {activeTab === 'payments' && (
         payments.length === 0 ? (
-          <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No payments recorded</div>
+          <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No payments recorded. Click + Payment to log money paid to a vendor.</div>
         ) : (
           <div style={card}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -205,16 +216,21 @@ export default function VendorManagementPage() {
               { key: 'phone', label: 'Phone' }, { key: 'email', label: 'Email' },
               { key: 'address', label: 'Address' }, { key: 'city', label: 'City' },
               { key: 'state', label: 'State' }, { key: 'zip', label: 'ZIP' },
-              { key: 'payment_terms', label: 'Payment Terms' }, { key: 'tax_id', label: 'Tax ID' },
+              { key: 'payment_terms', label: 'Payment Terms', placeholder: 'e.g., Net 30', help: 'When you owe them. "Net 30" = pay within 30 days of the invoice; "Due on receipt" = pay right away.' },
+              { key: 'tax_id', label: 'Tax ID', help: 'Their EIN or SSN, copied from their W-9.' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>{f.label}</label>
-                <input type="text" value={vendorForm[f.key]} onChange={e => setVendorForm(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                <input type="text" value={vendorForm[f.key]} placeholder={f.placeholder || ''} onChange={e => setVendorForm(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                {f.help && <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '4px' }}>{f.help}</div>}
               </div>
             ))}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: theme.textSecondary, fontSize: '13px', marginBottom: '16px', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: theme.textSecondary, fontSize: '13px', marginBottom: '4px', cursor: 'pointer' }}>
               <input type="checkbox" checked={vendorForm.w9_on_file} onChange={e => setVendorForm(p => ({ ...p, w9_on_file: e.target.checked }))} /> W-9 on file
             </label>
+            <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '16px' }}>
+              A W-9 is the IRS form where a vendor gives you their tax ID. Get one before you pay them so you can send a 1099 at year end.
+            </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button onClick={() => setShowVendorModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
               <button onClick={handleSaveVendor} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>Save</button>
@@ -238,7 +254,7 @@ export default function VendorManagementPage() {
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Vehicle (optional)</label>
               <select value={payForm.vehicle_id} onChange={e => setPayForm(p => ({ ...p, vehicle_id: e.target.value }))} style={inputStyle}>
                 <option value="">None</option>
-                {(inventory || []).map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} - #{v.unit_id}</option>)}
+                {(inventory || []).map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}{v.stock_number ? ` - Stock #${v.stock_number}` : ''}</option>)}
               </select>
             </div>
             {[
@@ -256,7 +272,10 @@ export default function VendorManagementPage() {
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Method</label>
               <select value={payForm.payment_method} onChange={e => setPayForm(p => ({ ...p, payment_method: e.target.value }))} style={inputStyle}>
-                {['check', 'cash', 'card', 'ach', 'other'].map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+                {[
+                  { v: 'check', l: 'Check' }, { v: 'cash', l: 'Cash' }, { v: 'card', l: 'Card' },
+                  { v: 'ach', l: 'ACH (direct bank transfer)' }, { v: 'other', l: 'Other' }
+                ].map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>

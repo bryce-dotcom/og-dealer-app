@@ -3,10 +3,13 @@ import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { useTheme } from '../components/Layout';
 
+const displayName = (c) => (c && (c.name || [c.first_name, c.last_name].filter(Boolean).join(' '))) || '';
+// 'For Sale' and 'In Stock' both mean the vehicle is available.
+const isAvailable = (v) => v?.status === 'In Stock' || v?.status === 'For Sale';
+
 export default function TestDrivePage() {
   const { theme } = useTheme();
-  const { dealer, inventory, customers, employees } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId, inventory, customers, employees } = useStore();
 
   const [drives, setDrives] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +28,8 @@ export default function TestDrivePage() {
 
   const loadData = async () => {
     setLoading(true);
-    const { data } = await supabase.from('test_drives').select('*').eq('dealer_id', dealerId).order('started_at', { ascending: false });
+    const { data, error } = await supabase.from('test_drives').select('*').eq('dealer_id', dealerId).order('started_at', { ascending: false });
+    if (error) console.error('Error loading test drives:', error);
     setDrives(data || []);
     setLoading(false);
   };
@@ -35,13 +39,16 @@ export default function TestDrivePage() {
 
   const getVehicleTitle = (vid) => {
     const v = inventory?.find(i => i.id === vid);
-    return v ? `${v.year} ${v.make} ${v.model}` : vid;
+    return v ? `${v.year} ${v.make} ${v.model}${v.stock_number ? ` #${v.stock_number}` : ''}` : 'Vehicle no longer in inventory';
   };
 
   const handleStart = async () => {
-    if (!form.vehicle_id || !form.customer_name) return;
+    if (!form.vehicle_id || !form.customer_name.trim()) {
+      alert('Please pick a vehicle and enter the customer name.');
+      return;
+    }
     const emp = employees?.find(e => e.id === parseInt(form.salesperson_id));
-    await supabase.from('test_drives').insert({
+    const { error } = await supabase.from('test_drives').insert({
       dealer_id: dealerId, vehicle_id: form.vehicle_id,
       customer_id: form.customer_id ? parseInt(form.customer_id) : null,
       customer_name: form.customer_name, customer_phone: form.customer_phone || null,
@@ -56,6 +63,7 @@ export default function TestDrivePage() {
       route_notes: form.route_notes || null,
       status: 'active', started_at: new Date().toISOString(),
     });
+    if (error) { alert('Could not start test drive: ' + error.message); return; }
     setShowModal(false);
     resetForm();
     loadData();
@@ -63,14 +71,16 @@ export default function TestDrivePage() {
 
   const handleEnd = async (drive) => {
     const duration = Math.round((new Date() - new Date(drive.started_at)) / 60000);
-    await supabase.from('test_drives').update({
+    const { error } = await supabase.from('test_drives').update({
       ended_at: new Date().toISOString(), duration_minutes: duration, status: 'completed',
-    }).eq('id', drive.id);
+    }).eq('id', drive.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not end test drive: ' + error.message); return; }
     loadData();
   };
 
   const handleOutcome = async (drive, outcome) => {
-    await supabase.from('test_drives').update({ outcome }).eq('id', drive.id);
+    const { error } = await supabase.from('test_drives').update({ outcome }).eq('id', drive.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not save outcome: ' + error.message); return; }
     loadData();
   };
 
@@ -98,7 +108,7 @@ export default function TestDrivePage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>Test Drive Log</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Track test drives, verify licenses, and log outcomes</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Log who took which car out, check their license and insurance, and note how it went.</p>
         </div>
         <button onClick={() => { resetForm(); setShowModal(true); }} style={{ padding: '10px 16px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>+ Start Test Drive</button>
       </div>
@@ -148,7 +158,11 @@ export default function TestDrivePage() {
       </div>
 
       {filtered.length === 0 ? (
-        <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No test drives found</div>
+        <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+          {filterStatus === 'all'
+            ? 'No test drives logged yet. Click "+ Start Test Drive" when a customer heads out in a car.'
+            : 'No test drives with this status. Pick "All Status" to see every drive.'}
+        </div>
       ) : (
         <div style={card}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -216,15 +230,15 @@ export default function TestDrivePage() {
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Vehicle *</label>
               <select value={form.vehicle_id} onChange={e => setForm(p => ({ ...p, vehicle_id: e.target.value }))} style={inputStyle}>
                 <option value="">Select vehicle...</option>
-                {(inventory || []).filter(v => v.status === 'In Stock').map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} - #{v.unit_id}</option>)}
+                {(inventory || []).filter(isAvailable).map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}{v.stock_number ? ` - #${v.stock_number}` : ''}</option>)}
               </select>
             </div>
             <div style={{ color: theme.accent, fontSize: '13px', fontWeight: '600', marginBottom: '12px' }}>CUSTOMER</div>
             <div style={{ marginBottom: '12px' }}>
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Existing Customer</label>
-              <select value={form.customer_id} onChange={e => { const c = customers?.find(x => x.id === parseInt(e.target.value)); setForm(p => ({ ...p, customer_id: e.target.value, customer_name: c?.name || p.customer_name, customer_phone: c?.phone || p.customer_phone, customer_email: c?.email || p.customer_email })); }} style={inputStyle}>
+              <select value={form.customer_id} onChange={e => { const c = customers?.find(x => x.id === parseInt(e.target.value)); setForm(p => ({ ...p, customer_id: e.target.value, customer_name: displayName(c) || p.customer_name, customer_phone: c?.phone || p.customer_phone, customer_email: c?.email || p.customer_email })); }} style={inputStyle}>
                 <option value="">Walk-in / New</option>
-                {(customers || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {(customers || []).map(c => <option key={c.id} value={c.id}>{displayName(c) || 'Unnamed customer'}</option>)}
               </select>
             </div>
             {[{ key: 'customer_name', label: 'Name *' }, { key: 'customer_phone', label: 'Phone' }, { key: 'customer_email', label: 'Email' }].map(f => (
@@ -267,7 +281,7 @@ export default function TestDrivePage() {
             </div>
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Mileage Out</label>
-              <input type="number" value={form.mileage_out} onChange={e => setForm(p => ({ ...p, mileage_out: e.target.value }))} style={inputStyle} />
+              <input type="number" placeholder="Odometer reading as the car leaves" value={form.mileage_out} onChange={e => setForm(p => ({ ...p, mileage_out: e.target.value }))} style={inputStyle} />
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button onClick={() => setShowModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '14px' }}>Cancel</button>

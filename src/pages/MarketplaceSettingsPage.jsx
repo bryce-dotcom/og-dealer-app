@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useStore } from '../lib/store';
+
+// Facebook connect only works once a Facebook App ID is configured for this deployment
+const FACEBOOK_APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID;
 
 export default function MarketplaceSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [dealerId, setDealerId] = useState(null);
+  const { dealerId } = useStore();
 
   // Facebook state
   const [facebookSettings, setFacebookSettings] = useState(null);
@@ -17,34 +21,18 @@ export default function MarketplaceSettingsPage() {
   const [autotraderSettings, setAutotraderSettings] = useState(null);
 
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (dealerId) loadSettings();
+  }, [dealerId]);
 
   async function loadSettings() {
     try {
       setLoading(true);
 
-      // Get current dealer_id
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
-      const { data: employee, error: empError } = await supabase
-        .from('employees')
-        .select('dealer_id')
-        .eq('auth_id', user.id)
-        .single();
-
-      if (empError) throw new Error(`Employee lookup failed: ${empError.message}`);
-      if (!employee) throw new Error('No employee record found for your account');
-      if (!employee.dealer_id) throw new Error('Employee record has no dealer_id');
-
-      setDealerId(employee.dealer_id);
-
-      // Load marketplace settings
+      // Load marketplace settings (dealer id comes from the app store, not an employee lookup)
       const { data: settings, error: settingsError } = await supabase
         .from('marketplace_settings')
         .select('*')
-        .eq('dealer_id', employee.dealer_id);
+        .eq('dealer_id', dealerId);
 
       if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
 
@@ -57,13 +45,12 @@ export default function MarketplaceSettingsPage() {
 
       // Load Facebook stats
       if (settings?.find(s => s.marketplace === 'facebook')) {
-        await loadFacebookStats(employee.dealer_id);
+        await loadFacebookStats(dealerId);
       }
 
     } catch (error) {
       console.error('Error loading settings:', error);
-      const errorMsg = error.message || 'Unknown error';
-      alert(`Failed to load marketplace settings:\n\n${errorMsg}\n\nPlease check:\n1. You are logged in\n2. Migration was applied\n3. Browser console for details`);
+      alert(`Failed to load marketplace settings: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -94,9 +81,9 @@ export default function MarketplaceSettingsPage() {
   async function handleFacebookOAuth() {
     try {
       // Facebook OAuth URL
-      const appId = import.meta.env.VITE_FACEBOOK_APP_ID;
+      const appId = FACEBOOK_APP_ID;
       if (!appId) {
-        alert('Facebook App ID not configured. Please contact support.');
+        alert('Facebook Marketplace connection is not available yet.');
         return;
       }
 
@@ -206,7 +193,7 @@ export default function MarketplaceSettingsPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Marketplace Integrations</h1>
         <p className="text-gray-600 mt-2">
-          Automatically push your inventory to popular listing platforms to maximize exposure.
+          Connect listing sites like Facebook Marketplace so your cars can be posted there. None of these sites are connected to OG Dealer yet, so nothing is posted to them automatically.
         </p>
       </div>
 
@@ -224,9 +211,13 @@ export default function MarketplaceSettingsPage() {
               <p className="text-sm text-gray-600">Free listings, massive reach, local buyers</p>
             </div>
           </div>
-          {facebookSettings?.enabled && (
+          {facebookSettings?.enabled ? (
             <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
               ✓ Connected
+            </span>
+          ) : !FACEBOOK_APP_ID && (
+            <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-sm font-medium">
+              Coming Soon
             </span>
           )}
         </div>
@@ -321,11 +312,12 @@ export default function MarketplaceSettingsPage() {
               >
                 Disconnect
               </button>
-              <button className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50">
-                Settings
-              </button>
             </div>
           </>
+        ) : !FACEBOOK_APP_ID ? (
+          <p className="text-gray-600">
+            Facebook Marketplace integration is coming soon. It is not set up for your account yet, so no cars are posted to Facebook from OG Dealer.
+          </p>
         ) : (
           <div>
             <p className="text-gray-600 mb-4">

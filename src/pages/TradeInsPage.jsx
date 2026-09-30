@@ -17,9 +17,12 @@ export default function TradeInsPage() {
   const [form, setForm] = useState({
     deal_id: '', customer_id: '', vin: '', year: '', make: '', model: '', trim: '', color: '',
     mileage: '', condition: 'good', kbb_value: '', nada_value: '', market_value: '', acv: '',
-    offered_value: '', has_lien: false, lien_holder: '', payoff_amount: '', payoff_good_through: '',
+    offered_value: '', agreed_value: '', has_lien: false, lien_holder: '', payoff_amount: '', payoff_good_through: '',
     disposition: 'pending', appraisal_notes: '', notes: ''
   });
+
+  // Customers often only have `name` filled in
+  const custName = (c) => c ? (c.name || [c.first_name, c.last_name].filter(Boolean).join(' ')) : '';
 
   const conditions = {
     excellent: { label: 'Excellent', color: '#22c55e' },
@@ -104,6 +107,7 @@ export default function TradeInsPage() {
         market_value: form.market_value ? parseFloat(form.market_value) : null,
         acv: form.acv ? parseFloat(form.acv) : null,
         offered_value: form.offered_value ? parseFloat(form.offered_value) : null,
+        agreed_value: form.agreed_value ? parseFloat(form.agreed_value) : null,
         has_lien: form.has_lien, lien_holder: form.lien_holder || null,
         payoff_amount: form.payoff_amount ? parseFloat(form.payoff_amount) : null,
         payoff_good_through: form.payoff_good_through || null,
@@ -113,10 +117,13 @@ export default function TradeInsPage() {
       };
       if (editing) delete payload.status;
 
+      if (!form.make) { alert('Make is required.'); return; }
       if (editing) {
-        await supabase.from('trade_ins').update(payload).eq('id', editing.id);
+        const { error } = await supabase.from('trade_ins').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editing.id).eq('dealer_id', dealerId);
+        if (error) throw error;
       } else {
-        await supabase.from('trade_ins').insert(payload);
+        const { error } = await supabase.from('trade_ins').insert(payload);
+        if (error) throw error;
       }
       setShowModal(false);
       setEditing(null);
@@ -128,13 +135,15 @@ export default function TradeInsPage() {
   async function updateStatus(id, status) {
     const updates = { status, updated_at: new Date().toISOString() };
     if (status === 'appraised') updates.appraised_at = new Date().toISOString();
-    await supabase.from('trade_ins').update(updates).eq('id', id);
+    const { error } = await supabase.from('trade_ins').update(updates).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update status: ' + error.message); return; }
     loadData();
   }
 
   async function handleDelete(id) {
-    if (!confirm('Delete this trade-in record?')) return;
-    await supabase.from('trade_ins').delete().eq('id', id);
+    if (!confirm('Delete this trade-in record? This cannot be undone.')) return;
+    const { error } = await supabase.from('trade_ins').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete: ' + error.message); return; }
     loadData();
   }
 
@@ -145,7 +154,7 @@ export default function TradeInsPage() {
       year: ti.year || '', make: ti.make || '', model: ti.model || '', trim: ti.trim || '',
       color: ti.color || '', mileage: ti.mileage || '', condition: ti.condition || 'good',
       kbb_value: ti.kbb_value || '', nada_value: ti.nada_value || '', market_value: ti.market_value || '',
-      acv: ti.acv || '', offered_value: ti.offered_value || '', has_lien: ti.has_lien || false,
+      acv: ti.acv || '', offered_value: ti.offered_value || '', agreed_value: ti.agreed_value || '', has_lien: ti.has_lien || false,
       lien_holder: ti.lien_holder || '', payoff_amount: ti.payoff_amount || '',
       payoff_good_through: ti.payoff_good_through || '', disposition: ti.disposition || 'pending',
       appraisal_notes: ti.appraisal_notes || '', notes: ti.notes || ''
@@ -156,7 +165,7 @@ export default function TradeInsPage() {
   function resetForm() {
     setForm({ deal_id: '', customer_id: '', vin: '', year: '', make: '', model: '', trim: '', color: '',
       mileage: '', condition: 'good', kbb_value: '', nada_value: '', market_value: '', acv: '',
-      offered_value: '', has_lien: false, lien_holder: '', payoff_amount: '', payoff_good_through: '',
+      offered_value: '', agreed_value: '', has_lien: false, lien_holder: '', payoff_amount: '', payoff_good_through: '',
       disposition: 'pending', appraisal_notes: '', notes: '' });
   }
 
@@ -167,7 +176,7 @@ export default function TradeInsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Trade-Ins</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Appraisals, valuations & payoff tracking</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Record cars customers trade in: what they're worth, what you offered, and any loan still owed on them</p>
         </div>
         <button onClick={() => { setEditing(null); resetForm(); setShowModal(true); }} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ New Trade-In</button>
       </div>
@@ -179,10 +188,10 @@ export default function TradeInsPage() {
           { label: 'Pending Appraisal', value: pendingAppraisals, color: '#f59e0b' },
           { label: 'Accepted', value: acceptedTradeIns.length, color: '#22c55e' },
           { label: 'Trade Value', value: `$${totalTradeValue.toLocaleString()}`, color: '#3b82f6' },
-          { label: 'Neg. Equity', value: `$${totalNegEquity.toLocaleString()}`, color: '#ef4444' },
+          { label: 'Neg. Equity', value: `$${totalNegEquity.toLocaleString()}`, color: '#ef4444', tip: 'Negative equity: the customer owes more on their loan than the trade is worth' },
           { label: 'With Liens', value: withLiens, color: '#8b5cf6' }
         ].map((s, i) => (
-          <div key={i} style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '10px', padding: '16px' }}>
+          <div key={i} title={s.tip} style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '10px', padding: '16px' }}>
             <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>{s.label}</div>
             <div style={{ fontSize: '22px', fontWeight: '700', color: s.color }}>{s.value}</div>
           </div>
@@ -202,7 +211,7 @@ export default function TradeInsPage() {
             {recentSales.map(sale => {
               const deal = (deals || []).find(d => d.vehicle_id === sale.id);
               const cust = deal ? (customers || []).find(c => c.id === deal.customer_id) : null;
-              const custLabel = cust ? `${cust.first_name || ''} ${cust.last_name || ''}`.trim() : (deal?.purchaser_name || (sale.status === 'Sold' ? 'Buyer unknown' : 'Not sold'));
+              const custLabel = custName(cust) || deal?.purchaser_name || (sale.status === 'Sold' ? 'Buyer unknown' : 'Not sold');
               return (
                 <div key={sale.id} style={{ padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -239,7 +248,7 @@ export default function TradeInsPage() {
       {filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>🔄</div>
-          <p>No trade-ins found. Add your first trade-in appraisal.</p>
+          <p>{tradeIns.length === 0 ? 'No trade-ins yet. Click "+ New Trade-In" to record a customer\'s trade.' : 'No trade-ins match your search or status filter.'}</p>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -262,7 +271,7 @@ export default function TradeInsPage() {
                       {ti.vin && <span>VIN: {ti.vin}</span>}
                       {ti.mileage && <span>{ti.mileage.toLocaleString()} mi</span>}
                       {ti.color && <span>{ti.color}</span>}
-                      {cust && <span>Customer: {cust.first_name} {cust.last_name || ''}</span>}
+                      {cust && <span>Customer: {custName(cust)}</span>}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '4px' }}>
@@ -277,14 +286,14 @@ export default function TradeInsPage() {
                 {/* Valuation Grid */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginTop: '14px' }}>
                   {[
-                    { label: 'KBB', value: ti.kbb_value },
-                    { label: 'NADA', value: ti.nada_value },
-                    { label: 'Market', value: ti.market_value },
-                    { label: 'ACV', value: ti.acv, highlight: true },
-                    { label: 'Offered', value: ti.offered_value },
-                    { label: 'Agreed', value: ti.agreed_value, accent: true }
+                    { label: 'KBB', value: ti.kbb_value, tip: 'Kelley Blue Book value' },
+                    { label: 'NADA', value: ti.nada_value, tip: 'NADA (J.D. Power) guide value' },
+                    { label: 'Market', value: ti.market_value, tip: 'What similar cars sell for locally' },
+                    { label: 'ACV', value: ti.acv, highlight: true, tip: 'Actual Cash Value: what you think the car is really worth to you today' },
+                    { label: 'Offered', value: ti.offered_value, tip: 'What you offered the customer' },
+                    { label: 'Agreed', value: ti.agreed_value, accent: true, tip: 'The trade value you and the customer agreed on' }
                   ].map((val, i) => (
-                    <div key={i} style={{ padding: '8px', backgroundColor: theme.bg, borderRadius: '6px', textAlign: 'center' }}>
+                    <div key={i} title={val.tip} style={{ padding: '8px', backgroundColor: theme.bg, borderRadius: '6px', textAlign: 'center' }}>
                       <div style={{ fontSize: '11px', color: theme.textMuted }}>{val.label}</div>
                       <div style={{ fontSize: '15px', fontWeight: '700', color: val.accent ? theme.accent : val.highlight ? '#22c55e' : theme.text }}>
                         {val.value ? `$${parseFloat(val.value).toLocaleString()}` : '—'}
@@ -299,7 +308,7 @@ export default function TradeInsPage() {
                     <div style={{ display: 'flex', gap: '16px', fontSize: '13px' }}>
                       <span style={{ color: '#ef4444', fontWeight: '600' }}>Lien: {ti.lien_holder || 'Unknown'}</span>
                       {ti.payoff_amount && <span style={{ color: theme.textSecondary }}>Payoff: ${parseFloat(ti.payoff_amount).toLocaleString()}</span>}
-                      {ti.negative_equity > 0 && <span style={{ color: '#ef4444', fontWeight: '600' }}>Neg. Equity: ${parseFloat(ti.negative_equity).toLocaleString()}</span>}
+                      {ti.negative_equity > 0 && <span style={{ color: '#ef4444', fontWeight: '600' }} title="Negative equity: the customer owes more on their loan than the trade is worth">Neg. Equity: ${parseFloat(ti.negative_equity).toLocaleString()}</span>}
                       {ti.payoff_good_through && <span style={{ color: theme.textMuted }}>Good thru: {new Date(ti.payoff_good_through).toLocaleDateString()}</span>}
                     </div>
                   </div>
@@ -320,14 +329,14 @@ export default function TradeInsPage() {
                 <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Customer</label>
                 <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }}>
                   <option value="">Select...</option>
-                  {(customers || []).map(c => <option key={c.id} value={c.id}>{c.first_name} {c.last_name || ''}</option>)}
+                  {(customers || []).map(c => <option key={c.id} value={c.id}>{custName(c) || `Customer #${c.id}`}</option>)}
                 </select>
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Linked Deal</label>
                 <select value={form.deal_id} onChange={e => setForm({ ...form, deal_id: e.target.value })} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }}>
                   <option value="">None</option>
-                  {(deals || []).map(d => <option key={d.id} value={d.id}>Deal #{d.id} - {d.customer_name || ''}</option>)}
+                  {(deals || []).map(d => <option key={d.id} value={d.id}>Deal #{d.id}{d.purchaser_name ? ` - ${d.purchaser_name}` : ''}</option>)}
                 </select>
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
@@ -336,7 +345,7 @@ export default function TradeInsPage() {
               </div>
               {[
                 { key: 'year', label: 'Year', type: 'number' },
-                { key: 'make', label: 'Make' },
+                { key: 'make', label: 'Make *' },
                 { key: 'model', label: 'Model' },
                 { key: 'trim', label: 'Trim' },
                 { key: 'color', label: 'Color' },
@@ -362,16 +371,18 @@ export default function TradeInsPage() {
               {/* Valuations */}
               <div style={{ gridColumn: '1 / -1', borderTop: `1px solid ${theme.border}`, paddingTop: '12px', marginTop: '4px' }}>
                 <span style={{ fontSize: '13px', fontWeight: '600', color: theme.textSecondary }}>Valuations</span>
+                <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>KBB = Kelley Blue Book. NADA = NADA/J.D. Power guide. ACV = Actual Cash Value, what the car is really worth to you. Fill in what you have; all are optional.</div>
               </div>
               {[
-                { key: 'kbb_value', label: 'KBB Value' },
-                { key: 'nada_value', label: 'NADA Value' },
-                { key: 'market_value', label: 'Market Value' },
-                { key: 'acv', label: 'ACV (Your Assessment)' },
-                { key: 'offered_value', label: 'Offered to Customer' }
+                { key: 'kbb_value', label: 'KBB Value', tip: 'Kelley Blue Book value' },
+                { key: 'nada_value', label: 'NADA Value', tip: 'NADA (J.D. Power) guide value' },
+                { key: 'market_value', label: 'Market Value', tip: 'What similar cars sell for locally' },
+                { key: 'acv', label: 'ACV (Your Assessment)', tip: 'Actual Cash Value: what you think the car is really worth to you today' },
+                { key: 'offered_value', label: 'Offered to Customer', tip: 'What you offered the customer for their trade' },
+                { key: 'agreed_value', label: 'Agreed Value', tip: 'The final trade value you and the customer agreed on' }
               ].map(f => (
                 <div key={f.key}>
-                  <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>{f.label}</label>
+                  <label title={f.tip} style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>{f.label}</label>
                   <input type="number" value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} placeholder="$" style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }} />
                 </div>
               ))}
@@ -379,7 +390,7 @@ export default function TradeInsPage() {
               <div style={{ gridColumn: '1 / -1', borderTop: `1px solid ${theme.border}`, paddingTop: '12px', marginTop: '4px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <input type="checkbox" checked={form.has_lien} onChange={e => setForm({ ...form, has_lien: e.target.checked })} style={{ accentColor: theme.accent }} />
-                  <span style={{ fontSize: '13px', fontWeight: '600', color: theme.textSecondary }}>Has existing lien/payoff</span>
+                  <span style={{ fontSize: '13px', fontWeight: '600', color: theme.textSecondary }}>Has existing lien/payoff <span style={{ fontWeight: '400', color: theme.textMuted }}>(customer still owes a bank on this car)</span></span>
                 </label>
               </div>
               {form.has_lien && (
@@ -398,7 +409,7 @@ export default function TradeInsPage() {
                   </div>
                   {form.payoff_amount && form.acv && (
                     <div style={{ display: 'flex', alignItems: 'center', padding: '10px', backgroundColor: parseFloat(form.payoff_amount) > parseFloat(form.acv) ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', borderRadius: '8px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: '700', color: parseFloat(form.payoff_amount) > parseFloat(form.acv) ? '#ef4444' : '#22c55e' }}>
+                      <span title="Negative equity: the customer owes more than the trade is worth (payoff minus ACV)" style={{ fontSize: '13px', fontWeight: '700', color: parseFloat(form.payoff_amount) > parseFloat(form.acv) ? '#ef4444' : '#22c55e' }}>
                         {parseFloat(form.payoff_amount) > parseFloat(form.acv) ? `Neg. Equity: $${(parseFloat(form.payoff_amount) - parseFloat(form.acv)).toLocaleString()}` : `Equity: $${(parseFloat(form.acv) - parseFloat(form.payoff_amount)).toLocaleString()}`}
                       </span>
                     </div>

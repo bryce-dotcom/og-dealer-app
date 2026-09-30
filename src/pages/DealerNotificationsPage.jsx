@@ -11,6 +11,7 @@ export default function DealerNotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState([]);
   const [filter, setFilter] = useState('all');
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     if (dealerId) loadNotifications();
@@ -19,35 +20,41 @@ export default function DealerNotificationsPage() {
   async function loadNotifications() {
     try {
       setLoading(true);
-      const { data } = await supabase
+      setLoadError(null);
+      const { data, error } = await supabase
         .from('dealer_notifications')
         .select('*')
         .eq('dealer_id', dealerId)
-        .eq('dismissed', false)
+        .or('dismissed.is.null,dismissed.eq.false')
         .order('created_at', { ascending: false })
         .limit(200);
+      if (error) throw error;
       setNotifications(data || []);
     } catch (error) {
       console.error('Error loading notifications:', error);
+      setLoadError(error.message || 'Unknown error');
     } finally {
       setLoading(false);
     }
   }
 
   async function markAsRead(id) {
-    await supabase.from('dealer_notifications').update({ read: true, read_at: new Date().toISOString() }).eq('id', id);
+    const { error } = await supabase.from('dealer_notifications').update({ read: true, read_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { console.error('Could not mark notification read:', error); return; }
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
   }
 
   async function markAllRead() {
     const unread = notifications.filter(n => !n.read).map(n => n.id);
     if (unread.length === 0) return;
-    await supabase.from('dealer_notifications').update({ read: true, read_at: new Date().toISOString() }).in('id', unread);
+    const { error } = await supabase.from('dealer_notifications').update({ read: true, read_at: new Date().toISOString() }).in('id', unread).eq('dealer_id', dealerId);
+    if (error) { alert('Could not mark notifications as read: ' + error.message); return; }
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   }
 
   async function dismiss(id) {
-    await supabase.from('dealer_notifications').update({ dismissed: true }).eq('id', id);
+    const { error } = await supabase.from('dealer_notifications').update({ dismissed: true }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not dismiss notification: ' + error.message); return; }
     setNotifications(prev => prev.filter(n => n.id !== id));
   }
 
@@ -120,6 +127,9 @@ export default function DealerNotificationsPage() {
               </span>
             )}
           </h1>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>
+            Alerts about things that need your attention, like payments, deals, and appointments.
+          </p>
           {urgentCount > 0 && (
             <p style={{ color: '#ef4444', fontSize: '14px', margin: '4px 0 0', fontWeight: '600' }}>
               {urgentCount} urgent notification{urgentCount !== 1 ? 's' : ''}
@@ -151,6 +161,17 @@ export default function DealerNotificationsPage() {
           }}>{f.label}</button>
         ))}
       </div>
+
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}>Loading notifications...</div>
+      )}
+
+      {loadError && !loading && (
+        <div style={{ padding: '14px 16px', borderRadius: '10px', border: '1px solid #ef444450', backgroundColor: '#ef444415', color: '#ef4444', fontSize: '13px', marginBottom: '16px' }}>
+          Couldn't load notifications: {loadError}.{' '}
+          <button onClick={loadNotifications} style={{ background: 'none', border: 'none', color: theme.accent, cursor: 'pointer', fontWeight: '600', padding: 0 }}>Try again</button>
+        </div>
+      )}
 
       {/* Notifications */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -202,12 +223,25 @@ export default function DealerNotificationsPage() {
         })}
       </div>
 
-      {filtered.length === 0 && !loading && (
+      {filtered.length === 0 && !loading && !loadError && (
         <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted }}>
           <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" style={{ margin: '0 auto 12px', opacity: 0.5 }}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
           </svg>
-          <p style={{ fontSize: '16px' }}>{filter === 'unread' ? 'All caught up!' : 'No notifications'}</p>
+          {notifications.length === 0 ? (
+            <>
+              <p style={{ fontSize: '16px' }}>No notifications</p>
+              <p style={{ fontSize: '13px', maxWidth: '460px', margin: '8px auto 0', lineHeight: '1.5' }}>
+                Automatic alerts (like payments coming due, aged inventory, or title deadlines) aren't turned on yet,
+                so this list may stay empty for now. Check the Dashboard, BHPH, and Appointments pages for what needs attention today.
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: '16px' }}>{filter === 'unread' ? 'All caught up!' : 'Nothing in this category'}</p>
+              <p style={{ fontSize: '13px' }}>Click "All" to see every notification.</p>
+            </>
+          )}
         </div>
       )}
     </div>

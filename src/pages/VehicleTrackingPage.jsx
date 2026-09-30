@@ -36,12 +36,13 @@ export default function VehicleTrackingPage() {
   }
 
   async function loadHistory(trackingId) {
-    const { data } = await supabase.from('gps_location_history').select('*').eq('tracking_id', trackingId).order('recorded_at', { ascending: false }).limit(100);
+    const { data, error } = await supabase.from('gps_location_history').select('*').eq('tracking_id', trackingId).eq('dealer_id', dealerId).order('recorded_at', { ascending: false }).limit(100);
+    if (error) { alert('Failed to load location history: ' + error.message); return; }
     setHistory(data || []);
     setShowHistoryModal(true);
   }
 
-  const bhphVehicles = (inventory || []).filter(v => v.status === 'BHPH' || v.status === 'In Stock');
+  const bhphVehicles = (inventory || []).filter(v => ['BHPH', 'In Stock', 'For Sale'].includes(v.status));
 
   // Stats
   const activeTrackers = trackers.filter(t => t.active);
@@ -72,20 +73,25 @@ export default function VehicleTrackingPage() {
   }
 
   async function toggleStarter(id, disable) {
-    if (!confirm(disable ? 'Disable starter? Vehicle will not start.' : 'Enable starter?')) return;
-    await supabase.from('vehicle_gps_tracking').update({ starter_disabled: disable }).eq('id', id);
+    const msg = disable
+      ? "Mark this car's starter as disabled in your records?\n\nIMPORTANT: This only saves a note in OG Dealer. The car and GPS device are NOT contacted, so the car WILL still start. Use your GPS provider's own app or website to actually disable the starter."
+      : "Mark this car's starter as enabled in your records?\n\nThis only saves a note in OG Dealer. The car and GPS device are NOT contacted.";
+    if (!confirm(msg)) return;
+    const { error } = await supabase.from('vehicle_gps_tracking').update({ starter_disabled: disable, updated_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update: ' + error.message); return; }
     loadData();
   }
 
   async function toggleActive(id, active) {
-    await supabase.from('vehicle_gps_tracking').update({ active: !active }).eq('id', id);
+    const { error } = await supabase.from('vehicle_gps_tracking').update({ active: !active, updated_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update: ' + error.message); return; }
     loadData();
   }
 
   async function updateLocation(id, lat, lng, address) {
     await supabase.from('vehicle_gps_tracking').update({
       current_lat: lat, current_lng: lng, current_address: address, last_ping_at: new Date().toISOString()
-    }).eq('id', id);
+    }).eq('id', id).eq('dealer_id', dealerId);
     // Log history
     await supabase.from('gps_location_history').insert({
       tracking_id: id, dealer_id: dealerId, lat, lng, address, event_type: 'ping'
@@ -94,8 +100,9 @@ export default function VehicleTrackingPage() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('Remove GPS tracking for this vehicle?')) return;
-    await supabase.from('vehicle_gps_tracking').delete().eq('id', id);
+    if (!confirm('Remove GPS tracking for this vehicle? This deletes the tracker record from OG Dealer (it does not affect the device itself).')) return;
+    const { error } = await supabase.from('vehicle_gps_tracking').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to remove tracker: ' + error.message); return; }
     loadData();
   }
 
@@ -120,9 +127,14 @@ export default function VehicleTrackingPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Vehicle Tracking</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>GPS tracking, geofencing & starter control for BHPH fleet</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Keep a record of which cars (usually Buy Here Pay Here) have GPS devices installed</p>
         </div>
         <button onClick={() => setShowAddModal(true)} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ Add Tracker</button>
+      </div>
+
+      {/* Honest integration notice */}
+      <div style={{ backgroundColor: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', color: theme.text, fontSize: '13px' }}>
+        <strong style={{ color: '#f59e0b' }}>GPS is not connected to a tracking provider.</strong> OG Dealer does not talk to Ituran, Spireon, PassTime or any GPS device yet, so locations, pings, alerts and mileage here will not update on their own, and the starter buttons only change a note in your records. Use your GPS provider's own app to locate a car or disable its starter.
       </div>
 
       {/* Stats */}
@@ -132,7 +144,7 @@ export default function VehicleTrackingPage() {
           { label: 'Recent Pings (24h)', value: recentPings.length, color: '#3b82f6' },
           { label: 'Geofence Enabled', value: geofenceEnabled.length, color: '#8b5cf6' },
           { label: 'Geofence Alerts', value: geofenceAlerts.length, color: '#ef4444' },
-          { label: 'Starter Disabled', value: starterDisabled.length, color: '#f59e0b' },
+          { label: 'Starter Marked Disabled', value: starterDisabled.length, color: '#f59e0b' },
           { label: 'Total Vehicles', value: trackers.length, color: theme.text }
         ].map((s, i) => (
           <div key={i} style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '10px', padding: '16px' }}>
@@ -153,7 +165,7 @@ export default function VehicleTrackingPage() {
       {filteredTrackers.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>📍</div>
-          <p>No {activeTab === 'alerts' ? 'alerts' : 'trackers'} found.</p>
+          <p>{activeTab === 'alerts' ? 'No alerts.' : 'No trackers yet. Click "+ Add Tracker" to record a GPS device installed in a car.'}</p>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '12px' }}>
@@ -169,6 +181,7 @@ export default function VehicleTrackingPage() {
                   <div>
                     <div style={{ color: theme.text, fontWeight: '700', fontSize: '16px' }}>
                       {v ? `${v.year} ${v.make} ${v.model}` : tracker.vehicle_id}
+                      {v?.stock_number && <span style={{ color: theme.textMuted, fontSize: '13px', fontWeight: '400', marginLeft: '6px' }}>#{v.stock_number}</span>}
                     </div>
                     <div style={{ color: theme.textMuted, fontSize: '13px', display: 'flex', gap: '8px', marginTop: '4px' }}>
                       {tracker.device_id && <span>Device: {tracker.device_id}</span>}
@@ -212,7 +225,7 @@ export default function VehicleTrackingPage() {
 
                 {/* Info Row */}
                 <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', fontSize: '12px', color: theme.textSecondary }}>
-                  {tracker.geofence_enabled && <span>📍 Geofence: {tracker.geofence_radius_miles}mi</span>}
+                  {tracker.geofence_enabled && <span title="Geofence: an allowed area around the lot. Alerts would fire if the car leaves it (requires a connected GPS provider).">📍 Geofence: {tracker.geofence_radius_miles}mi</span>}
                   {tracker.last_known_mileage && <span>🛞 {tracker.last_known_mileage.toLocaleString()} mi</span>}
                   {tracker.mileage_limit && <span>📏 Limit: {tracker.mileage_limit.toLocaleString()} mi</span>}
                   {tracker.battery_level !== null && <span>🔋 {tracker.battery_level}%</span>}
@@ -221,8 +234,8 @@ export default function VehicleTrackingPage() {
                 {/* Actions */}
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   <button onClick={() => { setSelectedTracker(tracker); loadHistory(tracker.id); }} style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#3b82f6', cursor: 'pointer', fontSize: '12px' }}>History</button>
-                  <button onClick={() => toggleStarter(tracker.id, !tracker.starter_disabled)} style={{ padding: '6px 12px', backgroundColor: tracker.starter_disabled ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', border: 'none', borderRadius: '6px', color: tracker.starter_disabled ? '#22c55e' : '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>
-                    {tracker.starter_disabled ? 'Enable Starter' : 'Kill Starter'}
+                  <button onClick={() => toggleStarter(tracker.id, !tracker.starter_disabled)} title="Record only: this does not contact the car or GPS device" style={{ padding: '6px 12px', backgroundColor: tracker.starter_disabled ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', border: 'none', borderRadius: '6px', color: tracker.starter_disabled ? '#22c55e' : '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>
+                    {tracker.starter_disabled ? 'Mark starter enabled (record only)' : 'Mark starter disabled (record only)'}
                   </button>
                   <button onClick={() => toggleActive(tracker.id, tracker.active)} style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px' }}>
                     {tracker.active ? 'Deactivate' : 'Activate'}
@@ -246,7 +259,7 @@ export default function VehicleTrackingPage() {
                 <select value={form.vehicle_id} onChange={e => setForm({ ...form, vehicle_id: e.target.value })} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }}>
                   <option value="">Select vehicle...</option>
                   {bhphVehicles.filter(v => !trackers.some(t => t.vehicle_id === v.id)).map(v => (
-                    <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} [{v.status}]</option>
+                    <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}{v.stock_number ? ` #${v.stock_number}` : ''} [{v.status}]</option>
                   ))}
                 </select>
               </div>
@@ -265,7 +278,7 @@ export default function VehicleTrackingPage() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Geofence Radius (miles)</label>
+                  <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }} title="Geofence: an allowed area around your lot. Only works once a GPS provider is connected.">Geofence Radius (miles)</label>
                   <input type="number" value={form.geofence_radius_miles} onChange={e => setForm({ ...form, geofence_radius_miles: e.target.value })} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }} />
                 </div>
                 <div>
@@ -275,7 +288,7 @@ export default function VehicleTrackingPage() {
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="checkbox" checked={form.geofence_enabled} onChange={e => setForm({ ...form, geofence_enabled: e.target.checked })} style={{ accentColor: theme.accent }} />
-                <span style={{ color: theme.textSecondary, fontSize: '14px' }}>Enable geofence alerts</span>
+                <span style={{ color: theme.textSecondary, fontSize: '14px' }}>Enable geofence alerts <span style={{ color: theme.textMuted, fontSize: '12px' }}>(saved for later; alerts need a connected GPS provider)</span></span>
               </label>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>

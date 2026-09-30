@@ -38,33 +38,37 @@ export default function DealTimelinePage() {
     custom: { label: 'Custom', icon: '📌', color: '#71717a' }
   };
 
+  // Must match STAGES in DealsPage.jsx (the stages deals actually use).
   const dealStages = [
-    { key: 'Lead', color: '#3b82f6' },
-    { key: 'Negotiation', color: '#f59e0b' },
-    { key: 'Financing', color: '#8b5cf6' },
-    { key: 'Documents', color: '#06b6d4' },
-    { key: 'Sold', color: '#22c55e' },
-    { key: 'Delivered', color: '#14b8a6' }
+    { key: 'Lead', label: 'Lead', color: '#71717a' },
+    { key: 'Negotiation', label: 'Negotiation', color: '#f59e0b' },
+    { key: 'Pending', label: 'Pending Docs', color: '#3b82f6' },
+    { key: 'Sold', label: 'Sold', color: '#22c55e' },
+    { key: 'Delivered', label: 'Delivered', color: '#a855f7' }
   ];
 
   useEffect(() => { if (dealerId) loadTimeline(); }, [dealerId]);
 
   async function loadTimeline() {
     setLoading(true);
-    const { data } = await supabase.from('deal_timeline').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(200);
+    const { data, error } = await supabase.from('deal_timeline').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(200);
+    if (error) alert('Could not load the deal timeline: ' + error.message);
     setTimeline(data || []);
     setLoading(false);
   }
 
-  // Pipeline counts — deals table column is `stage` (not `status`).
-  const dealsByStage = dealStages.map(stage => ({
-    ...stage,
-    deals: (deals || []).filter(d => d.stage === stage.key),
-    count: (deals || []).filter(d => d.stage === stage.key).length
-  }));
+  // Pipeline counts — deals table column is `stage` (not `status`). Same rules as
+  // the Deals page board: archived deals are hidden, and a missing or unknown
+  // stage is shown under Lead.
+  const openDeals = (deals || []).filter(d => !d.archived);
+  const stageKeyOf = (d) => (dealStages.some(s => s.key === d.stage) ? d.stage : 'Lead');
+  const dealsByStage = dealStages.map(stage => {
+    const inStage = openDeals.filter(d => stageKeyOf(d) === stage.key);
+    return { ...stage, deals: inStage, count: inStage.length };
+  });
 
-  const totalDeals = (deals || []).length;
-  const activeDeals = (deals || []).filter(d => !['Sold', 'Delivered', 'Cancelled'].includes(d.stage)).length;
+  const totalDeals = openDeals.length;
+  const activeDeals = openDeals.filter(d => !['Sold', 'Delivered'].includes(stageKeyOf(d))).length;
 
   // Helper: human-readable label for a deal in the pipeline / select / event metadata.
   // Deals don't have a `customer_name` column; pull it from purchaser_name or join customers.
@@ -95,13 +99,14 @@ export default function DealTimelinePage() {
 
   async function handleAddEvent() {
     try {
-      await supabase.rpc('log_deal_event', {
+      const { error } = await supabase.rpc('log_deal_event', {
         p_dealer_id: dealerId,
         p_deal_id: parseInt(eventForm.deal_id),
         p_event_type: eventForm.event_type,
         p_title: eventForm.title,
         p_description: eventForm.description || null
       });
+      if (error) throw error;
       setShowAddModal(false);
       setEventForm({ deal_id: '', event_type: 'note_added', title: '', description: '' });
       loadTimeline();
@@ -126,8 +131,8 @@ export default function DealTimelinePage() {
     <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Deal Activity</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Pipeline view & deal lifecycle tracking</p>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Deal Timeline</h1>
+          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Where each deal stands, plus a running log of notes and events for every deal.</p>
         </div>
         <button onClick={() => setShowAddModal(true)} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ Log Event</button>
       </div>
@@ -160,7 +165,7 @@ export default function DealTimelinePage() {
           {dealsByStage.map(stage => (
             <div key={stage.key} style={{ backgroundColor: theme.bg, borderRadius: '12px', padding: '12px', border: `1px solid ${theme.border}` }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 4px' }}>
-                <span style={{ color: stage.color, fontWeight: '700', fontSize: '13px' }}>{stage.key}</span>
+                <span style={{ color: stage.color, fontWeight: '700', fontSize: '13px' }}>{stage.label}</span>
                 <span style={{ padding: '2px 8px', borderRadius: '10px', backgroundColor: `${stage.color}20`, color: stage.color, fontSize: '12px', fontWeight: '700' }}>{stage.count}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '500px', overflowY: 'auto' }}>
@@ -206,7 +211,7 @@ export default function DealTimelinePage() {
           {filteredTimeline.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
               <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
-              <p>No timeline events found. Events are logged as deals progress.</p>
+              <p>{timeline.length === 0 ? 'Nothing logged yet. Use + Log Event to add a note.' : 'No events match these filters.'}</p>
             </div>
           ) : (
             <div>

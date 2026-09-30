@@ -5,8 +5,9 @@ import { useTheme } from '../components/Layout';
 
 export default function KeyTrackingPage() {
   const { theme } = useTheme();
-  const { dealer, inventory, employees } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId, inventory, employees } = useStore();
+  const lotVehicles = (inventory || []).filter(v => ['In Stock', 'For Sale'].includes(v.status));
+  const vLabel = (v) => `${v.year} ${v.make} ${v.model}${v.stock_number ? ` - #${v.stock_number}` : ''}`;
 
   const [activeTab, setActiveTab] = useState('keys');
   const [keys, setKeys] = useState([]);
@@ -46,21 +47,24 @@ export default function KeyTrackingPage() {
 
   const getVehicleTitle = (vid) => {
     const v = inventory?.find(i => i.id === vid);
-    return v ? `${v.year} ${v.make} ${v.model}` : vid;
+    return v ? `${v.year} ${v.make} ${v.model}${v.stock_number ? ` #${v.stock_number}` : ''}` : vid;
   };
 
   const handleSaveKey = async () => {
-    if (!keyForm.vehicle_id) return;
+    if (!keyForm.vehicle_id) { alert('Please pick a Vehicle.'); return; }
     const payload = {
       dealer_id: dealerId, vehicle_id: keyForm.vehicle_id,
       key_count: parseInt(keyForm.key_count) || 1, key_type: keyForm.key_type,
       has_spare: keyForm.has_spare, hook_number: keyForm.hook_number || null,
-      current_location: 'key_board',
     };
-    if (editingKey) {
-      await supabase.from('key_tracking').update(payload).eq('id', editingKey.id);
-    } else {
-      await supabase.from('key_tracking').insert(payload);
+    // Only new keys start on the key board. Editing must NOT move a checked-out key back to the board.
+    if (!editingKey) payload.current_location = 'key_board';
+    const { error } = editingKey
+      ? await supabase.from('key_tracking').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingKey.id).eq('dealer_id', dealerId)
+      : await supabase.from('key_tracking').insert(payload);
+    if (error) {
+      alert('Failed to save key: ' + (error.code === '23505' ? 'this vehicle already has a key record. Edit that one instead.' : error.message));
+      return;
     }
     setShowKeyModal(false); setEditingKey(null);
     setKeyForm({ vehicle_id: '', key_count: '1', key_type: 'standard', has_spare: false, hook_number: '' });
@@ -68,54 +72,64 @@ export default function KeyTrackingPage() {
   };
 
   const handleCheckout = async () => {
-    if (!checkoutKey || !checkoutForm.checked_out_to) return;
+    if (!checkoutKey) return;
+    if (!checkoutForm.checked_out_to) { alert('Please pick who is taking the key.'); return; }
     const emp = employees?.find(e => e.id === parseInt(checkoutForm.checked_out_to));
-    await supabase.from('key_tracking').update({
+    const { error } = await supabase.from('key_tracking').update({
       current_location: 'salesperson',
       checked_out_to: parseInt(checkoutForm.checked_out_to),
       checked_out_name: emp?.name || null,
       checked_out_at: new Date().toISOString(),
       checked_out_reason: checkoutForm.checked_out_reason || null,
-    }).eq('id', checkoutKey.id);
+      updated_at: new Date().toISOString(),
+    }).eq('id', checkoutKey.id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to check out key: ' + error.message); return; }
     setShowCheckoutModal(false); setCheckoutKey(null);
     setCheckoutForm({ checked_out_to: '', checked_out_reason: '' });
     loadData();
   };
 
   const handleReturn = async (key) => {
-    await supabase.from('key_tracking').update({
+    const { error } = await supabase.from('key_tracking').update({
       current_location: 'key_board',
       checked_out_to: null, checked_out_name: null, checked_out_at: null, checked_out_reason: null,
       last_verified_at: new Date().toISOString(),
-    }).eq('id', key.id);
+      updated_at: new Date().toISOString(),
+    }).eq('id', key.id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to return key: ' + error.message); return; }
     loadData();
   };
 
   const handleSaveLot = async () => {
-    if (!lotForm.row_label || !lotForm.spot_number) return;
-    await supabase.from('lot_positions').insert({
+    const missing = [];
+    if (!lotForm.row_label) missing.push('Row');
+    if (!lotForm.spot_number) missing.push('Spot #');
+    if (missing.length) { alert('Please fill in: ' + missing.join(', ')); return; }
+    const { error } = await supabase.from('lot_positions').insert({
       dealer_id: dealerId, vehicle_id: lotForm.vehicle_id || null,
       lot_name: lotForm.lot_name, row_label: lotForm.row_label.toUpperCase(),
       spot_number: lotForm.spot_number,
       position_label: `${lotForm.row_label.toUpperCase()}-${lotForm.spot_number}`,
       zone: lotForm.zone, occupied: !!lotForm.vehicle_id,
     });
+    if (error) { alert('Failed to add lot spot: ' + error.message); return; }
     setShowLotModal(false);
     setLotForm({ vehicle_id: '', lot_name: 'Main', row_label: '', spot_number: '', zone: 'front' });
     loadData();
   };
 
   const handleAssignSpot = async (pos, vehicleId) => {
-    await supabase.from('lot_positions').update({
-      vehicle_id: vehicleId || null, occupied: !!vehicleId,
-    }).eq('id', pos.id);
+    const { error } = await supabase.from('lot_positions').update({
+      vehicle_id: vehicleId || null, occupied: !!vehicleId, updated_at: new Date().toISOString(),
+    }).eq('id', pos.id).eq('dealer_id', dealerId);
+    if (error) alert('Failed to update spot: ' + error.message);
     loadData();
   };
 
   const filtered = filterLocation === 'all' ? keys : keys.filter(k => k.current_location === filterLocation);
   const checkedOut = keys.filter(k => k.current_location !== 'key_board' && k.current_location !== 'lost');
   const lost = keys.filter(k => k.current_location === 'lost');
-  const noKeys = (inventory || []).filter(v => v.status === 'In Stock' && !keys.find(k => k.vehicle_id === v.id));
+  const noKeys = lotVehicles.filter(v => !keys.find(k => k.vehicle_id === v.id));
 
   const card = { backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '12px', padding: '20px' };
   const inputStyle = { width: '100%', padding: '10px 12px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px', outline: 'none', boxSizing: 'border-box' };
@@ -127,23 +141,23 @@ export default function KeyTrackingPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>Keys & Lot Map</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Track key locations and parking assignments</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Know who has each car's keys and where each car is parked on the lot</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button onClick={() => setShowLotModal(true)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>+ Lot Spot</button>
           <button onClick={() => { setEditingKey(null); setKeyForm({ vehicle_id: '', key_count: '1', key_type: 'standard', has_spare: false, hook_number: '' }); setShowKeyModal(true); }} style={{ padding: '10px 16px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>+ Track Key</button>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '24px' }}>
         {[
           { label: 'Total Keys', val: keys.length, color: theme.text },
           { label: 'On Board', val: keys.filter(k => k.current_location === 'key_board').length, color: '#22c55e' },
           { label: 'Checked Out', val: checkedOut.length, color: '#eab308' },
           { label: 'Lost', val: lost.length, color: lost.length > 0 ? '#ef4444' : '#22c55e' },
-          { label: 'No Key Record', val: noKeys.length, color: noKeys.length > 0 ? '#ef4444' : '#22c55e' },
+          { label: 'No Key Record', val: noKeys.length, color: noKeys.length > 0 ? '#ef4444' : '#22c55e', tip: 'Cars on the lot that nobody has added a key record for yet' },
         ].map((s, i) => (
-          <div key={i} style={{ ...card, textAlign: 'center' }}>
+          <div key={i} title={s.tip} style={{ ...card, textAlign: 'center' }}>
             <div style={{ color: theme.textMuted, fontSize: '12px', marginBottom: '4px' }}>{s.label}</div>
             <div style={{ color: s.color, fontSize: '20px', fontWeight: '700' }}>{s.val}</div>
           </div>
@@ -165,7 +179,9 @@ export default function KeyTrackingPage() {
             </select>
           </div>
           {filtered.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No keys tracked</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+              {keys.length === 0 ? 'No keys tracked yet. Click "+ Track Key" to add a car\'s keys and hook number.' : 'No keys in this location.'}
+            </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
               {filtered.map(k => {
@@ -211,7 +227,7 @@ export default function KeyTrackingPage() {
       {activeTab === 'lot' && (
         <>
           {positions.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No lot positions configured</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No lot spots yet. Click "+ Lot Spot" to add parking spots (row and spot number), then assign cars to them.</div>
           ) : (
             (() => {
               const lotNames = [...new Set(positions.map(p => p.lot_name))];
@@ -237,7 +253,8 @@ export default function KeyTrackingPage() {
                                 )}
                                 <select value={p.vehicle_id || ''} onChange={e => handleAssignSpot(p, e.target.value)} style={{ marginTop: '6px', padding: '2px', fontSize: '10px', width: '100%', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '4px', color: theme.text }}>
                                   <option value="">Empty</option>
-                                  {(inventory || []).filter(v => v.status === 'In Stock').map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}</option>)}
+                                  {lotVehicles.map(v => <option key={v.id} value={v.id}>{vLabel(v)}</option>)}
+                                  {p.vehicle_id && !lotVehicles.some(v => v.id === p.vehicle_id) && <option value={p.vehicle_id}>{getVehicleTitle(p.vehicle_id)}</option>}
                                 </select>
                               </div>
                             ))}
@@ -261,7 +278,8 @@ export default function KeyTrackingPage() {
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Vehicle *</label>
               <select value={keyForm.vehicle_id} onChange={e => setKeyForm(p => ({ ...p, vehicle_id: e.target.value }))} style={inputStyle} disabled={!!editingKey}>
                 <option value="">Select...</option>
-                {(inventory || []).filter(v => v.status === 'In Stock').map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} - #{v.unit_id}</option>)}
+                {lotVehicles.map(v => <option key={v.id} value={v.id}>{vLabel(v)}</option>)}
+                {editingKey && !lotVehicles.some(v => v.id === keyForm.vehicle_id) && <option value={keyForm.vehicle_id}>{getVehicleTitle(keyForm.vehicle_id)}</option>}
               </select>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
@@ -344,7 +362,7 @@ export default function KeyTrackingPage() {
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Assign Vehicle</label>
               <select value={lotForm.vehicle_id} onChange={e => setLotForm(p => ({ ...p, vehicle_id: e.target.value }))} style={inputStyle}>
                 <option value="">Empty</option>
-                {(inventory || []).filter(v => v.status === 'In Stock').map(v => <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}</option>)}
+                {lotVehicles.map(v => <option key={v.id} value={v.id}>{vLabel(v)}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>

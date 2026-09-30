@@ -210,6 +210,21 @@ export default function ResearchPage() {
   const [recsError, setRecsError] = useState(null);
   const [showRecommendations, setShowRecommendations] = useState(false);
 
+  // Credit costs exactly as CreditService charges them (costs[FEATURE] || 0), so button labels match what's deducted
+  const [creditCosts, setCreditCosts] = useState(null);
+  useEffect(() => {
+    CreditService.getCreditCosts().then(c => setCreditCosts(c || {})).catch(() => setCreditCosts({}));
+  }, []);
+  const creditLabel = (feature) => {
+    if (!creditCosts) return '';
+    const cost = creditCosts[feature] || 0;
+    return cost > 0 ? `${cost} credit${cost === 1 ? '' : 's'}` : 'No credits';
+  };
+  const withCost = (text, feature) => {
+    const lbl = creditLabel(feature);
+    return lbl ? `${text} (${lbl})` : text;
+  };
+
   // Seasonal patterns state
   const [seasonalPattern, setSeasonalPattern] = useState(null);
 
@@ -655,18 +670,9 @@ export default function ResearchPage() {
       if (data?.error || data?.success === false) {
         console.error('Recommendations error:', data);
         const errorMsg = data?.message || data?.error || 'Failed to generate recommendations';
-        if (data?.debug) {
-          console.log('Debug info:', data.debug);
-          setRecsError(`${errorMsg}\n\nDebug: ${JSON.stringify(data.debug, null, 2)}`);
-        } else {
-          setRecsError(errorMsg);
-        }
+        if (data?.debug) console.error('Recommendations debug info:', data.debug);
+        setRecsError(errorMsg);
         return;
-      }
-
-      // Log performance metrics
-      if (data?.cost_breakdown) {
-        console.log(`Smart Recommendations - Tier: ${data.tier}, API calls: ${data.cost_breakdown.api_calls_made}, Cache hits: ${data.cost_breakdown.cache_hits}, Cost: $${data.cost_breakdown.estimated_cost?.toFixed(4)}, Time: ${data.cost_breakdown.elapsed_ms}ms`);
       }
 
       // Consume credits AFTER successful operation
@@ -730,13 +736,8 @@ export default function ResearchPage() {
       if (data?.error || data?.success === false) {
         console.error('Opportunity recommendations error:', data);
         const errorMsg = data?.message || data?.error || 'Failed to generate opportunity recommendations';
-        setRecsError(`${errorMsg}\n\nDebug: ${JSON.stringify(data, null, 2)}`);
+        setRecsError(errorMsg);
         return;
-      }
-
-      // Log performance metrics
-      if (data?.cost_breakdown) {
-        console.log(`Opportunity Recommendations - API calls: ${data.cost_breakdown.api_calls_made}, Cost: $${data.cost_breakdown.estimated_cost?.toFixed(4)}, Time: ${data.cost_breakdown.elapsed_ms}ms`);
       }
 
       // Consume credits AFTER successful operation
@@ -1009,7 +1010,7 @@ export default function ResearchPage() {
         {/* Header */}
         <div style={{ marginBottom: '24px' }}>
           <h1 style={{ fontSize: '28px', fontWeight: '700', margin: 0, color: theme.text }}>Vehicle Research</h1>
-          <p style={{ color: theme.textMuted, margin: '8px 0 0', fontSize: '14px' }}>Get instant valuations and market analysis</p>
+          <p style={{ color: theme.textMuted, margin: '8px 0 0', fontSize: '14px' }}>Look up what a car is worth and what similar cars are selling for before you buy it</p>
         </div>
 
         {/* WHAT TO BUY SECTION - AI RECOMMENDATIONS */}
@@ -1083,7 +1084,7 @@ export default function ResearchPage() {
                   >
                     <div style={{ fontSize: '16px' }}>📊</div>
                     <div style={{ fontWeight: '600' }}>My Proven Winners</div>
-                    <div style={{ fontSize: '11px', opacity: 0.9 }}>FREE • Instant</div>
+                    <div style={{ fontSize: '11px', opacity: 0.9 }}>{creditLabel('BUYING_RECOMMENDATIONS') ? `${creditLabel('BUYING_RECOMMENDATIONS')} • ` : ''}Based on your past sales</div>
                   </button>
                   <button
                     onClick={loadOpportunityRecommendations}
@@ -1102,7 +1103,7 @@ export default function ResearchPage() {
                   >
                     <div style={{ fontSize: '16px' }}>🔍</div>
                     <div style={{ fontWeight: '600' }}>Discover Opportunities</div>
-                    <div style={{ fontSize: '11px', opacity: 0.9 }}>15 credits • Instant • Gap Analysis</div>
+                    <div style={{ fontSize: '11px', opacity: 0.9 }}>{creditLabel('BUYING_RECOMMENDATIONS') ? `${creditLabel('BUYING_RECOMMENDATIONS')} • ` : ''}Cars you haven't tried yet</div>
                   </button>
                 </div>
               )}
@@ -1131,14 +1132,6 @@ export default function ResearchPage() {
                         {recommendations.recommendation_type === 'new_opportunities' ? '🔍 NEW OPPORTUNITIES' :
                          recommendations.data_source === 'dealer_history' ? '⚡ YOUR DATA (INSTANT)' : '⚠️ INDUSTRY DEFAULTS'}
                       </span>
-                      {recommendations.cost_breakdown && (
-                        <span style={{ fontSize: 12, color: theme.textMuted }}>
-                          {recommendations.recommendation_type === 'new_opportunities'
-                            ? `${recommendations.cost_breakdown.api_calls_made} API calls • $${recommendations.cost_breakdown.estimated_cost?.toFixed(4)} cost • ${recommendations.cost_breakdown.elapsed_ms}ms`
-                            : `0 API calls • $0.00 cost • <50ms response${recommendations.cache_used > 0 ? ` • ${recommendations.cache_used} cached market insights` : ''}`
-                          }
-                        </span>
-                      )}
                     </div>
                     {recommendations.recommendation_type === 'new_opportunities' && (
                       <div style={{ marginTop: 8, fontSize: 12, color: theme.textMuted, lineHeight: '1.5' }}>
@@ -1338,7 +1331,7 @@ export default function ResearchPage() {
                       opacity: recsLoading ? 0.6 : 1
                     }}
                   >
-                    🔄 Refresh Recommendations (15 credits)
+                    🔄 {withCost('Refresh Recommendations', 'BUYING_RECOMMENDATIONS')}
                   </button>
                 </div>
               )}
@@ -1773,7 +1766,7 @@ export default function ResearchPage() {
                         backgroundColor: value === 'marketcheck' || value === 'nhtsa' || value === 'serpapi' ? '#22c55e' : '#eab308'
                       }} />
                       <span style={{ color: theme.textMuted }}>{key.replace(/_/g, ' ')}:</span>
-                      <span style={{ color: theme.text, fontWeight: '500' }}>{value}</span>
+                      <span style={{ color: theme.text, fontWeight: '500' }}>{value === 'serpapi' ? 'web search' : value}</span>
                     </div>
                   ))}
                 </div>
@@ -1826,7 +1819,8 @@ export default function ResearchPage() {
                 const mileageAdjustment = milesDiff > 0
                   ? Math.round(milesDiff * -0.15)
                   : Math.round(milesDiff * -0.10);
-                const adjustedMMR = (results.values?.mmr || 0) + mileageAdjustment;
+                // No MMR = no buy number (don't show just the mileage adjustment as if it were a price)
+                const adjustedMMR = results.values?.mmr != null ? results.values.mmr + mileageAdjustment : null;
 
                 return (
                 <div>
@@ -1975,8 +1969,8 @@ export default function ResearchPage() {
                         </span>
                         <span style={{ color: theme.text, fontSize: '14px', fontWeight: '700' }}>Mileage Adjusted MMR</span>
                       </div>
-                      <span style={{ color: '#22c55e', fontWeight: '800', fontSize: '20px' }}>
-                        {formatCurrency(adjustedMMR)}
+                      <span style={{ color: '#22c55e', fontWeight: '800', fontSize: '20px' }} title={adjustedMMR == null ? 'No wholesale (MMR) value was found for this car' : undefined}>
+                        {adjustedMMR != null ? formatCurrency(adjustedMMR) : '—'}
                       </span>
                     </div>
                   </div>
@@ -2128,7 +2122,7 @@ export default function ResearchPage() {
                       <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>
                         {results.comparables?.private_listings?.length || 0} found
                       </span>
-                      <SourceIndicator source={results.data_sources?.private_comparables} label="SerpAPI" />
+                      <SourceIndicator source={results.data_sources?.private_comparables} label="Web search" />
                     </div>
 
                     {results.comparables?.private_listings?.length > 0 ? (
@@ -2174,7 +2168,7 @@ export default function ResearchPage() {
                       </div>
                     ) : (
                       <div style={{ color: theme.textMuted, padding: '24px', textAlign: 'center', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px' }}>
-                        {results.debug?.serp_api_configured ? 'No private party listings found' : 'SerpAPI not configured - private party search disabled'}
+                        {results.debug?.serp_api_configured ? 'No private party listings found for this car.' : 'Private party listings aren\'t available right now.'}
                       </div>
                     )}
                   </div>
@@ -2205,18 +2199,6 @@ export default function ResearchPage() {
                     </div>
                   )}
 
-                  {/* Debug Info */}
-                  {results.debug && (
-                    <div style={{ marginTop: '24px', padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '8px' }}>
-                      <div style={{ color: theme.textMuted, fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase' }}>Debug Info</div>
-                      <div style={{ fontSize: '12px', color: theme.textMuted }}>
-                        <div>MarketCheck listings: {results.debug.total_mc_listings ?? 0}</div>
-                        <div>Filtered dealer comps: {results.debug.filtered_dealer_count ?? 0}</div>
-                        <div>Private party comps: {results.debug.private_count ?? 0}</div>
-                        <div>SerpAPI configured: {results.debug.serp_api_configured ? 'Yes' : 'No'}</div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -2244,7 +2226,7 @@ export default function ResearchPage() {
                           opacity: aiLoading ? 0.6 : 1
                         }}
                       >
-                        {aiLoading ? 'Analyzing...' : 'Run AI Analysis (5 credits)'}
+                        {aiLoading ? 'Analyzing...' : withCost('Run AI Analysis', 'AI_VEHICLE_ANALYSIS')}
                       </button>
                     </div>
                   )}
@@ -2291,25 +2273,25 @@ export default function ResearchPage() {
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center', border: '2px solid #22c55e' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>ESTIMATED PROFIT</div>
                           <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>
-                            ${aiAnalysis.estimated_profit?.toLocaleString() || 'N/A'}
+                            {aiAnalysis.estimated_profit != null ? `$${Number(aiAnalysis.estimated_profit).toLocaleString()}` : '—'}
                           </div>
                         </div>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>RECON COST</div>
                           <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>
-                            ${aiAnalysis.estimated_recon_cost?.toLocaleString() || 'N/A'}
+                            {aiAnalysis.estimated_recon_cost != null ? `$${Number(aiAnalysis.estimated_recon_cost).toLocaleString()}` : '—'}
                           </div>
                         </div>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>DAYS TO SELL</div>
                           <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>
-                            {aiAnalysis.estimated_days_to_sell || 'N/A'}
+                            {aiAnalysis.estimated_days_to_sell || '—'}
                           </div>
                         </div>
                         <div style={{ padding: '20px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', textAlign: 'center' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>BHPH SCORE</div>
                           <div style={{ fontSize: '28px', fontWeight: '700', color: aiAnalysis.bhph_score >= 7 ? '#22c55e' : aiAnalysis.bhph_score >= 5 ? '#eab308' : '#ef4444' }}>
-                            {aiAnalysis.bhph_score || 'N/A'}/10
+                            {aiAnalysis.bhph_score ? `${aiAnalysis.bhph_score}/10` : '—'}
                           </div>
                         </div>
                       </div>
@@ -2319,13 +2301,13 @@ export default function ResearchPage() {
                         <div style={{ padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', border: '1px solid #22c55e' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>TARGET PURCHASE PRICE</div>
                           <div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>
-                            ${aiAnalysis.target_purchase_price?.toLocaleString() || 'N/A'}
+                            {aiAnalysis.target_purchase_price != null ? `$${Number(aiAnalysis.target_purchase_price).toLocaleString()}` : '—'}
                           </div>
                         </div>
                         <div style={{ padding: '16px', backgroundColor: isDark ? theme.bg : '#f8fafc', borderRadius: '10px', border: '1px solid #3b82f6' }}>
                           <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px' }}>TARGET SALE PRICE</div>
                           <div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>
-                            ${aiAnalysis.target_sale_price?.toLocaleString() || 'N/A'}
+                            {aiAnalysis.target_sale_price != null ? `$${Number(aiAnalysis.target_sale_price).toLocaleString()}` : '—'}
                           </div>
                         </div>
                       </div>
@@ -2462,7 +2444,7 @@ export default function ResearchPage() {
                             opacity: aiLoading ? 0.6 : 1
                           }}
                         >
-                          Re-run Analysis (5 credits)
+                          {withCost('Re-run Analysis', 'AI_VEHICLE_ANALYSIS')}
                         </button>
                       </div>
                     </div>

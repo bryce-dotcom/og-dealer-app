@@ -5,13 +5,12 @@ import { useTheme } from '../components/Layout';
 
 export default function DealJacketPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [jackets, setJackets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deals, setDeals] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [vehicles, setVehicles] = useState([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedDealId, setSelectedDealId] = useState('');
   const [activeJacket, setActiveJacket] = useState(null);
@@ -28,8 +27,8 @@ export default function DealJacketPage() {
     registration: 'Registration', insurance: 'Insurance', credit_app: 'Credit App',
     contract: 'Contract', addendum: 'Addendum', disclosure: 'Disclosure',
     warranty: 'Warranty', trade_title: 'Trade Title', payoff_letter: 'Payoff Letter',
-    stip: 'Stipulation', id_copy: 'ID Copy', proof_income: 'Proof of Income',
-    proof_residence: 'Proof of Residence', power_of_attorney: 'POA',
+    stip: 'Stipulation (lender proof)', id_copy: 'ID Copy', proof_income: 'Proof of Income',
+    proof_residence: 'Proof of Residence', power_of_attorney: 'POA (Power of Attorney)',
     odometer: 'Odometer Statement', lien_release: 'Lien Release', other: 'Other'
   };
 
@@ -37,49 +36,55 @@ export default function DealJacketPage() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [j, d, e] = await Promise.all([
+    const [j, d, v] = await Promise.all([
       supabase.from('deal_jackets').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }),
-      supabase.from('deals').select('id, customer_name, vehicle_description, status, created_at').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(100),
-      supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true)
+      supabase.from('deals').select('id, purchaser_name, vehicle_id, stage, created_at').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(500),
+      supabase.from('inventory').select('id, year, make, model, stock_number').eq('dealer_id', dealerId)
     ]);
+    const loadErr = j.error || d.error || v.error;
+    if (loadErr) alert('Could not load deal jackets: ' + loadErr.message);
     setJackets(j.data || []);
     setDeals(d.data || []);
-    setEmployees(e.data || []);
+    setVehicles(v.data || []);
     setLoading(false);
   };
 
   const fetchDocs = async (jacketId) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('deal_jacket_documents')
       .select('*')
       .eq('deal_jacket_id', jacketId)
       .eq('dealer_id', dealerId)
       .order('sort_order');
+    if (error) alert('Could not load documents: ' + error.message);
     setDocs(data || []);
   };
 
   const createJacket = async () => {
     if (!selectedDealId) return;
-    const { data } = await supabase.from('deal_jackets').insert({
+    const { data, error } = await supabase.from('deal_jackets').insert({
       dealer_id: dealerId,
       deal_id: parseInt(selectedDealId),
       status: 'incomplete'
     }).select().single();
-    if (data) {
-      // Auto-create common required docs
-      const commonDocs = [
-        { document_name: "Buyer's Guide", document_type: 'buyers_guide', required: true },
-        { document_name: 'Bill of Sale', document_type: 'bill_of_sale', required: true },
-        { document_name: 'Title', document_type: 'title', required: true },
-        { document_name: 'Odometer Disclosure', document_type: 'odometer', required: true },
-        { document_name: 'ID Copy', document_type: 'id_copy', required: true },
-        { document_name: 'Insurance', document_type: 'insurance', required: true },
-        { document_name: 'Contract', document_type: 'contract', required: true }
-      ];
-      await supabase.from('deal_jacket_documents').insert(
-        commonDocs.map((d, i) => ({ ...d, deal_jacket_id: data.id, dealer_id: dealerId, sort_order: i }))
-      );
+    if (error || !data) {
+      alert('Could not create jacket: ' + (error?.message || 'no row returned'));
+      return;
     }
+    // Auto-create common required docs
+    const commonDocs = [
+      { document_name: "Buyer's Guide", document_type: 'buyers_guide', required: true },
+      { document_name: 'Bill of Sale', document_type: 'bill_of_sale', required: true },
+      { document_name: 'Title', document_type: 'title', required: true },
+      { document_name: 'Odometer Disclosure', document_type: 'odometer', required: true },
+      { document_name: 'ID Copy', document_type: 'id_copy', required: true },
+      { document_name: 'Insurance', document_type: 'insurance', required: true },
+      { document_name: 'Contract', document_type: 'contract', required: true }
+    ];
+    const { error: docsError } = await supabase.from('deal_jacket_documents').insert(
+      commonDocs.map((d, i) => ({ ...d, deal_jacket_id: data.id, dealer_id: dealerId, sort_order: i }))
+    );
+    if (docsError) alert('Jacket created, but the starter checklist could not be added: ' + docsError.message);
     setShowCreateModal(false);
     setSelectedDealId('');
     fetchAll();
@@ -91,35 +96,39 @@ export default function DealJacketPage() {
   };
 
   const toggleReceived = async (docId, current) => {
-    await supabase.from('deal_jacket_documents').update({
+    const { error } = await supabase.from('deal_jacket_documents').update({
       received: !current,
       received_at: !current ? new Date().toISOString() : null
-    }).eq('id', docId);
+    }).eq('id', docId).eq('dealer_id', dealerId);
+    if (error) { alert('Could not update document: ' + error.message); return; }
     fetchDocs(activeJacket.id);
     updateCompletion(activeJacket.id);
   };
 
   const toggleVerified = async (docId, current) => {
-    await supabase.from('deal_jacket_documents').update({
+    const { error } = await supabase.from('deal_jacket_documents').update({
       verified: !current,
       verified_at: !current ? new Date().toISOString() : null
-    }).eq('id', docId);
+    }).eq('id', docId).eq('dealer_id', dealerId);
+    if (error) { alert('Could not update document: ' + error.message); return; }
     fetchDocs(activeJacket.id);
   };
 
   const updateCompletion = async (jacketId) => {
-    const { data: allDocs } = await supabase.from('deal_jacket_documents').select('required, received').eq('deal_jacket_id', jacketId);
-    if (!allDocs || allDocs.length === 0) return;
-    const required = allDocs.filter(d => d.required);
+    const { data: allDocs, error: docsError } = await supabase.from('deal_jacket_documents').select('required, received').eq('deal_jacket_id', jacketId).eq('dealer_id', dealerId);
+    if (docsError) { alert('Could not recalculate completion: ' + docsError.message); return; }
+    const list = allDocs || [];
+    const required = list.filter(d => d.required);
     const received = required.filter(d => d.received);
-    const pct = required.length > 0 ? Math.round((received.length / required.length) * 100) : 100;
+    const pct = required.length > 0 ? Math.round((received.length / required.length) * 100) : (list.length > 0 ? 100 : 0);
     const status = pct === 100 ? 'complete' : 'incomplete';
-    await supabase.from('deal_jackets').update({ completion_percent: pct, status }).eq('id', jacketId);
+    const { error } = await supabase.from('deal_jackets').update({ completion_percent: pct, status }).eq('id', jacketId).eq('dealer_id', dealerId);
+    if (error) alert('Could not update jacket progress: ' + error.message);
     fetchAll();
   };
 
   const addDoc = async () => {
-    await supabase.from('deal_jacket_documents').insert({
+    const { error } = await supabase.from('deal_jacket_documents').insert({
       deal_jacket_id: activeJacket.id,
       dealer_id: dealerId,
       document_name: docForm.document_name,
@@ -128,25 +137,34 @@ export default function DealJacketPage() {
       notes: docForm.notes || null,
       sort_order: docs.length
     });
+    if (error) { alert('Could not add document: ' + error.message); return; }
     setShowDocModal(false);
     setDocForm({ document_name: '', document_type: 'other', required: false, notes: '' });
     fetchDocs(activeJacket.id);
+    updateCompletion(activeJacket.id);
   };
 
-  const deleteDoc = async (docId) => {
-    await supabase.from('deal_jacket_documents').delete().eq('id', docId);
+  const deleteDoc = async (doc) => {
+    if (!confirm(`Remove "${doc.document_name}" from this checklist?`)) return;
+    const { error } = await supabase.from('deal_jacket_documents').delete().eq('id', doc.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not remove document: ' + error.message); return; }
     fetchDocs(activeJacket.id);
     updateCompletion(activeJacket.id);
   };
 
   const deleteJacket = async (id) => {
-    if (!confirm('Delete this deal jacket and all documents?')) return;
-    await supabase.from('deal_jackets').delete().eq('id', id);
+    if (!confirm('Delete this deal jacket and its whole checklist? This cannot be undone.')) return;
+    const { error } = await supabase.from('deal_jackets').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not delete jacket: ' + error.message); return; }
     if (activeJacket?.id === id) { setActiveJacket(null); setDocs([]); }
     fetchAll();
   };
 
   const getDeal = (id) => deals.find(d => d.id === id);
+  const vehicleLabel = (deal) => {
+    const v = deal?.vehicle_id ? vehicles.find(x => x.id === deal.vehicle_id) : null;
+    return v ? [v.year, v.make, v.model].filter(Boolean).join(' ') : '';
+  };
   const filtered = filter === 'all' ? jackets : jackets.filter(j => j.status === filter);
 
   const stats = {
@@ -164,7 +182,7 @@ export default function DealJacketPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Deal Jackets</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Digital deal document management</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Checklist of paperwork each sale needs. Tick items off as you collect them.</p>
         </div>
         <button onClick={() => setShowCreateModal(true)} style={{
           padding: '10px 20px', backgroundColor: theme.accent, color: '#fff',
@@ -203,7 +221,11 @@ export default function DealJacketPage() {
           {loading ? (
             <div style={{ textAlign: 'center', padding: '40px', color: theme.textSecondary }}>Loading...</div>
           ) : filtered.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No deal jackets</div>
+            <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+              {jackets.length === 0
+                ? 'No deal jackets yet. Click + New Jacket and pick a deal to start its paperwork checklist.'
+                : `No ${filter} jackets.`}
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {filtered.map(jacket => {
@@ -218,8 +240,8 @@ export default function DealJacketPage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                       <div>
                         <div style={{ fontWeight: '600', color: theme.text, fontSize: '14px' }}>Deal #{jacket.deal_id}</div>
-                        <div style={{ fontSize: '12px', color: theme.textSecondary }}>{deal?.customer_name || '-'}</div>
-                        {deal?.vehicle_description && <div style={{ fontSize: '12px', color: theme.textMuted }}>{deal.vehicle_description}</div>}
+                        <div style={{ fontSize: '12px', color: theme.textSecondary }}>{deal?.purchaser_name || '-'}</div>
+                        {vehicleLabel(deal) && <div style={{ fontSize: '12px', color: theme.textMuted }}>{vehicleLabel(deal)}</div>}
                       </div>
                       <button onClick={(e) => { e.stopPropagation(); deleteJacket(jacket.id); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Del</button>
                     </div>
@@ -242,7 +264,9 @@ export default function DealJacketPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div>
                 <h2 style={{ fontSize: '16px', fontWeight: '700', color: theme.text, margin: 0 }}>Deal #{activeJacket.deal_id} Documents</h2>
-                <div style={{ fontSize: '13px', color: theme.textSecondary }}>{getDeal(activeJacket.deal_id)?.customer_name}</div>
+                <div style={{ fontSize: '13px', color: theme.textSecondary }}>
+                  {[getDeal(activeJacket.deal_id)?.purchaser_name, vehicleLabel(getDeal(activeJacket.deal_id))].filter(Boolean).join(' · ')}
+                </div>
               </div>
               <button onClick={() => setShowDocModal(true)} style={{
                 padding: '6px 14px', backgroundColor: theme.accentBg, color: theme.accent,
@@ -250,8 +274,14 @@ export default function DealJacketPage() {
               }}>+ Add Doc</button>
             </div>
 
+            <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '12px', lineHeight: 1.5 }}>
+              Tick the box when you have the paper in hand. <b style={{ color: '#ef4444' }}>REQ</b> = required before the jacket counts as complete.
+              A <b>Stipulation</b> ("stip") is extra proof a lender asks for, like pay stubs or a utility bill.
+              <b> POA</b> = Power of Attorney, lets the dealership sign title paperwork for the buyer.
+            </div>
+
             {docs.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '30px', color: theme.textMuted }}>No documents</div>
+              <div style={{ textAlign: 'center', padding: '30px', color: theme.textMuted }}>No documents on this checklist. Click + Add Doc to add one.</div>
             ) : (
               <div>
                 {docs.map(doc => (
@@ -260,7 +290,7 @@ export default function DealJacketPage() {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '14px', color: doc.received ? theme.textMuted : theme.text, fontWeight: '500', textDecoration: doc.received ? 'line-through' : 'none' }}>{doc.document_name}</span>
-                        {doc.required && <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', backgroundColor: '#ef444422', color: '#ef4444', fontWeight: '600' }}>REQ</span>}
+                        {doc.required && <span title="Required for this sale" style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', backgroundColor: '#ef444422', color: '#ef4444', fontWeight: '600' }}>REQ</span>}
                         <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '4px', backgroundColor: theme.accentBg, color: theme.accent }}>{docTypes[doc.document_type] || doc.document_type}</span>
                       </div>
                       {doc.received_at && <div style={{ fontSize: '11px', color: theme.textMuted }}>Received {new Date(doc.received_at).toLocaleDateString()}</div>}
@@ -274,7 +304,7 @@ export default function DealJacketPage() {
                           border: `1px solid ${doc.verified ? '#22c55e' : theme.border}`
                         }}>{doc.verified ? 'Verified' : 'Verify'}</button>
                       )}
-                      <button onClick={() => deleteDoc(doc.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' }}>×</button>
+                      <button onClick={() => deleteDoc(doc)} title="Remove from checklist" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' }}>×</button>
                     </div>
                   </div>
                 ))}
@@ -292,9 +322,12 @@ export default function DealJacketPage() {
             <div><label style={labelStyle}>Select Deal *</label><select value={selectedDealId} onChange={e => setSelectedDealId(e.target.value)} style={inputStyle}>
               <option value="">Choose a deal</option>
               {deals.filter(d => !jackets.some(j => j.deal_id === d.id)).map(d => (
-                <option key={d.id} value={d.id}>#{d.id} - {d.customer_name} {d.vehicle_description ? `(${d.vehicle_description})` : ''}</option>
+                <option key={d.id} value={d.id}>#{d.id} - {d.purchaser_name || 'No buyer name'} {vehicleLabel(d) ? `(${vehicleLabel(d)})` : ''}{d.stage ? ` - ${d.stage}` : ''}</option>
               ))}
             </select></div>
+            {deals.filter(d => !jackets.some(j => j.deal_id === d.id)).length === 0 && (
+              <p style={{ fontSize: '12px', color: '#f59e0b', marginTop: '8px' }}>Every deal already has a jacket. Create a deal on the Deals page first.</p>
+            )}
             <p style={{ fontSize: '12px', color: theme.textMuted, marginTop: '8px' }}>7 common required documents will be auto-created.</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '20px' }}>
               <button onClick={() => setShowCreateModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button>
@@ -316,7 +349,7 @@ export default function DealJacketPage() {
               </select></div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="checkbox" checked={docForm.required} onChange={e => setDocForm({ ...docForm, required: e.target.checked })} />
-                <label style={{ fontSize: '13px', color: theme.text }}>Required document</label>
+                <label style={{ fontSize: '13px', color: theme.text }}>Required document (must be collected before the jacket is complete)</label>
               </div>
               <div><label style={labelStyle}>Notes</label><textarea value={docForm.notes} onChange={e => setDocForm({ ...docForm, notes: e.target.value })} style={{ ...inputStyle, minHeight: '50px', resize: 'vertical' }} /></div>
             </div>

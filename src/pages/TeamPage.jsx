@@ -150,12 +150,14 @@ export default function TeamPage() {
     try {
       const ext = file.name.split('.').pop();
       const fileName = `${dealerId}/${selectedEmployee.id}/${selectedDocType}_${Date.now()}.${ext}`;
-      await supabase.storage.from('employee-documents').upload(fileName, file);
-      const { data: urlData } = supabase.storage.from('employee-documents').getPublicUrl(fileName);
-      await supabase.from('employee_documents').insert({
+      // Private bucket: store the file's path; "View" makes a short-lived link.
+      const { error: uploadError } = await supabase.storage.from('employee-documents').upload(fileName, file);
+      if (uploadError) throw uploadError;
+      const { error: insertError } = await supabase.from('employee_documents').insert({
         employee_id: selectedEmployee.id, document_type: selectedDocType, document_name: file.name,
-        file_url: urlData.publicUrl, status: 'pending', submitted_at: new Date().toISOString(), dealer_id: dealerId
+        file_url: fileName, status: 'pending', submitted_at: new Date().toISOString(), dealer_id: dealerId
       });
+      if (insertError) throw insertError;
       await fetchDocuments(selectedEmployee.id);
       setSelectedDocType('');
     } catch (err) { alert('Upload failed: ' + err.message); }
@@ -551,7 +553,18 @@ export default function TeamPage() {
                           </div>
                           <div style={{ display: 'flex', gap: '8px' }}>
                             {doc.url && <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '12px', textDecoration: 'none', padding: '4px 10px', backgroundColor: 'rgba(59,130,246,0.1)', borderRadius: '4px' }}>Form</a>}
-                            {uploaded && <a href={uploaded.file_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22c55e', fontSize: '12px', textDecoration: 'none', padding: '4px 10px', backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: '4px' }}>View</a>}
+                            {uploaded && (
+                              <button
+                                onClick={async () => {
+                                  if (/^https?:\/\//.test(uploaded.file_url)) { window.open(uploaded.file_url, '_blank'); return; }
+                                  const win = window.open('', '_blank'); // open now so iPad Safari doesn't block the popup
+                                  const { data, error } = await supabase.storage.from('employee-documents').createSignedUrl(uploaded.file_url, 600);
+                                  if (error || !data?.signedUrl) { win?.close(); alert("Couldn't open this document: " + (error?.message || 'unknown error')); return; }
+                                  if (win) win.location = data.signedUrl; else window.location.href = data.signedUrl;
+                                }}
+                                style={{ color: '#22c55e', fontSize: '12px', border: 'none', cursor: 'pointer', padding: '4px 10px', backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: '4px' }}
+                              >View</button>
+                            )}
                           </div>
                         </div>
                       );

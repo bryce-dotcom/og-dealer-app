@@ -39,7 +39,7 @@ export default function BooksPage() {
   const [syncStartDate, setSyncStartDate] = useState('');
   const [syncEndDate, setSyncEndDate] = useState('');
 
-  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', expense_date: new Date().toISOString().split('T')[0], vendor: '', category_id: null });
+  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', expense_date: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })(), vendor: '', category_id: null });
   const [assetForm, setAssetForm] = useState({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' });
   const [liabilityForm, setLiabilityForm] = useState({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' });
 
@@ -151,12 +151,14 @@ export default function BooksPage() {
     setLoadingAI(false);
   }
 
-  // Create Plaid link token
-  async function createLinkToken() {
+  // Create Plaid link token. With reconnectAccountId, Link opens in "update mode"
+  // so the owner re-logs into an expired bank without creating duplicate accounts.
+  async function createLinkToken(reconnectAccountId = null) {
     try {
-      console.log('[PLAID] Creating link token for dealer:', dealerId);
       const { data, error } = await supabase.functions.invoke('plaid-link-token', {
-        body: { user_id: String(dealerId) }
+        body: reconnectAccountId
+          ? { dealer_id: dealerId, reconnect_account_id: reconnectAccountId }
+          : { dealer_id: dealerId }
       });
 
       if (error) {
@@ -185,7 +187,16 @@ export default function BooksPage() {
   }
 
   // Handle successful Plaid connection
+  const reconnectModeRef = useRef(false);
   const onPlaidSuccess = useCallback(async (public_token, metadata) => {
+    if (reconnectModeRef.current) {
+      // Update mode: the existing connection is fixed; no token exchange needed.
+      reconnectModeRef.current = false;
+      setLinkToken(null);
+      showToast('Bank reconnected. Pulling in missed transactions…', 'success');
+      await syncAccount();
+      return;
+    }
     setConnecting(true);
     try {
       const { data, error } = await supabase.functions.invoke('plaid-sync', {
@@ -235,10 +246,17 @@ export default function BooksPage() {
 
   // Handle connect button click
   async function handleConnectClick() {
-    console.log('[PLAID] Button clicked, creating token...');
+    reconnectModeRef.current = false;
     shouldOpenRef.current = true;
-    const success = await createLinkToken();
-    console.log('[PLAID] Token creation result:', success);
+    await createLinkToken();
+  }
+
+  // Re-login to a bank whose connection expired (same accounts, no duplicates)
+  async function handleReconnectClick(accountId) {
+    reconnectModeRef.current = true;
+    shouldOpenRef.current = true;
+    const ok = await createLinkToken(accountId);
+    if (!ok) reconnectModeRef.current = false;
   }
 
   // Sync transactions for an account
@@ -273,6 +291,13 @@ export default function BooksPage() {
       const { data, error } = await supabase.functions.invoke('plaid-sync', { body });
 
       if (error) throw error;
+
+      if (data?.success === false) {
+        // Bank-side problem (e.g. connection expired). Show it plainly; no credits used.
+        showToast(data.message || data.error || 'Bank sync failed', 'error');
+        await fetchAll(); // pick up the account's new "needs reconnect" status
+        return;
+      }
 
       // Consume credits AFTER successful sync
       await CreditService.consumeCredits(
@@ -363,50 +388,63 @@ export default function BooksPage() {
   const cashInBank = assetAccounts.reduce((sum, a) => sum + (parseFloat(a.current_balance) || 0), 0);
   const creditCardDebt = liabilityAccounts.reduce((sum, a) => sum + Math.abs(parseFloat(a.current_balance) || 0), 0);
 
-  // Calculate inventory value including ALL expenses per vehicle (In Stock, For Sale, AND BHPH)
+  // Cost of a car including ALL its expenses. A car sold on BHPH is NOT counted here:
+  // once sold, what you own is the loan balance (bhphOwed), not the car.
+  const vehicleCost = (v) => {
+    const purchasePrice = parseFloat(v.purchase_price) || 0;
+    const invExpenseTotal = (inventoryExpenses || [])
+      .filter(e => e.inventory_id === v.id)
+      .reduce((expSum, e) => expSum + (parseFloat(e.amount) || 0), 0);
+    const bankExpenseTotal = (transactions || [])
+      .filter(t => t.inventory_id === v.id && t.status === 'booked' && !t.is_income)
+      .reduce((txnSum, t) => txnSum + Math.abs(parseFloat(t.amount) || 0), 0);
+    return purchasePrice + invExpenseTotal + bankExpenseTotal;
+  };
+  const fleetVehicles = (inventory || []).filter(v => v.status === 'Fleet');
+  const fleetValue = fleetVehicles.reduce((sum, v) => sum + vehicleCost(v), 0);
   const inventoryValue = (inventory || [])
-    .filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH')
-    .reduce((sum, v) => {
-      // Start with purchase price
-      const purchasePrice = parseFloat(v.purchase_price) || 0;
-
-      // Add inventory_expenses for this vehicle
-      const invExpenseTotal = (inventoryExpenses || [])
-        .filter(e => e.inventory_id === v.id)
-        .reduce((expSum, e) => expSum + (parseFloat(e.amount) || 0), 0);
-
-      // Add bank transaction expenses for this vehicle (booked expenses only)
-      const bankExpenseTotal = (transactions || [])
-        .filter(t => t.inventory_id === v.id && t.status === 'booked' && !t.is_income)
-        .reduce((txnSum, t) => txnSum + Math.abs(parseFloat(t.amount) || 0), 0);
-
-      // Total cost for this vehicle = purchase + all expenses
-      const vehicleTotalCost = purchasePrice + invExpenseTotal + bankExpenseTotal;
-
-      return sum + vehicleTotalCost;
-    }, 0);
+    .filter(v => v.status === 'In Stock' || v.status === 'For Sale')
+    .reduce((sum, v) => sum + vehicleCost(v), 0);
   // bhph_loans schema column is `balance`, NOT `current_balance` — this was understating assets by the entire BHPH portfolio.
   const bhphOwed = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
   const bhphMonthly = (bhphLoans || []).filter(l => l.status === 'Active').reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
   const otherAssets = assets.reduce((sum, a) => sum + (parseFloat(a.current_value) || 0), 0);
   const otherLiabilities = liabilities.reduce((sum, l) => sum + (parseFloat(l.current_balance) || 0), 0);
 
-  const totalOwn = cashInBank + inventoryValue + bhphOwed + otherAssets;
+  const totalOwn = cashInBank + inventoryValue + fleetValue + bhphOwed + otherAssets;
   const totalOwe = creditCardDebt + otherLiabilities;
   const netWorth = totalOwn - totalOwe;
   const healthScore = totalOwn > 0 ? Math.min(100, Math.max(0, Math.round((netWorth / totalOwn) * 100))) : 50;
-  const inventoryCount = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale' || v.status === 'BHPH').length;
+  const inventoryCount = (inventory || []).filter(v => v.status === 'In Stock' || v.status === 'For Sale').length;
   const bhphCount = (bhphLoans || []).filter(l => l.status === 'Active').length;
 
+  // Bank balances are only as fresh as the last successful sync.
+  const STALE_MS = 3 * 24 * 60 * 60 * 1000;
+  const staleAccounts = bankAccounts.filter(a =>
+    a.sync_status === 'needs_reconnect' || a.sync_status === 'error' ||
+    !a.last_synced_at || (Date.now() - new Date(a.last_synced_at).getTime()) > STALE_MS
+  );
+  const staleCash = assetAccounts.filter(a => staleAccounts.includes(a));
+  const oldestCashSync = staleCash.map(a => a.last_synced_at).filter(Boolean).sort()[0];
+
   // AI BUSINESS VALUATION - AUTOMOTIVE DEALERSHIP INDUSTRY STANDARDS
+  // A sale = a Sold/Delivered deal, or a car marked Sold in Inventory (with a
+  // sale date) that has no such deal. Leads and archived deals are not sales.
   const now = new Date();
   const yearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-  const recentDeals = (deals || []).filter(d => new Date(d.date_of_sale) >= yearAgo);
-  const annualRevenue = recentDeals.reduce((sum, d) => sum + (parseFloat(d.price) || 0), 0);
-  const annualProfit = recentDeals.reduce((sum, d) => {
-    const v = (inventory || []).find(v => String(v.id) === String(d.vehicle_id));
-    return sum + ((parseFloat(d.price) || 0) - (parseFloat(v?.purchase_price) || 0));
-  }, 0);
+  const soldDeals = (deals || []).filter(d => !d.archived && ['Sold', 'Delivered'].includes(d.stage));
+  const soldDealVehicleIds = new Set(soldDeals.map(d => String(d.vehicle_id)));
+  const recentSales = [
+    ...soldDeals
+      .filter(d => d.date_of_sale && new Date(d.date_of_sale) >= yearAgo)
+      .map(d => ({ price: parseFloat(d.sale_price ?? d.price) || 0, vehicle: (inventory || []).find(v => String(v.id) === String(d.vehicle_id)) })),
+    ...(inventory || [])
+      .filter(v => v.status === 'Sold' && v.sale_date && new Date(v.sale_date) >= yearAgo && !soldDealVehicleIds.has(String(v.id)))
+      .map(v => ({ price: parseFloat(v.sale_price) || 0, vehicle: v }))
+  ];
+  const recentDeals = recentSales;
+  const annualRevenue = recentSales.reduce((sum, s) => sum + s.price, 0);
+  const annualProfit = recentSales.reduce((sum, s) => sum + s.price - (s.vehicle ? vehicleCost(s.vehicle) : 0), 0);
   const bhphAnnualIncome = bhphMonthly * 12;
   const customerCount = (customers || []).length;
 
@@ -466,31 +504,80 @@ export default function BooksPage() {
   const formatDateTime = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '-';
   const getHealthColor = (s) => s >= 70 ? '#22c55e' : s >= 40 ? '#eab308' : '#ef4444';
 
-  async function bookTransaction(txn, categoryId, inventoryId = null) {
-    await supabase.from('bank_transactions').update({
-      status: 'booked',
-      category_id: categoryId,
-      inventory_id: inventoryId
-    }).eq('id', txn.id);
-    fetchAll();
+  // All writes check for errors so a failed save never looks like it worked.
+  async function runWrite(promise, failMsg) {
+    const { error } = await promise;
+    if (error) {
+      console.error(failMsg, error);
+      showToast(`${failMsg}: ${error.message}`, 'error');
+      return false;
+    }
+    return true;
   }
-  async function ignoreTransaction(txn) { await supabase.from('bank_transactions').update({ status: 'ignored' }).eq('id', txn.id); fetchAll(); }
+  const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+  async function bookTransaction(txn, categoryId, inventoryId = null) {
+    const ok = await runWrite(
+      supabase.from('bank_transactions').update({ status: 'booked', category_id: categoryId, inventory_id: inventoryId }).eq('id', txn.id).eq('dealer_id', dealerId),
+      "Couldn't book transaction"
+    );
+    if (ok) fetchAll();
+  }
+  async function ignoreTransaction(txn) {
+    const ok = await runWrite(
+      supabase.from('bank_transactions').update({ status: 'ignored' }).eq('id', txn.id).eq('dealer_id', dealerId),
+      "Couldn't ignore transaction"
+    );
+    if (ok) fetchAll();
+  }
   async function reconcileTransaction(txn, categoryId, manualExpenseId, inventoryId = null) {
-    // Book the bank transaction
-    await supabase.from('bank_transactions').update({
-      status: 'booked',
-      category_id: categoryId,
-      inventory_id: inventoryId
-    }).eq('id', txn.id);
-    // Mark the manual expense as reconciled (or delete it)
+    const ok = await runWrite(
+      supabase.from('bank_transactions').update({ status: 'booked', category_id: categoryId, inventory_id: inventoryId }).eq('id', txn.id).eq('dealer_id', dealerId),
+      "Couldn't book transaction"
+    );
+    if (!ok) return;
+    // Mark the matching manual expense as reconciled so it isn't counted twice
     if (manualExpenseId) {
-      await supabase.from('manual_expenses').update({ status: 'reconciled' }).eq('id', manualExpenseId);
+      await runWrite(
+        supabase.from('manual_expenses').update({ status: 'reconciled' }).eq('id', manualExpenseId).eq('dealer_id', dealerId),
+        "Booked, but couldn't mark the matching expense as reconciled"
+      );
     }
     fetchAll();
   }
-  async function addExpense() { if (!expenseForm.description || !expenseForm.amount) return; await supabase.from('manual_expenses').insert({ ...expenseForm, amount: parseFloat(expenseForm.amount), dealer_id: dealerId, status: 'pending' }); setShowAddExpense(false); setExpenseForm({ description: '', amount: '', expense_date: new Date().toISOString().split('T')[0], vendor: '', category_id: null }); fetchAll(); }
-  async function addAsset() { if (!assetForm.name || !assetForm.current_value) return; await supabase.from('assets').insert({ ...assetForm, purchase_price: parseFloat(assetForm.purchase_price) || 0, current_value: parseFloat(assetForm.current_value), dealer_id: dealerId, status: 'active' }); setShowAddAsset(false); setAssetForm({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' }); fetchAll(); }
-  async function addLiability() { if (!liabilityForm.name || !liabilityForm.current_balance) return; await supabase.from('liabilities').insert({ ...liabilityForm, current_balance: parseFloat(liabilityForm.current_balance), monthly_payment: parseFloat(liabilityForm.monthly_payment) || 0, dealer_id: dealerId, status: 'active' }); setShowAddLiability(false); setLiabilityForm({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' }); fetchAll(); }
+  async function addExpense() {
+    if (!expenseForm.description || !expenseForm.amount) { showToast('Enter a description and an amount', 'error'); return; }
+    const ok = await runWrite(
+      supabase.from('manual_expenses').insert({ ...expenseForm, amount: parseFloat(expenseForm.amount), dealer_id: dealerId, status: 'pending' }),
+      "Couldn't save expense"
+    );
+    if (!ok) return;
+    setShowAddExpense(false);
+    setExpenseForm({ description: '', amount: '', expense_date: localToday(), vendor: '', category_id: null });
+    fetchAll();
+  }
+  async function addAsset() {
+    if (!assetForm.name || !assetForm.current_value) { showToast('Enter a name and what it is worth today', 'error'); return; }
+    const ok = await runWrite(
+      supabase.from('assets').insert({ ...assetForm, purchase_price: parseFloat(assetForm.purchase_price) || 0, current_value: parseFloat(assetForm.current_value), dealer_id: dealerId, status: 'active' }),
+      "Couldn't save item"
+    );
+    if (!ok) return;
+    setShowAddAsset(false);
+    setAssetForm({ name: '', asset_type: 'equipment', purchase_price: '', current_value: '' });
+    fetchAll();
+  }
+  async function addLiability() {
+    if (!liabilityForm.name || !liabilityForm.current_balance) { showToast('Enter a name and how much is owed', 'error'); return; }
+    const ok = await runWrite(
+      supabase.from('liabilities').insert({ ...liabilityForm, current_balance: parseFloat(liabilityForm.current_balance), monthly_payment: parseFloat(liabilityForm.monthly_payment) || 0, dealer_id: dealerId, status: 'active' }),
+      "Couldn't save debt"
+    );
+    if (!ok) return;
+    setShowAddLiability(false);
+    setLiabilityForm({ name: '', liability_type: 'loan', current_balance: '', monthly_payment: '', lender: '' });
+    fetchAll();
+  }
 
   // Export Functions
   function exportToCSV() {
@@ -667,6 +754,32 @@ export default function BooksPage() {
         </div>
       </div>
 
+      {!loading && staleAccounts.length > 0 && (
+        <div style={{ marginBottom: '20px', padding: '16px', backgroundColor: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.4)', borderRadius: '12px' }}>
+          <div style={{ color: '#eab308', fontWeight: '700', marginBottom: '6px' }}>⚠️ Some bank numbers are out of date</div>
+          {[...new Map(staleAccounts.map(a => [a.plaid_item_id || a.id, a])).values()].map(a => (
+            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '6px 0' }}>
+              <div style={{ color: theme.textSecondary, fontSize: '14px' }}>
+                <strong style={{ color: theme.text }}>{a.institution_name || 'Bank'}</strong>
+                {' '}hasn't synced since {formatDate(a.last_synced_at) || 'it was connected'}.
+                {a.sync_status === 'needs_reconnect'
+                  ? ' The bank needs you to log in again.'
+                  : a.sync_status === 'error' ? ` ${a.plaid_error || 'The last sync failed.'}` : ' Press Sync to update it.'}
+              </div>
+              {a.sync_status === 'needs_reconnect' ? (
+                <button onClick={() => handleReconnectClick(a.id)} style={{ padding: '8px 16px', backgroundColor: '#eab308', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                  Reconnect {a.institution_name || 'bank'}
+                </button>
+              ) : (
+                <button onClick={() => syncAccount(a.id)} disabled={syncing} style={{ padding: '8px 16px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: syncing ? 'not-allowed' : 'pointer' }}>
+                  {syncing ? 'Syncing…' : 'Sync now'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '8px' }}>
         {tabs.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: '12px 20px', backgroundColor: activeTab === tab.id ? tab.color : 'transparent', color: activeTab === tab.id ? '#fff' : theme.textSecondary, border: `1px solid ${activeTab === tab.id ? tab.color : theme.border}`, borderRadius: '8px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -734,7 +847,13 @@ export default function BooksPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                 <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', padding: '24px', border: `1px solid ${theme.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}><div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(34, 197, 94, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>💰</div><div><div style={{ color: theme.textMuted, fontSize: '13px' }}>WHAT YOU OWN</div><div style={{ color: '#22c55e', fontSize: '28px', fontWeight: '700' }}>{formatCurrency(totalOwn)}</div></div></div>
-                  {[['💵', 'Cash in Bank', cashInBank], ['🚗', `Inventory (${inventoryCount})`, inventoryValue], ['📋', `BHPH Owed (${bhphCount})`, bhphOwed], ['🔧', 'Equipment', otherAssets]].map(([icon, label, value], i) => (
+                  {[
+                    ['💵', staleCash.length ? `Cash in bank (as of ${formatDate(oldestCashSync)} — needs reconnect)` : 'Cash in bank', cashInBank],
+                    ['🚗', `Cars for sale, at cost (${inventoryCount})`, inventoryValue],
+                    ...(fleetVehicles.length ? [['🚙', `Fleet / company vehicles, at cost (${fleetVehicles.length})`, fleetValue]] : []),
+                    ['📋', `BHPH loans owed to you (${bhphCount})`, bhphOwed],
+                    ['🔧', 'Equipment', otherAssets]
+                  ].map(([icon, label, value], i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', backgroundColor: theme.bg, borderRadius: '8px', marginBottom: '8px' }}><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><span style={{ fontSize: '20px' }}>{icon}</span><span style={{ color: theme.text }}>{label}</span></div><span style={{ color: '#22c55e', fontWeight: '600' }}>{formatCurrency(value)}</span></div>
                   ))}
                 </div>
@@ -876,13 +995,23 @@ export default function BooksPage() {
                           {formatCurrency(Math.abs(account.current_balance))}
                         </div>
                       </div>
-                      <div style={{ color: theme.textMuted, fontSize: '12px', marginBottom: '12px' }}>
-                        Last synced: {formatDateTime(account.last_synced_at)}
+                      <div style={{ color: staleAccounts.includes(account) ? '#eab308' : theme.textMuted, fontSize: '12px', marginBottom: '12px' }}>
+                        {account.sync_status === 'needs_reconnect'
+                          ? `⚠️ Bank login expired — balance is from ${formatDateTime(account.last_synced_at)}`
+                          : account.sync_status === 'error'
+                            ? `⚠️ Last sync failed — balance is from ${formatDateTime(account.last_synced_at)}`
+                            : `Last synced: ${formatDateTime(account.last_synced_at)}`}
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => syncAccount(account.id)} disabled={syncing} style={{ flex: 1, padding: '8px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '500', cursor: syncing ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: syncing ? 0.6 : 1 }}>
-                          Sync Now
-                        </button>
+                        {account.sync_status === 'needs_reconnect' ? (
+                          <button onClick={() => handleReconnectClick(account.id)} style={{ flex: 1, padding: '8px', backgroundColor: '#eab308', color: '#000', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+                            Reconnect bank
+                          </button>
+                        ) : (
+                          <button onClick={() => syncAccount(account.id)} disabled={syncing} style={{ flex: 1, padding: '8px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '500', cursor: syncing ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: syncing ? 0.6 : 1 }}>
+                            Sync Now
+                          </button>
+                        )}
                         <button onClick={() => disconnectAccount(account.id)} style={{ padding: '8px 16px', backgroundColor: 'transparent', color: '#ef4444', border: `1px solid ${theme.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
                           Disconnect
                         </button>
@@ -1163,14 +1292,14 @@ function TxnCard({ txn, categories, theme, f, fd, onBook, onIgnore, onReconcile,
         const topMatchScore = topMatch && (() => {
           if (topMatch.status === 'Sold' && topMatch.sale_price) {
             const diff = Math.abs(parseFloat(topMatch.sale_price) - txnAmount);
-            return diff < 50 ? `Matches sale price: ${formatCurrency(topMatch.sale_price)}` : null;
+            return diff < 50 ? `Matches sale price: ${f(topMatch.sale_price)}` : null;
           }
           if (topMatch.status === 'BHPH') {
             if (topMatch.monthly_payment && Math.abs(parseFloat(topMatch.monthly_payment) - txnAmount) < 5) {
-              return `Matches monthly payment: ${formatCurrency(topMatch.monthly_payment)}`;
+              return `Matches monthly payment: ${f(topMatch.monthly_payment)}`;
             }
             if (topMatch.down_payment && Math.abs(parseFloat(topMatch.down_payment) - txnAmount) < 50) {
-              return `Matches down payment: ${formatCurrency(topMatch.down_payment)}`;
+              return `Matches down payment: ${f(topMatch.down_payment)}`;
             }
           }
           return null;

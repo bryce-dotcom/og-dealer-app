@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import AccessDenied from './AccessDenied';
 import { supabase } from '../lib/supabase';
 import { useStore } from '../lib/store';
 import { getPermissions, NAV_PERMISSION_MAP } from '../lib/permissions';
@@ -28,15 +29,22 @@ export default function Layout() {
     const saved = localStorage.getItem('sidebarOpen');
     return saved !== null ? saved === 'true' : true;
   });
-  const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem('darkMode');
-    return saved !== null ? saved === 'true' : true;
-  });
+  // Pages are built for the dark theme only (useTheme below is fixed to dark),
+  // so the old Light Mode toggle only recolored the sidebar. Dark everywhere.
+  const [darkMode, setDarkMode] = useState(true);
 
   const { dealer, setDealer, clearDealer, currentEmployee, setCurrentEmployee } = useStore();
   const navigate = useNavigate();
-  const isAdmin = dealer?.dealer_name === 'OG DiX Motor Club';
   const permissions = getPermissions(currentEmployee);
+  // Route guard: the menu hides pages you can't use, but typing the URL used to
+  // open them anyway. Match the longest mapped path prefix (e.g. /admin/investors).
+  const location = useLocation();
+  const guardKey = Object.keys(NAV_PERMISSION_MAP)
+    .filter(p => location.pathname === p || location.pathname.startsWith(p + '/'))
+    .sort((a, b) => b.length - a.length)[0];
+  const pageAllowed = !guardKey || permissions[NAV_PERMISSION_MAP[guardKey]] !== false;
+  // Developer tools: only the owner of the OG DiX account, never its employees.
+  const isAdmin = Number(dealer?.id) === 1 && permissions.isOwner;
 
   // Auth protection - check session on mount
   useEffect(() => {
@@ -48,60 +56,40 @@ export default function Layout() {
         return;
       }
 
-      // Load dealer if not already in store
-      if (!dealer) {
-        // First check if user is a dealer owner
-        const { data: dealerData } = await supabase
-          .from('dealer_settings')
-          .select('*')
-          .eq('owner_user_id', session.user.id)
-          .maybeSingle();
+      // Always work out who is signed in. The store is persisted, and
+      // currentEmployee === null means "owner", so trusting a stored value would
+      // give owner access to an employee (e.g. on a shared office iPad).
+      const { data: dealerData } = await supabase
+        .from('dealer_settings')
+        .select('*')
+        .eq('owner_user_id', session.user.id)
+        .maybeSingle();
 
-        if (dealerData) {
-          setDealer(dealerData);
-          setCurrentEmployee(null); // null = dealer owner = full access
-        } else {
-          // Check if user is an employee
-          const { data: employeeData } = await supabase
-            .from('employees')
-            .select('*')
-            .eq('user_id', session.user.id)
-            .eq('active', true)
-            .maybeSingle();
-
-          if (employeeData) {
-            // Load dealer settings for this employee
-            const { data: empDealerData } = await supabase
-              .from('dealer_settings')
-              .select('*')
-              .eq('id', employeeData.dealer_id)
-              .single();
-
-            if (empDealerData) {
-              setDealer(empDealerData);
-              setCurrentEmployee(employeeData); // Store the employee record with roles
-            } else {
-              // Employee's dealer not found
-              await supabase.auth.signOut();
-              navigate('/login');
-              return;
-            }
-          } else {
-            // Not a dealer owner or employee
-            await supabase.auth.signOut();
-            navigate('/login');
-            return;
-          }
-        }
-      } else if (currentEmployee === undefined) {
-        // Dealer loaded from persistence but currentEmployee not set yet
-        const { data: empCheck } = await supabase
+      if (dealerData) {
+        setDealer(dealerData);
+        setCurrentEmployee(null); // null = dealer owner = full access
+      } else {
+        const { data: employeeData } = await supabase
           .from('employees')
           .select('*')
           .eq('user_id', session.user.id)
           .eq('active', true)
           .maybeSingle();
-        setCurrentEmployee(empCheck || null);
+
+        const { data: empDealerData } = employeeData
+          ? await supabase.from('dealer_settings').select('*').eq('id', employeeData.dealer_id).single()
+          : { data: null };
+
+        if (employeeData && empDealerData) {
+          setDealer(empDealerData);
+          setCurrentEmployee(employeeData); // Store the employee record with roles
+        } else {
+          // Not a dealer owner or active employee
+          clearDealer();
+          await supabase.auth.signOut();
+          navigate('/login');
+          return;
+        }
       }
 
       setAuthChecking(false);
@@ -193,7 +181,7 @@ export default function Layout() {
     { to: '/deal-timeline', label: 'Deal Timeline', group: 'Deals' },
     { to: '/document-rules', label: 'Document Rules', group: 'Setup' },
     { to: '/email-marketing', label: 'Email Marketing', group: 'Marketing' },
-    { to: '/esignature', label: 'E-Signatures', group: 'Deals' },
+    { to: '/esignature', label: 'Signed Documents', group: 'Deals' },
     { to: '/fi-products', label: 'F&I Products', group: 'Finance' },
     { to: '/floor-plan', label: 'Floor Plan', group: 'Finance' },
     { to: '/import', label: 'Import Data', group: 'Setup' },
@@ -236,6 +224,7 @@ export default function Layout() {
     accent: '#f97316',
     accentBg: darkMode ? 'rgba(249,115,22,0.15)' : 'rgba(249,115,22,0.1)',
   };
+  const page = pageAllowed ? <Outlet /> : <AccessDenied theme={theme} />;
 
   const NavIcon = ({ path }) => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -443,31 +432,6 @@ export default function Layout() {
 
       <div style={{ padding: '12px', borderTop: `1px solid ${theme.border}` }}>
         <button
-          onClick={() => setDarkMode(!darkMode)}
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: (sidebarOpen || isMobile) ? 'flex-start' : 'center',
-            gap: '12px',
-            padding: '10px 12px',
-            marginBottom: '8px',
-            backgroundColor: 'transparent',
-            border: `1px solid ${theme.border}`,
-            borderRadius: '8px',
-            color: theme.textSecondary,
-            fontSize: '14px',
-            cursor: 'pointer'
-          }}
-        >
-          {darkMode ? (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-          ) : (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-          )}
-          {(sidebarOpen || isMobile) && <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>}
-        </button>
-        <button
           onClick={handleLogout}
           style={{
             width: '100%',
@@ -550,7 +514,7 @@ export default function Layout() {
               </button>
             </aside>
             <main style={{ marginLeft: sidebarWidth, minHeight: '100vh', transition: 'margin-left 0.3s ease' }}>
-              <Outlet />
+              {page}
             </main>
           </>
         )}
@@ -585,11 +549,12 @@ export default function Layout() {
             }}>
               <SidebarContent onNavClick={() => setMobileMenuOpen(false)} />
             </aside>
-            <main style={{ minHeight: 'calc(100vh - 60px)' }}><Outlet /></main>
+            <main style={{ minHeight: 'calc(100vh - 60px)' }}>{page}</main>
           </>
         )}
 
-        <div style={{ position: 'fixed', bottom: '24px', left: '160px', zIndex: 51, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+        {/* Sits just right of the sidebar (it used to cover the sidebar's Log out button) */}
+        <div style={{ position: 'fixed', bottom: isMobile ? '16px' : '24px', left: isMobile ? '16px' : `${sidebarWidth + 24}px`, zIndex: 51, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'left 0.3s ease' }}>
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', color: theme.text, boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span style={{ color: theme.accent }}>✨</span>Ask Arnie
           </div>
@@ -644,7 +609,7 @@ export default function Layout() {
                         setPaletteOpen(false);
                       }
                     }}
-                    placeholder="Jump to page… (try 'invoice', 'commission', 'arnie')"
+                    placeholder="Jump to page… (try 'deals', 'keys', 'payroll')"
                     style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: theme.text, fontSize: '15px' }}
                   />
                   <span style={{ fontSize: '11px', color: theme.textMuted, padding: '2px 6px', border: `1px solid ${theme.border}`, borderRadius: '4px' }}>ESC</span>

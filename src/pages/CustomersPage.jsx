@@ -11,6 +11,12 @@ const PinIcon = () => <svg width="14" height="14" fill="none" stroke="currentCol
 const SearchIcon = () => <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>;
 const CloseIcon = () => <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>;
 
+// Many customers only have `name` set (first_name/last_name are often null).
+const displayName = (c) => (c && (c.name || [c.first_name, c.last_name].filter(Boolean).join(' '))) || 'Unnamed customer';
+// Empty form fields must be sent as null, not '' (integer/numeric columns reject '').
+const toInt = (v) => (v === '' || v == null || isNaN(parseInt(v, 10)) ? null : parseInt(v, 10));
+const toNum = (v) => (v === '' || v == null || isNaN(parseFloat(v)) ? null : parseFloat(v));
+
 export default function CustomersPage() {
   const navigate = useNavigate();
   const { customers, dealerId, fetchAllData } = useStore();
@@ -34,21 +40,31 @@ export default function CustomersPage() {
   }, [selectedCustomer]);
 
   const loadAllRequests = async () => {
-    const { data } = await supabase.from('customer_vehicle_requests').select('*, customers(name)').eq('dealer_id', dealerId).eq('status', 'Looking');
+    const { data, error } = await supabase.from('customer_vehicle_requests').select('*, customers(name)').eq('dealer_id', dealerId).eq('status', 'Looking');
+    if (error) console.error('Error loading vehicle requests:', error);
     setAllRequests(data || []);
   };
 
   const loadRequests = async (customerId) => {
-    const { data } = await supabase.from('customer_vehicle_requests').select('*').eq('customer_id', customerId).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('customer_vehicle_requests').select('*').eq('dealer_id', dealerId).eq('customer_id', customerId).order('created_at', { ascending: false });
+    if (error) console.error('Error loading vehicle requests:', error);
     setVehicleRequests(data || []);
   };
 
-  const filtered = (customers || []).filter(c => c.name?.toLowerCase().includes(search.toLowerCase()) || c.phone?.includes(search) || c.email?.toLowerCase().includes(search.toLowerCase()));
+  const searchLower = search.toLowerCase();
+  const filtered = (customers || []).filter(c => displayName(c).toLowerCase().includes(searchLower) || c.phone?.includes(search) || c.email?.toLowerCase().includes(searchLower));
   const customersLooking = [...new Set(allRequests.map(r => r.customer_id))].length;
 
   const saveCustomer = async () => {
-    if (!newCustomer.name) return;
-    await supabase.from('customers').insert({ ...newCustomer, dealer_id: dealerId });
+    if (!newCustomer.name.trim()) { alert("Please enter the customer's name."); return; }
+    const { error } = await supabase.from('customers').insert({
+      name: newCustomer.name.trim(),
+      phone: newCustomer.phone.trim() || null,
+      email: newCustomer.email.trim() || null,
+      address: newCustomer.address.trim() || null,
+      dealer_id: dealerId,
+    });
+    if (error) { alert('Could not save customer: ' + error.message); return; }
     setNewCustomer({ name: '', phone: '', email: '', address: '' });
     setShowAdd(false);
     fetchAllData();
@@ -56,7 +72,22 @@ export default function CustomersPage() {
 
   const saveRequest = async () => {
     if (!selectedCustomer) return;
-    await supabase.from('customer_vehicle_requests').insert({ ...newRequest, customer_id: selectedCustomer.id, dealer_id: dealerId, status: 'Looking' });
+    // customer_vehicle_requests has no color column, so a preferred color is kept in the notes.
+    const color = newRequest.color.trim();
+    const notes = [color ? `Color: ${color}` : null, newRequest.notes.trim() || null].filter(Boolean).join(' - ');
+    const { error } = await supabase.from('customer_vehicle_requests').insert({
+      customer_id: selectedCustomer.id,
+      dealer_id: dealerId,
+      status: 'Looking',
+      year_min: toInt(newRequest.year_min),
+      year_max: toInt(newRequest.year_max),
+      make: newRequest.make.trim() || null,
+      model: newRequest.model.trim() || null,
+      max_price: toNum(newRequest.max_price),
+      max_miles: toInt(newRequest.max_miles),
+      notes: notes || null,
+    });
+    if (error) { alert('Could not save vehicle request: ' + error.message); return; }
     setNewRequest({ year_min: '', year_max: '', make: '', model: '', max_price: '', max_miles: '', color: '', notes: '' });
     setShowAddRequest(false);
     await loadRequests(selectedCustomer.id);
@@ -64,14 +95,16 @@ export default function CustomersPage() {
   };
 
   const updateRequestStatus = async (requestId, status) => {
-    await supabase.from('customer_vehicle_requests').update({ status }).eq('id', requestId);
+    const { error } = await supabase.from('customer_vehicle_requests').update({ status }).eq('id', requestId).eq('dealer_id', dealerId);
+    if (error) { alert('Could not update request: ' + error.message); return; }
     await loadRequests(selectedCustomer.id);
     await loadAllRequests();
   };
 
   const deleteRequest = async (requestId) => {
-    if (!confirm('Delete this vehicle request?')) return;
-    await supabase.from('customer_vehicle_requests').delete().eq('id', requestId);
+    if (!confirm('Delete this vehicle request? This cannot be undone.')) return;
+    const { error } = await supabase.from('customer_vehicle_requests').delete().eq('id', requestId).eq('dealer_id', dealerId);
+    if (error) { alert('Could not delete request: ' + error.message); return; }
     await loadRequests(selectedCustomer.id);
     await loadAllRequests();
   };
@@ -85,7 +118,7 @@ export default function CustomersPage() {
       default: return { bg: '#27272a', color: '#a1a1aa' };
     }
   };
-  const getFirstName = (fullName) => fullName?.split(' ')[0] || 'Customer';
+  const getFirstName = (customer) => displayName(customer).split(' ')[0] || 'Customer';
   const formatPhone = (phone) => phone ? phone.replace(/\D/g, '') : '';
 
   const goToResearch = (request) => {
@@ -110,7 +143,6 @@ export default function CustomersPage() {
     if (request.model) queryParts.push(request.model);
     if (request.max_price) queryParts.push(`under $${Number(request.max_price).toLocaleString()}`);
     if (request.max_miles) queryParts.push(`under ${Number(request.max_miles).toLocaleString()} miles`);
-    if (request.color) queryParts.push(request.color);
     if (request.notes) queryParts.push(request.notes);
 
     if (queryParts.length > 0) {
@@ -128,7 +160,8 @@ export default function CustomersPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#fff', margin: 0 }}>Customers</h1>
-          <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '14px' }}>{filtered.length} customers</p>
+          <p style={{ color: '#a1a1aa', margin: '4px 0 0', fontSize: '14px' }}>Everyone you've sold to or talked with. Click a customer to call, text, or note the vehicle they want.</p>
+          <p style={{ color: '#71717a', margin: '2px 0 0', fontSize: '13px' }}>{filtered.length} customers</p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <ImportExportButton dataType="customers" onImportComplete={() => window.location.reload()} />
@@ -148,7 +181,7 @@ export default function CustomersPage() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {customersWithRequests.map(c => (
               <button key={c.id} onClick={() => openDetail(c)} style={{ padding: '6px 14px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '20px', fontSize: '13px', fontWeight: '500', cursor: 'pointer' }}>
-                {c.name} ({allRequests.filter(r => r.customer_id === c.id).length})
+                {displayName(c)} ({allRequests.filter(r => r.customer_id === c.id).length})
               </button>
             ))}
           </div>
@@ -158,7 +191,9 @@ export default function CustomersPage() {
       <input type="text" placeholder="Search by name, phone, or email..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...inputStyle, marginBottom: '20px', maxWidth: '400px' }} />
 
       {filtered.length === 0 ? (
-        <div style={{ color: '#71717a', textAlign: 'center', padding: '60px 0' }}>No customers found</div>
+        <div style={{ color: '#71717a', textAlign: 'center', padding: '60px 0' }}>
+          {search ? 'No customers match your search. Try a different name, phone, or email.' : 'No customers yet. Click "+ Add Customer" to add your first one, or use Import to bring in a list.'}
+        </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
           {filtered.map((customer) => {
@@ -166,7 +201,7 @@ export default function CustomersPage() {
             return (
               <div key={customer.id} onClick={() => openDetail(customer)} style={{ backgroundColor: '#18181b', borderRadius: '12px', padding: '20px', cursor: 'pointer', border: reqs.length > 0 ? '1px solid #f97316' : '1px solid #27272a' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                  <div style={{ fontSize: '17px', fontWeight: '600', color: '#fff' }}>{customer.name}</div>
+                  <div style={{ fontSize: '17px', fontWeight: '600', color: '#fff' }}>{displayName(customer)}</div>
                   {reqs.length > 0 && <span style={{ padding: '4px 10px', backgroundColor: '#f9731620', color: '#f97316', borderRadius: '12px', fontSize: '12px', fontWeight: '500' }}>Looking ({reqs.length})</span>}
                 </div>
                 {customer.phone && <div style={{ color: '#a1a1aa', fontSize: '14px', marginBottom: '4px' }}>{customer.phone}</div>}
@@ -206,7 +241,7 @@ export default function CustomersPage() {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }} onClick={() => setShowDetail(false)}>
           <div style={{ backgroundColor: '#18181b', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '500px', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-              <h2 style={{ color: '#fff', margin: 0, fontSize: '22px' }}>{selectedCustomer.name}</h2>
+              <h2 style={{ color: '#fff', margin: 0, fontSize: '22px' }}>{displayName(selectedCustomer)}</h2>
               <button onClick={() => setShowDetail(false)} style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer', padding: '4px' }}><CloseIcon /></button>
             </div>
 
@@ -219,20 +254,20 @@ export default function CustomersPage() {
             <div style={{ display: 'flex', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
               {selectedCustomer.phone && (
                 <>
-                  <a href={`sms:${formatPhone(selectedCustomer.phone)}`} style={{ flex: 1, minWidth: '120px', padding: '12px', backgroundColor: '#22c55e', color: '#fff', borderRadius: '8px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><MessageIcon /> TXT {getFirstName(selectedCustomer.name)}</a>
-                  <a href={`tel:${formatPhone(selectedCustomer.phone)}`} style={{ flex: 1, minWidth: '120px', padding: '12px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '8px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><PhoneIcon /> Call {getFirstName(selectedCustomer.name)}</a>
+                  <a href={`sms:${formatPhone(selectedCustomer.phone)}`} style={{ flex: 1, minWidth: '120px', padding: '12px', backgroundColor: '#22c55e', color: '#fff', borderRadius: '8px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><MessageIcon /> TXT {getFirstName(selectedCustomer)}</a>
+                  <a href={`tel:${formatPhone(selectedCustomer.phone)}`} style={{ flex: 1, minWidth: '120px', padding: '12px', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '8px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><PhoneIcon /> Call {getFirstName(selectedCustomer)}</a>
                 </>
               )}
-              {selectedCustomer.email && <a href={`mailto:${selectedCustomer.email}`} style={{ flex: 1, minWidth: '120px', padding: '12px', backgroundColor: '#8b5cf6', color: '#fff', borderRadius: '8px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><EmailIcon /> Email {getFirstName(selectedCustomer.name)}</a>}
+              {selectedCustomer.email && <a href={`mailto:${selectedCustomer.email}`} style={{ flex: 1, minWidth: '120px', padding: '12px', backgroundColor: '#8b5cf6', color: '#fff', borderRadius: '8px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><EmailIcon /> Email {getFirstName(selectedCustomer)}</a>}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ color: '#a1a1aa', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', margin: 0 }}>Vehicle Requests</h3>
+              <h3 style={{ color: '#a1a1aa', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', margin: 0 }} title="Vehicles this customer wants you to find for them">Vehicle Requests</h3>
               <button onClick={() => setShowAddRequest(true)} style={{ padding: '6px 14px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>+ Add</button>
             </div>
 
             {vehicleRequests.length === 0 ? (
-              <div style={{ padding: '30px', textAlign: 'center', color: '#71717a', backgroundColor: '#09090b', borderRadius: '8px', fontSize: '14px' }}>No vehicle requests yet</div>
+              <div style={{ padding: '30px', textAlign: 'center', color: '#71717a', backgroundColor: '#09090b', borderRadius: '8px', fontSize: '14px' }}>No vehicle requests yet. Click "+ Add" to note what this customer is looking for.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {vehicleRequests.map((req) => {
@@ -244,13 +279,12 @@ export default function CustomersPage() {
                         <span style={{ padding: '4px 10px', backgroundColor: sc.bg, color: sc.color, borderRadius: '12px', fontSize: '11px', fontWeight: '500' }}>{req.status}</span>
                       </div>
                       <div style={{ color: '#a1a1aa', fontSize: '13px', marginBottom: '8px' }}>{req.max_price && <>Max: ${Number(req.max_price).toLocaleString()}</>}{req.max_miles && <>&nbsp;&nbsp;&nbsp;Under {Number(req.max_miles).toLocaleString()} mi</>}</div>
-                      {req.color && <div style={{ color: '#71717a', fontSize: '13px', marginBottom: '8px' }}>{req.color}</div>}
                       {req.notes && <div style={{ color: '#71717a', fontSize: '12px', fontStyle: 'italic', marginBottom: '12px' }}>{req.notes}</div>}
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         {req.status === 'Looking' && <button onClick={() => updateRequestStatus(req.id, 'Found')} style={{ padding: '8px 14px', backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Mark Found</button>}
                         {req.status === 'Found' && <button onClick={() => updateRequestStatus(req.id, 'Purchased')} style={{ padding: '8px 14px', backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Mark Purchased</button>}
                         {req.status !== 'Looking' && <button onClick={() => updateRequestStatus(req.id, 'Looking')} style={{ padding: '8px 14px', backgroundColor: '#27272a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Reset</button>}
-                        <button onClick={() => goToResearch(req)} style={{ padding: '8px 14px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Research</button>
+                        <button onClick={() => goToResearch(req)} title="Search for vehicles that match this request" style={{ padding: '8px 14px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Research</button>
                         <button onClick={() => deleteRequest(req.id)} style={{ padding: '8px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Delete</button>
                       </div>
                     </div>
@@ -265,7 +299,8 @@ export default function CustomersPage() {
       {showAddRequest && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '16px' }} onClick={() => setShowAddRequest(false)}>
           <div style={{ backgroundColor: '#18181b', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '400px' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: '#fff', margin: '0 0 20px', fontSize: '18px' }}>Add Vehicle Request</h2>
+            <h2 style={{ color: '#fff', margin: '0 0 6px', fontSize: '18px' }}>Add Vehicle Request</h2>
+            <p style={{ color: '#71717a', margin: '0 0 16px', fontSize: '13px' }}>What is this customer looking for? Fill in whatever you know. Every field is optional.</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <input placeholder="Year Min" type="number" value={newRequest.year_min} onChange={(e) => setNewRequest(p => ({ ...p, year_min: e.target.value }))} style={inputStyle} />
               <input placeholder="Year Max" type="number" value={newRequest.year_max} onChange={(e) => setNewRequest(p => ({ ...p, year_max: e.target.value }))} style={inputStyle} />

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { useStore } from '../lib/store';
 import { parseCSV, fileToBase64, downloadCSV, validateFile, formatConfidence, getConfidenceBadgeColor } from '../lib/importHelpers';
 
 /**
@@ -29,7 +30,25 @@ export default function ImportExportButton({ dataType, onImportComplete }) {
   const [successCount, setSuccessCount] = useState(0);
 
   const fileInputRef = useRef(null);
-  const dealerId = parseInt(localStorage.getItem('dealer_id'));
+  // Dealer id comes from the app store (nothing ever writes localStorage 'dealer_id')
+  const { dealerId } = useStore();
+
+  // Required fields per data type. Customers need a full name OR first + last name
+  // (matches what validate-import-data accepts).
+  const computeMissingRequired = (mappedFields) => {
+    const fields = new Set(mappedFields.filter(Boolean));
+    if (dataType === 'customers') {
+      return fields.has('name') || (fields.has('first_name') && fields.has('last_name'))
+        ? []
+        : ['name (or first name + last name)'];
+    }
+    const schemas = {
+      inventory: ['vin', 'year', 'make', 'model'],
+      deals: ['purchaser_name', 'date_of_sale', 'price'],
+      employees: ['name']
+    };
+    return (schemas[dataType] || []).filter(f => !fields.has(f));
+  };
 
   const dataTypeLabels = {
     inventory: 'Inventory',
@@ -40,6 +59,10 @@ export default function ImportExportButton({ dataType, onImportComplete }) {
 
   // Export current data to CSV
   const handleExport = async () => {
+    if (!dealerId) {
+      alert('Your dealership could not be identified. Please refresh the page and try again.');
+      return;
+    }
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -67,6 +90,17 @@ export default function ImportExportButton({ dataType, onImportComplete }) {
   const handleFileSelect = async (e) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
+
+    // Only CSV is parsed. Excel files must be saved as CSV first.
+    if (!selectedFile.name.toLowerCase().endsWith('.csv')) {
+      setError('Please upload a CSV file. In Excel, use File > Save As > "CSV (Comma delimited)", then upload that file.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    if (!dealerId) {
+      setError('Your dealership could not be identified. Please refresh the page and try again.');
+      return;
+    }
 
     const validation = validateFile(selectedFile);
     if (!validation.valid) {
@@ -114,8 +148,15 @@ export default function ImportExportButton({ dataType, onImportComplete }) {
       if (!data.success) throw new Error(data.error || 'Mapping failed');
 
       setMappings(data.mappings);
-      setRequiredFieldsPresent(data.required_fields_present);
-      setMissingRequired(data.missing_required || []);
+      if (dataType === 'customers') {
+        // The mapper only accepts "name"; first + last name is fine too
+        const missing = computeMissingRequired((data.mappings || []).map(m => m.db_field));
+        setRequiredFieldsPresent(missing.length === 0);
+        setMissingRequired(missing);
+      } else {
+        setRequiredFieldsPresent(data.required_fields_present);
+        setMissingRequired(data.missing_required || []);
+      }
       setStep('map');
     } catch (err) {
       setError(err.message || 'Failed to map columns');
@@ -132,21 +173,13 @@ export default function ImportExportButton({ dataType, onImportComplete }) {
         : m
     ));
 
-    const schemas = {
-      inventory: ['vin', 'year', 'make', 'model'],
-      deals: ['purchaser_name', 'date_of_sale', 'price'],
-      customers: ['name'],
-      employees: ['name']
-    };
-
-    const required = schemas[dataType] || [];
     const mappedFields = mappings
       .filter(m => m.dealer_column !== dealerColumn)
       .map(m => m.db_field)
       .concat([newDbField])
       .filter(f => f);
 
-    const missing = required.filter(f => !mappedFields.includes(f));
+    const missing = computeMissingRequired(mappedFields);
     setMissingRequired(missing);
     setRequiredFieldsPresent(missing.length === 0);
   };
@@ -339,7 +372,7 @@ export default function ImportExportButton({ dataType, onImportComplete }) {
                       <span className="text-lg font-medium text-gray-700">
                         {file ? file.name : 'Click to upload CSV file'}
                       </span>
-                      <span className="text-sm text-gray-500 mt-1">CSV files up to 10MB</span>
+                      <span className="text-sm text-gray-500 mt-1">CSV files only (export from Excel as CSV), up to 10MB</span>
                     </label>
                   </div>
                   {loading && (

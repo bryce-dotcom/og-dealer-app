@@ -82,6 +82,34 @@ export default function InventoryPage() {
   });
 
   const statuses = ['For Sale', 'In Stock', 'Sold', 'BHPH', 'Fleet', 'All'];
+
+  // Today's LOCAL date as YYYY-MM-DD (toISOString() gives the UTC date, which is "tomorrow" in the evening)
+  const localToday = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  // Show a date-only value (YYYY-MM-DD) as a LOCAL date; new Date('YYYY-MM-DD') is UTC and shows the day before in the US
+  const localDateDisplay = (d) => {
+    if (!d) return '';
+    return (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + 'T00:00:00') : new Date(d)).toLocaleDateString();
+  };
+
+  // Status dropdown handler: picking "Sold" pre-fills an empty Sale Date with today so profit reports include the car
+  const handleFormStatusChange = (newStatus) => {
+    setFormData(prev => ({
+      ...prev,
+      status: newStatus,
+      sale_date: newStatus === 'Sold' && !prev.sale_date ? localToday() : prev.sale_date
+    }));
+  };
+
+  // Safety net on save: a car being changed to Sold with no sale date gets today's local date
+  const resolveSaleDate = (prevStatus) => {
+    if (formData.sale_date) return formData.sale_date;
+    if (formData.status === 'Sold' && prevStatus !== 'Sold') return localToday();
+    return null;
+  };
   const expenseCategories = ['Repair', 'Parts', 'Detail', 'Transport', 'Inspection', 'Fuel', 'Other'];
 
   // Load commission roles on mount
@@ -229,14 +257,20 @@ export default function InventoryPage() {
     }
 
     // Save to inventory_expenses
-    await supabase.from('inventory_expenses').insert({
+    const { error: expError } = await supabase.from('inventory_expenses').insert({
       inventory_id: selectedVehicle.id,
       dealer_id: dealerId,
       description: expenseDesc,
       amount: parseFloat(expenseAmount),
       category: expenseCategory,
+      expense_date: localToday(),
       receipt_url: receiptUrl
     });
+    if (expError) {
+      alert('Failed to add expense: ' + expError.message);
+      setLoadingExpComm(false);
+      return;
+    }
 
     // Also save to manual_expenses for Books page
     // Map inventory category to expense category
@@ -270,7 +304,7 @@ export default function InventoryPage() {
         dealer_id: dealerId,
         description: `${expenseDesc} (${vehicleInfo})`,
         amount: parseFloat(expenseAmount),
-        expense_date: new Date().toISOString().split('T')[0],
+        expense_date: localToday(),
         vendor: vehicleInfo,
         category_id: categoryData.id,
         status: 'booked'
@@ -286,7 +320,9 @@ export default function InventoryPage() {
   };
 
   const deleteExpense = async (id) => {
-    await supabase.from('inventory_expenses').delete().eq('id', id);
+    if (!confirm('Delete this expense?')) return;
+    const { error } = await supabase.from('inventory_expenses').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete expense: ' + error.message); return; }
     await loadExpenses(selectedVehicle.id);
   };
 
@@ -315,7 +351,7 @@ export default function InventoryPage() {
     const profit = (parseFloat(selectedVehicle.sale_price) || 0) - (parseFloat(selectedVehicle.purchase_price) || 0);
     const amount = profit * rateUsed;
     
-    await supabase.from('inventory_commissions').insert({
+    const { error: commError } = await supabase.from('inventory_commissions').insert({
       inventory_id: selectedVehicle.id,
       dealer_id: dealerId,
       employee_id: emp?.id || null,
@@ -327,7 +363,12 @@ export default function InventoryPage() {
       override_rate: commOverride ? parseFloat(commOverride) / 100 : null,
       amount: amount
     });
-    
+    if (commError) {
+      alert('Failed to add commission: ' + commError.message);
+      setLoadingExpComm(false);
+      return;
+    }
+
     setCommEmployee('');
     setCommRoleId('');
     setCommOverride('');
@@ -336,7 +377,9 @@ export default function InventoryPage() {
   };
 
   const deleteCommission = async (id) => {
-    await supabase.from('inventory_commissions').delete().eq('id', id);
+    if (!confirm('Delete this commission?')) return;
+    const { error } = await supabase.from('inventory_commissions').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete commission: ' + error.message); return; }
     await loadCommissions(selectedVehicle.id);
   };
 
@@ -512,12 +555,12 @@ export default function InventoryPage() {
         stock_number: formData.stock_number || null,
         description: formData.description || null,
         date_acquired: formData.date_acquired || null,
-        sale_date: formData.sale_date || null,
+        sale_date: resolveSaleDate(selectedVehicle?.status),
         dealer_id: dealerId
       };
       if (photos.length > 0) payload.photos = photos;
 
-      const { error } = await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id);
+      const { error } = await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id).eq('dealer_id', dealerId);
       if (error) throw new Error(error.message);
 
       // Update selectedVehicle immediately so detail modal reflects changes
@@ -605,11 +648,12 @@ export default function InventoryPage() {
       const newPhotos = [...photos, publicUrl];
       setPhotos(newPhotos);
       
-      await supabase.from('inventory').update({ photos: newPhotos }).eq('id', selectedVehicle.id);
+      const { error: photoErr } = await supabase.from('inventory').update({ photos: newPhotos }).eq('id', selectedVehicle.id).eq('dealer_id', dealerId);
+      if (photoErr) throw photoErr;
       await refreshData();
     } catch (err) {
       console.error('Upload failed:', err);
-      alert('Upload failed');
+      alert('Upload failed' + (err?.message ? ': ' + err.message : ''));
     } finally {
       setUploading(false);
     }
@@ -617,13 +661,16 @@ export default function InventoryPage() {
 
   const deletePhoto = async (photoUrl, index) => {
     if (!selectedVehicle?.id) return;
+    if (!confirm('Delete this photo?')) return;
     try {
       const newPhotos = photos.filter((_, i) => i !== index);
+      const { error } = await supabase.from('inventory').update({ photos: newPhotos }).eq('id', selectedVehicle.id).eq('dealer_id', dealerId);
+      if (error) throw error;
       setPhotos(newPhotos);
-      await supabase.from('inventory').update({ photos: newPhotos }).eq('id', selectedVehicle.id);
       await refreshData();
     } catch (err) {
       console.error('Delete photo failed:', err);
+      alert('Failed to delete photo: ' + (err?.message || 'Unknown error'));
     }
   };
 
@@ -657,7 +704,7 @@ export default function InventoryPage() {
         stock_number: formData.stock_number || null,
         description: formData.description || null,
         date_acquired: formData.date_acquired || null,
-        sale_date: formData.sale_date || null,
+        sale_date: resolveSaleDate(selectedVehicle?.status),
         dealer_id: dealerId
       };
 
@@ -670,7 +717,7 @@ export default function InventoryPage() {
 
       let result;
       if (selectedVehicle?.id) {
-        result = await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id);
+        result = await supabase.from('inventory').update(payload).eq('id', selectedVehicle.id).eq('dealer_id', dealerId);
       } else {
         result = await supabase.from('inventory').insert(payload);
       }
@@ -694,14 +741,16 @@ export default function InventoryPage() {
   };
 
   const deleteVehicle = async (id) => {
-    if (!confirm('Delete this vehicle?')) return;
+    if (!confirm('Delete this vehicle? This cannot be undone.')) return;
     try {
-      await supabase.from('inventory').delete().eq('id', id);
+      const { error } = await supabase.from('inventory').delete().eq('id', id).eq('dealer_id', dealerId);
+      if (error) throw error;
       await refreshData();
       setShowDetailModal(false);
       setSelectedVehicle(null);
     } catch (err) {
       console.error('Delete failed:', err);
+      alert('Failed to delete vehicle: ' + (err?.message || 'Unknown error'));
     }
   };
 
@@ -854,7 +903,7 @@ export default function InventoryPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 style={{ fontSize: '28px', fontWeight: '700', margin: 0 }}>Inventory</h1>
-            <p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>{stats.total} vehicles</p>
+            <p style={{ color: theme.textMuted, margin: '4px 0 0', fontSize: '14px' }}>{stats.total} vehicles · Every car on your lot and every car you've sold. Tap a car to see or edit it.</p>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <ImportExportButton dataType="inventory" onImportComplete={() => window.location.reload()} />
@@ -897,7 +946,9 @@ export default function InventoryPage() {
 
         {/* Vehicle Grid */}
         {filteredInventory.length === 0 ? (
-          <div style={{ ...cardStyle, textAlign: 'center', padding: '60px', color: theme.textMuted }}>No vehicles found</div>
+          <div style={{ ...cardStyle, textAlign: 'center', padding: '60px', color: theme.textMuted }}>
+            {inventory.length === 0 ? 'No vehicles yet. Click "+ Add Vehicle" to add your first car.' : `No vehicles match this filter. Try another status button (currently "${statusFilter}") or clear the search.`}
+          </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
             {filteredInventory.map((v, i) => {
@@ -957,9 +1008,16 @@ export default function InventoryPage() {
                       </div>
                     </div>
 
-                    {/* Marketplace Status */}
-                    <div style={{ marginTop: '12px' }}>
+                    {/* Marketplace Status + link to the full vehicle page */}
+                    <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <MarketplaceStatusBadge inventoryId={v.id} dealerId={dealerId} />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/vehicle/${v.id}`); }}
+                        title="Open the full vehicle page: expenses, recon, listings and activity"
+                        style={{ marginLeft: 'auto', padding: '4px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
+                      >
+                        Full details →
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -983,7 +1041,12 @@ export default function InventoryPage() {
                     </>
                   )}
                 </div>
-                <button onClick={() => { setShowDetailModal(false); setDetailEditMode(false); }} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '28px', lineHeight: 1 }}>×</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {!detailEditMode && (
+                    <button onClick={() => { setShowDetailModal(false); navigate(`/vehicle/${selectedVehicle.id}`); }} title="Open the full vehicle page" style={{ padding: '6px 12px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px' }}>Full details →</button>
+                  )}
+                  <button onClick={() => { setShowDetailModal(false); setDetailEditMode(false); }} style={{ background: 'none', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: '28px', lineHeight: 1 }}>×</button>
+                </div>
               </div>
 
               {/* Photo Section */}
@@ -1046,7 +1109,7 @@ export default function InventoryPage() {
                   </div>
                   <div>
                     <div style={labelStyle}>Status</div>
-                    <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}>
+                    <select value={formData.status} onChange={e => handleFormStatusChange(e.target.value)} style={inputStyle}>
                       <option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option>
                     </select>
                   </div>
@@ -1162,14 +1225,14 @@ export default function InventoryPage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: theme.textMuted }}>Date Acquired</span>
                       <span style={{ color: theme.text }}>{selectedVehicle.date_acquired
-                        ? new Date(selectedVehicle.date_acquired).toLocaleDateString()
+                        ? localDateDisplay(selectedVehicle.date_acquired)
                         : new Date(selectedVehicle.created_at).toLocaleDateString()}</span>
                     </div>
                   )}
                   {selectedVehicle.sale_date && (
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: theme.textMuted }}>Sale Date</span>
-                      <span style={{ color: theme.text }}>{new Date(selectedVehicle.sale_date).toLocaleDateString()}</span>
+                      <span style={{ color: theme.text }}>{localDateDisplay(selectedVehicle.sale_date)}</span>
                     </div>
                   )}
                   {(() => {
@@ -1291,7 +1354,9 @@ export default function InventoryPage() {
                         sale_price: '',
                         status: 'In Stock',
                         stock_number: '',
-                        description: linkedDeal.trade_description || ''
+                        description: linkedDeal.trade_description || '',
+                        date_acquired: '',
+                        sale_date: ''
                       });
                       setShowDetailModal(false);
                       setSelectedVehicle(null);
@@ -1581,7 +1646,7 @@ export default function InventoryPage() {
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Color</label><input type="text" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} style={inputStyle} placeholder="Silver" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Condition</label><select value={formData.condition} onChange={e => setFormData({...formData, condition: e.target.value})} style={inputStyle}><option value="Excellent">Excellent</option><option value="Good">Good</option><option value="Fair">Fair</option><option value="Poor">Poor</option><option value="Salvage">Salvage</option></select></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Stock #</label><input type="text" value={formData.stock_number} onChange={e => setFormData({...formData, stock_number: e.target.value})} style={inputStyle} placeholder="STK001" /></div>
-                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Status</label><select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={inputStyle}><option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option></select></div>
+                <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Status</label><select value={formData.status} onChange={e => handleFormStatusChange(e.target.value)} style={inputStyle}><option value="In Stock">In Stock</option><option value="For Sale">For Sale</option><option value="Sold">Sold</option><option value="BHPH">BHPH</option><option value="Fleet">Fleet</option></select></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Cost (Purchase Price)</label><input type="number" value={formData.purchase_price} onChange={e => setFormData({...formData, purchase_price: e.target.value})} style={inputStyle} placeholder="8000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>List Price (Asking)</label><input type="number" value={formData.list_price} onChange={e => setFormData({...formData, list_price: e.target.value})} style={inputStyle} placeholder="13000" /></div>
                 <div><label style={{ display: 'block', fontSize: '12px', color: theme.textSecondary, marginBottom: '6px' }}>Sale Price (Sold For)</label><input type="number" value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: e.target.value})} style={inputStyle} placeholder="12000" /></div>

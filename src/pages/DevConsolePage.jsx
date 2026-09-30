@@ -14,10 +14,10 @@ const PLAN_PRICES = {
 };
 
 export default function DevConsolePage() {
-  const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, setDealer, fetchAllData: storeRefresh } = useStore();
+  const { dealerId, dealer, inventory, employees, bhphLoans, deals, customers, setDealer, fetchAllData: storeRefresh, currentEmployee } = useStore();
 
-  // ACCESS CONTROL: Developer only - must be OG DiX Motor Club
-  const isDeveloper = dealer?.dealer_name === 'OG DiX Motor Club';
+  // ACCESS CONTROL: Developer only - the owner of the OG DiX account (dealer 1), not its employees
+  const isDeveloper = Number(dealer?.id) === 1 && !currentEmployee;
 
   const [activeSection, setActiveSection] = useState('dashboard');
   const [loading, setLoading] = useState(false);

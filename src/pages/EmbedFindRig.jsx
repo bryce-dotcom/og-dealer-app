@@ -34,12 +34,9 @@ export default function EmbedFindRig() {
 
   const loadDealer = async () => {
     if (!dealerId) return;
-    const { data } = await supabase
-      .from('dealer_settings')
-      .select('*')
-      .eq('id', dealerId)
-      .single();
-    setDealer(data);
+    // Public page: safe dealer profile only (name, phone, logo)
+    const { data } = await supabase.rpc('public_dealer_profile', { p_dealer_id: parseInt(dealerId) });
+    setDealer(data?.[0] || null);
   };
 
   const setupSpeechRecognition = () => {
@@ -140,35 +137,21 @@ export default function EmbedFindRig() {
     try {
       const yearRange = parseYearRange(data.year_range || '');
       
-      // Create customer first
-      const { data: customer, error: customerError } = await supabase
-        .from('customers')
-        .insert({
-          name: data.name,
-          phone: data.phone,
-          email: data.email,
-          dealer_id: parseInt(dealerId)
-        })
-        .select()
-        .single();
-
-      if (customerError) throw customerError;
-
-      // Create vehicle request
-      const { error: requestError } = await supabase
-        .from('customer_vehicle_requests')
-        .insert({
-          customer_id: customer.id,
-          dealer_id: parseInt(dealerId),
-          year_min: yearRange.year_min,
-          year_max: yearRange.year_max,
-          make: data.make?.toLowerCase() === 'any' ? null : data.make,
-          model: data.type, // Using type as model for now
-          max_price: parsePrice(data.max_price),
-          max_miles: parseMiles(data.max_miles),
-          notes: data.notes,
-          status: 'Looking'
-        });
+      // Creates the customer + their request in one server-side call
+      // (the public page can't write to the customers table directly).
+      const { error: requestError } = await supabase.rpc('submit_vehicle_request', {
+        p_dealer_id: parseInt(dealerId),
+        p_name: data.name,
+        p_phone: data.phone || null,
+        p_email: data.email || null,
+        p_year_min: yearRange.year_min,
+        p_year_max: yearRange.year_max,
+        p_make: data.make?.toLowerCase() === 'any' ? null : data.make,
+        p_model: data.type, // Using type as model for now
+        p_max_price: parsePrice(data.max_price || ''),
+        p_max_miles: parseMiles(data.max_miles || ''),
+        p_notes: data.notes || null
+      });
 
       if (requestError) throw requestError;
 

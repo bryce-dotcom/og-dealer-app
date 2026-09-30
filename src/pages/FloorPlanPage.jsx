@@ -5,8 +5,9 @@ import { useTheme } from '../components/Layout';
 
 export default function FloorPlanPage() {
   const { theme } = useTheme();
-  const { dealer, inventory } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId, inventory } = useStore();
+  // Today's LOCAL date as YYYY-MM-DD (toISOString gives the UTC date)
+  const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
   const [activeTab, setActiveTab] = useState('vehicles');
   const [lenders, setLenders] = useState([]);
@@ -16,7 +17,7 @@ export default function FloorPlanPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingLender, setEditingLender] = useState(null);
   const [lenderForm, setLenderForm] = useState({ lender_name: '', contact_name: '', contact_phone: '', contact_email: '', account_number: '', interest_rate: '', max_days: '90', credit_line: '' });
-  const [addForm, setAddForm] = useState({ vehicle_id: '', lender_id: '', advance_amount: '', interest_rate: '', funded_date: new Date().toISOString().split('T')[0] });
+  const [addForm, setAddForm] = useState({ vehicle_id: '', lender_id: '', advance_amount: '', interest_rate: '', funded_date: localToday() });
   const [filterLender, setFilterLender] = useState('all');
   const [filterStatus, setFilterStatus] = useState('active');
 
@@ -34,11 +35,12 @@ export default function FloorPlanPage() {
   };
 
   const formatCurrency = (amt) => amt == null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amt);
-  const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
+  // Date-only values (YYYY-MM-DD) are parsed as LOCAL dates so they don't show as the day before
+  const formatDate = (d) => d ? new Date(typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d + 'T00:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 
   const getVehicleTitle = (vid) => {
     const v = inventory?.find(i => i.id === vid);
-    return v ? [v.year, v.make, v.model].filter(Boolean).join(' ') : vid;
+    return v ? [v.year, v.make, v.model].filter(Boolean).join(' ') + (v.stock_number ? ` #${v.stock_number}` : '') : vid;
   };
 
   const getDaysOnPlan = (fundedDate) => {
@@ -53,7 +55,7 @@ export default function FloorPlanPage() {
   };
 
   const handleSaveLender = async () => {
-    if (!lenderForm.lender_name) return;
+    if (!lenderForm.lender_name) { alert('Lender Name is required.'); return; }
     const payload = {
       dealer_id: dealerId,
       lender_name: lenderForm.lender_name,
@@ -65,11 +67,10 @@ export default function FloorPlanPage() {
       max_days: parseInt(lenderForm.max_days) || 90,
       credit_line: lenderForm.credit_line ? parseFloat(lenderForm.credit_line) : null,
     };
-    if (editingLender) {
-      await supabase.from('floor_plan_lenders').update(payload).eq('id', editingLender.id);
-    } else {
-      await supabase.from('floor_plan_lenders').insert(payload);
-    }
+    const { error } = editingLender
+      ? await supabase.from('floor_plan_lenders').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingLender.id).eq('dealer_id', dealerId)
+      : await supabase.from('floor_plan_lenders').insert(payload);
+    if (error) { alert('Failed to save lender: ' + error.message); return; }
     setShowLenderModal(false);
     setEditingLender(null);
     setLenderForm({ lender_name: '', contact_name: '', contact_phone: '', contact_email: '', account_number: '', interest_rate: '', max_days: '90', credit_line: '' });
@@ -77,9 +78,14 @@ export default function FloorPlanPage() {
   };
 
   const handleAddFloorPlan = async () => {
-    if (!addForm.vehicle_id || !addForm.lender_id || !addForm.advance_amount) return;
+    const missing = [];
+    if (!addForm.vehicle_id) missing.push('Vehicle');
+    if (!addForm.lender_id) missing.push('Lender');
+    if (!addForm.advance_amount) missing.push('Advance Amount');
+    if (!addForm.funded_date) missing.push('Funded Date');
+    if (missing.length) { alert('Please fill in: ' + missing.join(', ')); return; }
     const lender = lenders.find(l => l.id === addForm.lender_id);
-    await supabase.from('floor_plan_vehicles').insert({
+    const { error } = await supabase.from('floor_plan_vehicles').insert({
       dealer_id: dealerId,
       vehicle_id: addForm.vehicle_id,
       lender_id: addForm.lender_id,
@@ -88,18 +94,23 @@ export default function FloorPlanPage() {
       funded_date: addForm.funded_date,
       status: 'active',
     });
+    if (error) { alert('Failed to add floor plan vehicle: ' + error.message); return; }
     setShowAddModal(false);
-    setAddForm({ vehicle_id: '', lender_id: '', advance_amount: '', interest_rate: '', funded_date: new Date().toISOString().split('T')[0] });
+    setAddForm({ vehicle_id: '', lender_id: '', advance_amount: '', interest_rate: '', funded_date: localToday() });
     loadData();
   };
 
   const handlePayoff = async (fp) => {
-    await supabase.from('floor_plan_vehicles').update({
+    const payoffAmount = parseFloat(fp.advance_amount) + calcInterest(fp.advance_amount, fp.interest_rate, fp.funded_date);
+    if (!confirm(`Mark ${getVehicleTitle(fp.vehicle_id)} as paid off for ${formatCurrency(payoffAmount)}?\n\nThis only updates your records in OG Dealer. It does not send any payment to the lender.`)) return;
+    const { error } = await supabase.from('floor_plan_vehicles').update({
       paid_off: true,
-      paid_off_date: new Date().toISOString().split('T')[0],
-      paid_off_amount: parseFloat(fp.advance_amount) + calcInterest(fp.advance_amount, fp.interest_rate, fp.funded_date),
+      paid_off_date: localToday(),
+      paid_off_amount: payoffAmount,
       status: 'paid_off',
-    }).eq('id', fp.id);
+      updated_at: new Date().toISOString(),
+    }).eq('id', fp.id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to mark paid off: ' + error.message); return; }
     loadData();
   };
 
@@ -124,9 +135,9 @@ export default function FloorPlanPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>Floor Plan Management</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Track floor plan financing, interest, and curtailments</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>A floor plan is a loan from a lender used to buy inventory. Track which cars are on it, how long, and the interest building up.</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button onClick={() => { setEditingLender(null); setLenderForm({ lender_name: '', contact_name: '', contact_phone: '', contact_email: '', account_number: '', interest_rate: '', max_days: '90', credit_line: '' }); setShowLenderModal(true); }} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>
             + Lender
           </button>
@@ -137,15 +148,15 @@ export default function FloorPlanPage() {
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '24px' }}>
         {[
           { label: 'Active Vehicles', val: activeFloorPlans.length, color: theme.text },
-          { label: 'Total Advanced', val: formatCurrency(totalAdvanced), color: theme.accent },
-          { label: 'Accrued Interest', val: formatCurrency(totalInterest), color: '#ef4444' },
-          { label: 'Total Exposure', val: formatCurrency(totalAdvanced + totalInterest), color: '#eab308' },
-          { label: 'Credit Available', val: formatCurrency(Math.max(0, totalCreditLine - totalAdvanced)), color: '#22c55e' },
+          { label: 'Total Advanced', val: formatCurrency(totalAdvanced), color: theme.accent, tip: 'Advance: the amount the lender paid out for each car' },
+          { label: 'Accrued Interest', val: formatCurrency(totalInterest), color: '#ef4444', tip: 'Estimated interest built up so far (advance x rate x days on plan)' },
+          { label: 'Total Exposure', val: formatCurrency(totalAdvanced + totalInterest), color: '#eab308', tip: 'What you would owe if you paid everything off today' },
+          { label: 'Credit Available', val: formatCurrency(Math.max(0, totalCreditLine - totalAdvanced)), color: '#22c55e', tip: 'Credit line minus what is currently advanced' },
         ].map((s, i) => (
-          <div key={i} style={{ ...card, textAlign: 'center' }}>
+          <div key={i} title={s.tip} style={{ ...card, textAlign: 'center' }}>
             <div style={{ color: theme.textMuted, fontSize: '12px', marginBottom: '4px' }}>{s.label}</div>
             <div style={{ color: s.color, fontSize: '20px', fontWeight: '700' }}>{s.val}</div>
           </div>
@@ -180,14 +191,18 @@ export default function FloorPlanPage() {
           </div>
 
           {filtered.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No floor plan vehicles found</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+              {floorPlans.length === 0
+                ? (lenders.length === 0 ? 'No floor plan vehicles yet. First click "+ Lender" to add your floor plan lender, then "+ Floor Plan Vehicle" to add each car it paid for.' : 'No floor plan vehicles yet. Click "+ Floor Plan Vehicle" to add a car your lender paid for.')
+                : 'No floor plan vehicles match these filters.'}
+            </div>
           ) : (
             <div style={card}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
                     {['Vehicle', 'Lender', 'Funded', 'Days', 'Advanced', 'Rate', 'Interest', 'Total Owed', 'Status', ''].map(h => (
-                      <th key={h} style={{ padding: '10px 8px', textAlign: 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
+                      <th key={h} title={h === 'Days' ? 'Days on plan. Turns red once past the lender\'s Max Days' : h === 'Advanced' ? 'Advance: the amount the lender paid out for this car' : undefined} style={{ padding: '10px 8px', textAlign: 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -217,7 +232,7 @@ export default function FloorPlanPage() {
                         </td>
                         <td style={{ padding: '10px 8px' }}>
                           {fp.status === 'active' && (
-                            <button onClick={() => handlePayoff(fp)} style={{ padding: '4px 10px', backgroundColor: 'rgba(34,197,94,0.15)', border: 'none', borderRadius: '4px', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Pay Off</button>
+                            <button onClick={() => handlePayoff(fp)} title="Record that this car's floor plan loan was paid off (does not send money)" style={{ padding: '4px 10px', backgroundColor: 'rgba(34,197,94,0.15)', border: 'none', borderRadius: '4px', color: '#22c55e', cursor: 'pointer', fontSize: '11px', fontWeight: '600' }}>Pay Off</button>
                           )}
                         </td>
                       </tr>
@@ -233,7 +248,7 @@ export default function FloorPlanPage() {
       {activeTab === 'lenders' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
           {lenders.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No lenders configured</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No lenders yet. Click "+ Lender" to add the bank or company that finances your inventory.</div>
           ) : lenders.map(l => {
             const lenderVehicles = floorPlans.filter(fp => fp.lender_id === l.id && fp.status === 'active');
             const lenderBalance = lenderVehicles.reduce((s, fp) => s + (parseFloat(fp.advance_amount) || 0), 0);
@@ -249,7 +264,7 @@ export default function FloorPlanPage() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                   <div><div style={{ color: theme.textMuted, fontSize: '11px' }}>Rate</div><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{l.interest_rate || 0}%</div></div>
-                  <div><div style={{ color: theme.textMuted, fontSize: '11px' }}>Max Days</div><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{l.max_days || 90}</div></div>
+                  <div title="Max days: how long a car can stay on the plan before the lender wants it paid off"><div style={{ color: theme.textMuted, fontSize: '11px' }}>Max Days</div><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{l.max_days || 90}</div></div>
                   <div><div style={{ color: theme.textMuted, fontSize: '11px' }}>Credit Line</div><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{formatCurrency(l.credit_line)}</div></div>
                   <div><div style={{ color: theme.textMuted, fontSize: '11px' }}>Vehicles</div><div style={{ color: theme.text, fontSize: '14px', fontWeight: '600' }}>{lenderVehicles.length}</div></div>
                 </div>
@@ -281,13 +296,14 @@ export default function FloorPlanPage() {
               { key: 'contact_name', label: 'Contact Name', type: 'text' },
               { key: 'contact_phone', label: 'Contact Phone', type: 'text' },
               { key: 'contact_email', label: 'Contact Email', type: 'email' },
-              { key: 'interest_rate', label: 'Interest Rate (%)', type: 'number' },
-              { key: 'max_days', label: 'Max Days', type: 'number' },
-              { key: 'credit_line', label: 'Credit Line ($)', type: 'number' },
+              { key: 'interest_rate', label: 'Interest Rate (%)', type: 'number', help: 'Yearly interest rate the lender charges' },
+              { key: 'max_days', label: 'Max Days', type: 'number', help: 'How long a car can stay on the plan before it must be paid off' },
+              { key: 'credit_line', label: 'Credit Line ($)', type: 'number', help: 'The most the lender will lend you in total' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>{f.label}</label>
                 <input type={f.type} value={lenderForm[f.key]} onChange={e => setLenderForm(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                {f.help && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '3px' }}>{f.help}</div>}
               </div>
             ))}
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
@@ -307,8 +323,8 @@ export default function FloorPlanPage() {
               <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Vehicle *</label>
               <select value={addForm.vehicle_id} onChange={e => setAddForm(p => ({ ...p, vehicle_id: e.target.value }))} style={inputStyle}>
                 <option value="">Select vehicle...</option>
-                {(inventory || []).filter(v => v.status === 'In Stock').map(v => (
-                  <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} - #{v.unit_id}</option>
+                {(inventory || []).filter(v => ['In Stock', 'For Sale'].includes(v.status)).map(v => (
+                  <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}{v.stock_number ? ` - #${v.stock_number}` : ''}</option>
                 ))}
               </select>
             </div>
@@ -318,15 +334,17 @@ export default function FloorPlanPage() {
                 <option value="">Select lender...</option>
                 {lenders.filter(l => l.active).map(l => <option key={l.id} value={l.id}>{l.lender_name}</option>)}
               </select>
+              {lenders.filter(l => l.active).length === 0 && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '3px' }}>No lenders yet. Close this and click "+ Lender" first.</div>}
             </div>
             {[
-              { key: 'advance_amount', label: 'Advance Amount ($) *', type: 'number' },
-              { key: 'interest_rate', label: 'Interest Rate (%)', type: 'number' },
-              { key: 'funded_date', label: 'Funded Date', type: 'date' },
+              { key: 'advance_amount', label: 'Advance Amount ($) *', type: 'number', help: 'The amount the lender paid out for this car' },
+              { key: 'interest_rate', label: 'Interest Rate (%)', type: 'number', help: 'Defaults to the lender\'s rate' },
+              { key: 'funded_date', label: 'Funded Date *', type: 'date', help: 'The day the lender paid for the car. Interest counts from here.' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>{f.label}</label>
                 <input type={f.type} value={addForm[f.key]} onChange={e => setAddForm(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                {f.help && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '3px' }}>{f.help}</div>}
               </div>
             ))}
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>

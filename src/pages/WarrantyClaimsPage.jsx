@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function WarrantyClaimsPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,11 +30,12 @@ export default function WarrantyClaimsPage() {
 
   const fetchClaims = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('warranty_claims')
       .select('*')
       .eq('dealer_id', dealerId)
       .order('created_at', { ascending: false });
+    if (error) alert('Could not load warranty claims: ' + error.message);
     setClaims(data || []);
     setLoading(false);
   };
@@ -43,9 +43,11 @@ export default function WarrantyClaimsPage() {
   const fetchRelated = async () => {
     const [v, c, e] = await Promise.all([
       supabase.from('inventory').select('id, year, make, model, stock_number').eq('dealer_id', dealerId),
-      supabase.from('customers').select('id, first_name, last_name').eq('dealer_id', dealerId),
+      supabase.from('customers').select('id, name, first_name, last_name').eq('dealer_id', dealerId),
       supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true)
     ]);
+    const loadErr = v.error || c.error || e.error;
+    if (loadErr) console.error('Could not load related data:', loadErr);
     setVehicles(v.data || []);
     setCustomers(c.data || []);
     setEmployees(e.data || []);
@@ -80,10 +82,12 @@ export default function WarrantyClaimsPage() {
       notes: form.notes || null
     };
 
-    if (editingClaim) {
-      await supabase.from('warranty_claims').update(payload).eq('id', editingClaim.id);
-    } else {
-      await supabase.from('warranty_claims').insert(payload);
+    const { error } = editingClaim
+      ? await supabase.from('warranty_claims').update(payload).eq('id', editingClaim.id).eq('dealer_id', dealerId)
+      : await supabase.from('warranty_claims').insert(payload);
+    if (error) {
+      alert('Could not save claim: ' + error.message);
+      return;
     }
     setShowModal(false);
     setEditingClaim(null);
@@ -137,15 +141,19 @@ export default function WarrantyClaimsPage() {
     if (status === 'denied') updates.denied_at = new Date().toISOString();
     if (status === 'paid') updates.paid_at = new Date().toISOString();
     if (status === 'completed') updates.completed_at = new Date().toISOString();
-    await supabase.from('warranty_claims').update(updates).eq('id', id);
+    const { error } = await supabase.from('warranty_claims').update(updates).eq('id', id).eq('dealer_id', dealerId);
+    if (error) alert('Could not update status: ' + error.message);
     fetchClaims();
   };
 
   const deleteClaim = async (id) => {
-    if (!confirm('Delete this claim?')) return;
-    await supabase.from('warranty_claims').delete().eq('id', id);
+    if (!confirm('Delete this claim? This cannot be undone.')) return;
+    const { error } = await supabase.from('warranty_claims').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not delete claim: ' + error.message); return; }
     fetchClaims();
   };
+
+  const customerName = (c) => c ? (c.name || [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed customer') : '';
 
   const statusColors = {
     draft: '#71717a', submitted: '#3b82f6', under_review: '#f59e0b',
@@ -184,7 +192,7 @@ export default function WarrantyClaimsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Warranty Claims</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Track warranty claims, approvals, and payments</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Repairs you're asking a warranty company to pay for, and where each claim stands.</p>
         </div>
         <button onClick={() => { resetForm(); setEditingClaim(null); setShowModal(true); }} style={{
           padding: '10px 20px', backgroundColor: theme.accent, color: '#fff',
@@ -233,7 +241,7 @@ export default function WarrantyClaimsPage() {
         <div style={{ textAlign: 'center', padding: '40px', color: theme.textSecondary }}>Loading...</div>
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
-          No claims found
+          {claims.length === 0 ? 'No warranty claims yet. Click + New Claim to start one.' : 'No claims with this status.'}
         </div>
       ) : (
         <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'auto' }}>
@@ -256,7 +264,7 @@ export default function WarrantyClaimsPage() {
                       {veh ? `${veh.year} ${veh.make} ${veh.model}` : claim.vehicle_id?.substring(0, 8) || '-'}
                     </td>
                     <td style={{ padding: '12px', color: theme.textSecondary }}>
-                      {cust ? `${cust.first_name} ${cust.last_name}` : '-'}
+                      {cust ? customerName(cust) : '-'}
                     </td>
                     <td style={{ padding: '12px' }}>
                       <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '12px', backgroundColor: theme.accentBg, color: theme.accent }}>
@@ -323,7 +331,7 @@ export default function WarrantyClaimsPage() {
                 <label style={labelStyle}>Customer</label>
                 <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} style={inputStyle}>
                   <option value="">Select customer</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
+                  {customers.map(c => <option key={c.id} value={c.id}>{customerName(c)}</option>)}
                 </select>
               </div>
               <div>
@@ -369,7 +377,11 @@ export default function WarrantyClaimsPage() {
               </div>
 
               <div style={{ gridColumn: '1 / -1', borderTop: `1px solid ${theme.border}`, paddingTop: '16px' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: '600', color: theme.text, marginBottom: '12px' }}>Costs & Payment</h3>
+                <h3 style={{ fontSize: '14px', fontWeight: '600', color: theme.text, marginBottom: '4px' }}>Costs & Payment</h3>
+                <div style={{ fontSize: '12px', color: theme.textMuted }}>
+                  Deductible = what the customer pays. Approved / Paid = what the warranty company agreed to pay and actually paid.
+                  Dealer Responsibility = what the dealership pays.
+                </div>
               </div>
               <div>
                 <label style={labelStyle}>Parts Cost</label>
@@ -392,7 +404,7 @@ export default function WarrantyClaimsPage() {
                 <input type="number" step="0.01" value={form.paid_amount} onChange={e => setForm({ ...form, paid_amount: e.target.value })} style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Dealer Responsibility</label>
+                <label style={labelStyle} title="What the dealership pays">Dealer Responsibility (what the dealership pays)</label>
                 <input type="number" step="0.01" value={form.dealer_responsibility} onChange={e => setForm({ ...form, dealer_responsibility: e.target.value })} style={inputStyle} />
               </div>
 

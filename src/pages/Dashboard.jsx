@@ -24,6 +24,7 @@ export default function Dashboard() {
 
   const [customersLooking, setCustomersLooking] = useState([]);
   const [loadingLooking, setLoadingLooking] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const loadCustomersLooking = useCallback(async () => {
     if (!dealerId) return;
@@ -74,6 +75,7 @@ export default function Dashboard() {
   }, [dealerId, navigate, fetchAllData, loadCustomersLooking]);
 
   const handleRefresh = async () => {
+    setRefreshKey(k => k + 1); // also reloads the profit card
     await fetchAllData();
     await loadCustomersLooking();
   };
@@ -83,8 +85,13 @@ export default function Dashboard() {
   const forSale = inventory.filter(v => v.status === 'For Sale' || v.status === 'In Stock');
   const activeTeam = employees.filter(e => e.active);
   const activeLoans = bhphLoans.filter(l => l.status === 'Active');
+  const openDeals = deals.filter(d => !d.archived && !['Sold', 'Delivered'].includes(d.stage));
 
-  const fleetValue = forSale.reduce((sum, v) => sum + (v.sale_price || v.purchase_price || 0), 0);
+  // What the cars for sale cost you vs. what you're asking. Kept separate:
+  // mixing the two (asking price when set, cost otherwise) means neither.
+  const inventoryCost = forSale.reduce((sum, v) => sum + (parseFloat(v.purchase_price) || 0), 0);
+  const priced = forSale.filter(v => parseFloat(v.sale_price) > 0);
+  const askingTotal = priced.reduce((sum, v) => sum + (parseFloat(v.sale_price) || 0), 0);
   // bhph_loans schema: column is `balance`, NOT `current_balance`. Same fix below.
   const bhphBalance = activeLoans.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
   const monthlyIncome = activeLoans.reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0);
@@ -150,7 +157,6 @@ export default function Dashboard() {
             </svg>
             Refresh
           </button>
-          <div style={{ fontSize: '14px', color: theme.textMuted }}>{dealer?.dealer_name}</div>
         </div>
       </div>
 
@@ -160,67 +166,68 @@ export default function Dashboard() {
         <>
           {/* Top Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-            <div style={cardStyle}>
-              <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Fleet Value</div>
+            <div style={{ ...cardStyle, cursor: 'pointer' }} onClick={() => navigate('/inventory')}>
+              <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cars for sale · what you paid</div>
               <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>
-                {canViewFinancials ? `$${fleetValue.toLocaleString()}` : '•••••'}
+                {canViewFinancials ? `$${inventoryCost.toLocaleString()}` : '•••••'}
               </div>
               <div style={{ fontSize: '14px', color: theme.textSecondary, marginTop: '4px' }}>
-                {forSale.length} units available
+                {forSale.length} car{forSale.length === 1 ? '' : 's'}
+                {canViewFinancials && priced.length > 0 && ` • asking $${askingTotal.toLocaleString()}`}
+                {canViewFinancials && priced.length < forSale.length && (
+                  <span style={{ color: '#eab308' }}> • {forSale.length - priced.length} without a price</span>
+                )}
                 {!canViewFinancials && <span style={{ color: theme.textMuted, marginLeft: '8px' }}>(Finance Only)</span>}
               </div>
             </div>
 
-            <div style={cardStyle}>
-              <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>BHPH Portfolio</div>
+            <div style={{ ...cardStyle, cursor: 'pointer' }} onClick={() => navigate('/bhph')}>
+              <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Owed to you · Buy Here Pay Here</div>
               <div style={{ fontSize: '32px', fontWeight: '700', color: theme.text }}>
                 {canViewFinancials ? `$${bhphBalance.toLocaleString()}` : '•••••'}
               </div>
               <div style={{ fontSize: '14px', color: theme.textSecondary, marginTop: '4px' }}>
-                {canViewFinancials ? `$${monthlyIncome.toFixed(2)}/mo income • ` : ''}{activeLoans.length} active
+                {activeLoans.length} active loan{activeLoans.length === 1 ? '' : 's'}
+                {canViewFinancials ? ` • $${monthlyIncome.toFixed(2)}/mo due` : ''}
                 {!canViewFinancials && <span style={{ color: theme.textMuted, marginLeft: '8px' }}>(Finance Only)</span>}
               </div>
             </div>
           </div>
 
-          {/* Quick Stats Row */}
+          {/* Quick Stats Row — each tile opens its page */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
-            <div style={statCardStyle} onClick={() => navigate('/inventory')}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>{inventory.length}</div>
-              <div style={{ fontSize: '13px', color: theme.textMuted }}>Total Units</div>
-            </div>
-            <div style={statCardStyle} onClick={() => navigate('/inventory')}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: '#22c55e' }}>{forSale.length}</div>
-              <div style={{ fontSize: '13px', color: theme.textMuted }}>For Sale</div>
-            </div>
-            <div style={statCardStyle} onClick={() => navigate('/team')}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>{activeTeam.length}</div>
-              <div style={{ fontSize: '13px', color: theme.textMuted }}>Team</div>
-            </div>
-            <div style={statCardStyle} onClick={() => navigate('/deals')}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: theme.text }}>{deals.length}</div>
-              <div style={{ fontSize: '13px', color: theme.textMuted }}>Deals</div>
-            </div>
-            <div 
-              style={{ 
-                ...statCardStyle, 
+            {[
+              { value: forSale.length, label: 'For sale', to: '/inventory', color: '#22c55e' },
+              { value: openDeals.length, label: 'Open deals', to: '/deals' },
+              { value: activeLoans.length, label: 'BHPH loans', to: '/bhph' },
+              { value: activeTeam.length, label: 'Team', to: '/team' },
+            ].map(tile => (
+              <div key={tile.label} style={statCardStyle} onClick={() => navigate(tile.to)} title={`Open ${tile.label}`}>
+                <div style={{ fontSize: '28px', fontWeight: '700', color: tile.color || theme.text }}>{tile.value}</div>
+                <div style={{ fontSize: '13px', color: theme.textMuted }}>{tile.label} ›</div>
+              </div>
+            ))}
+            <div
+              style={{
+                ...statCardStyle,
                 borderColor: customersLooking.length > 0 ? '#f97316' : theme.border,
                 borderWidth: customersLooking.length > 0 ? '2px' : '1px',
                 backgroundColor: customersLooking.length > 0 ? 'rgba(249,115,22,0.1)' : theme.bgCard
-              }} 
+              }}
               onClick={() => navigate('/customers')}
+              title="Customers waiting for a car you don't have yet"
             >
               <div style={{ fontSize: '28px', fontWeight: '700', color: customersLooking.length > 0 ? '#f97316' : theme.text }}>
                 {loadingLooking ? '...' : customersLooking.length}
               </div>
-              <div style={{ fontSize: '13px', color: customersLooking.length > 0 ? '#f97316' : theme.textMuted }}>Looking</div>
+              <div style={{ fontSize: '13px', color: customersLooking.length > 0 ? '#f97316' : theme.textMuted }}>Customers wanting a car ›</div>
             </div>
           </div>
 
-          {/* Cash Flow Waterfall - Full Width (Admin/Finance Only) */}
-          {canViewFinancials && (
+          {/* Profit card — owner only: it reads payroll, expenses and commissions, which are owner-only */}
+          {hasNoEmployee && (
             <div style={{ marginBottom: '24px' }}>
-              <CashFlowWaterfall dealerId={dealerId} period="current-month" />
+              <CashFlowWaterfall key={refreshKey} dealerId={dealerId} period="current-month" />
             </div>
           )}
 
@@ -316,7 +323,9 @@ export default function Dashboard() {
                         <div style={{ fontSize: '12px', color: theme.textMuted }}>{vehicle.stock_number || 'N/A'} • {(vehicle.miles || vehicle.mileage || 0).toLocaleString()} mi</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: '600', color: theme.accent, fontSize: '14px' }}>${(vehicle.sale_price || vehicle.purchase_price || 0).toLocaleString()}</div>
+                        <div style={{ fontWeight: '600', color: parseFloat(vehicle.sale_price) > 0 ? theme.accent : theme.textMuted, fontSize: '14px' }}>
+                          {parseFloat(vehicle.sale_price) > 0 ? `$${parseFloat(vehicle.sale_price).toLocaleString()}` : 'No price'}
+                        </div>
                         <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: statusStyle.bg, color: statusStyle.color }}>{vehicle.status}</span>
                       </div>
                     </div>

@@ -465,11 +465,20 @@ export default function DealsPage() {
         .from('generated_documents')
         .select('*')
         .eq('deal_id', dealId)
+        .eq('dealer_id', dealerId)
         .order('generated_at', { ascending: false });
 
       if (error) throw error;
-      
+
       if (data) {
+        // Saved links are signed URLs that expire after 24h. Make fresh ones
+        // (12h) every time the docs load so View / Print / Download keep working.
+        const paths = data.map(d => d.storage_path).filter(Boolean);
+        if (paths.length) {
+          const { data: signed } = await supabase.storage.from('deal-documents').createSignedUrls(paths, 12 * 3600);
+          const byPath = Object.fromEntries((signed || []).filter(s => s.signedUrl).map(s => [s.path, s.signedUrl]));
+          data.forEach(d => { if (byPath[d.storage_path]) d.public_url = byPath[d.storage_path]; });
+        }
         setGeneratedDocs(prev => ({ ...prev, [dealId]: data }));
         return data;
       }

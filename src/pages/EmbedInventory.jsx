@@ -32,24 +32,17 @@ export default function EmbedInventory() {
   const loadData = async () => {
     try {
       // Get dealer info
-      const { data: dealerData, error: dealerError } = await supabase
-        .from('dealer_settings')
-        .select('*')
-        .eq('id', dealerId)
-        .single();
-      
-      if (dealerError) throw new Error('Dealer not found');
-      setDealer(dealerData);
+      // Public page: read through safe functions (no costs or private data)
+      const { data: dealerRows, error: dealerError } = await supabase
+        .rpc('public_dealer_profile', { p_dealer_id: parseInt(dealerId) });
+
+      if (dealerError || !dealerRows?.length) throw new Error('Dealer not found');
+      setDealer(dealerRows[0]);
 
       // Get for-sale inventory
       const { data: invData, error: invError } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('dealer_id', dealerId)
-        .eq('status', 'For Sale')
-        .order('created_at', { ascending: false })
-        .limit(maxItems);
-      
+        .rpc('public_inventory', { p_dealer_id: parseInt(dealerId), p_limit: maxItems });
+
       if (invError) throw invError;
       setInventory(invData || []);
     } catch (err) {
@@ -263,7 +256,7 @@ export default function EmbedInventory() {
                   )}
                   
                   {/* Price Badge */}
-                  {showPrice && v.sale_price && (
+                  {showPrice && parseFloat(v.sale_price) > 0 && (
                     <div style={{
                       position: 'absolute',
                       bottom: '10px',
@@ -575,7 +568,7 @@ export default function EmbedInventory() {
                     </p>
                   )}
                 </div>
-                {showPrice && selectedVehicle.sale_price && (
+                {showPrice && parseFloat(selectedVehicle.sale_price) > 0 && (
                   <div style={{
                     backgroundColor: theme.accent,
                     color: '#fff',

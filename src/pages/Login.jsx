@@ -5,7 +5,7 @@ import { useStore } from '../lib/store';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { setDealer } = useStore();
+  const { setDealer, setCurrentEmployee } = useStore();
 
   const initialParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const [mode, setMode] = useState(initialParams.get('forgot') ? 'forgot' : 'login'); // 'login', 'signup', or 'forgot'
@@ -74,6 +74,7 @@ export default function Login() {
 
     if (dealer) {
       setDealer(dealer);
+      setCurrentEmployee(null); // owner
       navigate('/dashboard');
       return;
     }
@@ -81,7 +82,7 @@ export default function Login() {
     // Check if user is an employee
     const { data: employeeData } = await supabase
       .from('employees')
-      .select('dealer_id')
+      .select('*')
       .eq('user_id', userId)
       .eq('active', true)
       .maybeSingle();
@@ -96,6 +97,7 @@ export default function Login() {
 
       if (empDealerData) {
         setDealer(empDealerData);
+        setCurrentEmployee(employeeData);
         navigate('/dashboard');
       }
     }
@@ -133,6 +135,7 @@ export default function Login() {
 
     if (dealer) {
       setDealer(dealer);
+      setCurrentEmployee(null); // owner
       navigate('/dashboard');
       setLoading(false);
       return;
@@ -141,7 +144,7 @@ export default function Login() {
     // Check if user is an employee
     const { data: employeeData } = await supabase
       .from('employees')
-      .select('dealer_id')
+      .select('*')
       .eq('user_id', data.user.id)
       .eq('active', true)
       .maybeSingle();
@@ -156,6 +159,7 @@ export default function Login() {
 
       if (empDealerData) {
         setDealer(empDealerData);
+        setCurrentEmployee(employeeData);
         navigate('/dashboard');
         setLoading(false);
         return;
@@ -278,6 +282,7 @@ export default function Login() {
 
     // Confirmation disabled: we have a session, go straight to the dashboard.
     setDealer(dealer);
+    setCurrentEmployee(null); // new owner
     navigate('/dashboard');
   };
 

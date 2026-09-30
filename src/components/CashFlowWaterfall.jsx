@@ -13,19 +13,16 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState(period);
-  const [hoveredBucket, setHoveredBucket] = useState(null);
 
   useEffect(() => {
-    console.log('CashFlowWaterfall mounted, dealerId:', dealerId);
     if (!dealerId) {
-      console.log('No dealerId, skipping fetch');
       return;
     }
     fetchCashFlowData();
 
-    // Auto-refresh every 30 seconds
+    // Refresh quietly every 30 seconds (no loading flash)
     const interval = setInterval(() => {
-      fetchCashFlowData();
+      fetchCashFlowData({ silent: true });
     }, 30000);
 
     return () => clearInterval(interval);
@@ -109,10 +106,9 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       const dealProfit = (deals || []).reduce((sum, deal) => {
         const purchasePrice = parseFloat(deal.inventory?.purchase_price) || 0;
         const recon = reconByVehicle[deal.vehicle_id] || 0;
-        // Effective sale = cash received + trade-in allowance (trade is real value, not a loss).
-        const tradeAllowance = parseFloat(deal.trade_allowance ?? deal.trade_value ?? 0) || 0;
-        const effectiveSale = (parseFloat(deal.sale_price) || 0) + tradeAllowance;
-        const vehicleProfit = effectiveSale - purchasePrice - recon;
+        // sale_price is the car's price; a trade-in is part of how the buyer pays it,
+        // not extra income, so it is not added on top.
+        const vehicleProfit = (parseFloat(deal.sale_price) || 0) - purchasePrice - recon;
         const fiProfit =
           (parseFloat(deal.gap_insurance) || 0) * 0.75 +
           (parseFloat(deal.extended_warranty) || 0) * 0.50 +
@@ -131,11 +127,38 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       if (paymentsError) throw paymentsError;
 
       const interestIncome = (payments || []).reduce((sum, p) => sum + (parseFloat(p.interest) || 0), 0);
-      return dealProfit + interestIncome;
+
+      // Cars marked Sold in Inventory without a Sold/Delivered deal still count.
+      const [{ data: allSoldDeals }, { data: invSold }] = await Promise.all([
+        supabase.from('deals').select('vehicle_id').eq('dealer_id', dealerId).in('stage', ['Sold', 'Delivered']),
+        supabase.from('inventory').select('id, sale_price, purchase_price')
+          .eq('dealer_id', dealerId).eq('status', 'Sold')
+          .gte('sale_date', startDate).lte('sale_date', endDate)
+      ]);
+      const hasDeal = new Set((allSoldDeals || []).map(d => String(d.vehicle_id)));
+      const invOnly = (invSold || []).filter(v => !hasDeal.has(String(v.id)));
+      let invOnlyProfit = 0;
+      if (invOnly.length) {
+        const { data: exp } = await supabase
+          .from('inventory_expenses')
+          .select('inventory_id, amount')
+          .eq('dealer_id', dealerId)
+          .in('inventory_id', invOnly.map(v => v.id));
+        const recon = {};
+        (exp || []).forEach(e => { recon[e.inventory_id] = (recon[e.inventory_id] || 0) + (parseFloat(e.amount) || 0); });
+        invOnlyProfit = invOnly.reduce((sum, v) =>
+          sum + (parseFloat(v.sale_price) || 0) - (parseFloat(v.purchase_price) || 0) - (recon[v.id] || 0), 0);
+      }
+
+      return {
+        total: dealProfit + invOnlyProfit + interestIncome,
+        carsSold: (deals || []).length + invOnly.length,
+        carProfit: dealProfit + invOnlyProfit,
+        interestIncome
+      };
     } catch (error) {
-      console.error('Error calculating revenue:', error);
-      console.error('Error details:', error.message, error.details, error.hint);
-      return 0;
+      console.error('Error calculating gross profit:', error);
+      return { total: 0, carsSold: 0, carProfit: 0, interestIncome: 0, error: true };
     }
   }
 
@@ -170,18 +193,18 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
       const monthlyFactor = days / 30;
       const debtPayments = (liabilities.data || []).reduce((sum, l) => sum + (parseFloat(l.monthly_payment) || 0), 0) * monthlyFactor;
 
+      // Recon is already subtracted from each car's profit, so it isn't listed here.
       return {
         total: payroll + opex + debtPayments,
         breakdown: {
-          payroll,
-          expenses: opex,
-          recon: 0, // recon folded into gross profit; see calculateRevenue
-          debt: debtPayments
+          Payroll: payroll,
+          Expenses: opex,
+          'Loan payments': Math.round(debtPayments)
         }
       };
     } catch (error) {
       console.error('Error calculating burn rate:', error);
-      return { total: 0, breakdown: { payroll: 0, expenses: 0, recon: 0, debt: 0 } };
+      return { total: 0, breakdown: { Payroll: 0, Expenses: 0, 'Loan payments': 0 } };
     }
   }
 
@@ -219,13 +242,13 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
     }
   }
 
-  async function fetchCashFlowData() {
-    setLoading(true);
+  async function fetchCashFlowData({ silent = false } = {}) {
+    if (!silent) setLoading(true);
     const { start, end } = getPeriodDates(selectedPeriod);
-    console.log('Fetching cash flow data for period:', selectedPeriod, 'dates:', start, end);
 
     try {
-      const revenue = await calculateRevenue(start, end);
+      const profit = await calculateRevenue(start, end);
+      const revenue = profit.total;
       const burnRateData = await calculateBurnRate(start, end);
       const capitalTarget = getCapitalTarget(revenue);
       const spoilsRequired = await calculateSpoilsRequired(start, end);
@@ -237,6 +260,7 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
       const flowData = {
         revenue,
+        profit,
         burnRate: burnRateData.total,
         burnRateBreakdown: burnRateData.breakdown,
         capitalTarget,
@@ -244,7 +268,6 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
         flow: { toBurn, toCapital, toSpoils }
       };
 
-      console.log('Cash flow data calculated:', flowData);
       setData(flowData);
     } catch (error) {
       console.error('Error fetching cash flow data:', error);
@@ -279,107 +302,52 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
 
   if (!data) return null;
 
-  // Calculate percentages for bucket fills
-  const burnPct = data.burnRate > 0 ? Math.min(100, (data.flow.toBurn / data.burnRate) * 100) : 0;
-  const capitalPct = data.capitalTarget > 0 ? Math.min(100, (data.flow.toCapital / data.capitalTarget) * 100) : 0;
-  const spoilsPct = data.spoilsRequired > 0 ? Math.min(100, (data.flow.toSpoils / data.spoilsRequired) * 100) : 0;
+  // A bucket with nothing due is "covered", not 0% empty.
+  const fill = (current, target) => (target > 0 ? Math.min(100, (current / target) * 100) : 100);
+  const burnPct = fill(data.flow.toBurn, data.burnRate);
+  const capitalPct = fill(data.flow.toCapital, data.capitalTarget);
+  const spoilsPct = fill(data.flow.toSpoils, data.spoilsRequired);
 
-  // Status indicators
   const burnMet = data.flow.toBurn >= data.burnRate;
-  const capitalMet = data.flow.toCapital >= data.capitalTarget;
-  const spoilsMet = data.flow.toSpoils >= data.spoilsRequired;
+  const money = (n) => `$${Math.round(n || 0).toLocaleString()}`;
 
-  const BucketCard = ({ title, current, target, percentage, gradient, breakdown, onHover, onLeave }) => (
-    <div
-      style={{
-        backgroundColor: theme.bg,
-        border: `1px solid ${theme.border}`,
-        borderRadius: '8px',
-        padding: '16px',
-        minWidth: '200px',
-        position: 'relative',
-        cursor: 'pointer'
-      }}
-      onMouseEnter={onHover}
-      onMouseLeave={onLeave}
-    >
-      <div style={{
-        fontSize: '12px',
-        color: theme.textMuted,
-        marginBottom: '8px',
-        fontWeight: '600',
-        textTransform: 'uppercase',
-        letterSpacing: '0.5px'
-      }}>
-        {title}
+  const BucketCard = ({ step, title, help, current, target, percentage, gradient, breakdown }) => (
+    <div style={{
+      backgroundColor: theme.bg,
+      border: `1px solid ${theme.border}`,
+      borderRadius: '8px',
+      padding: '16px',
+      flex: '1 1 200px',
+      minWidth: '200px'
+    }}>
+      <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '2px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        {step}. {title}
+      </div>
+      <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '10px' }}>{help}</div>
+
+      <div style={{ width: '100%', height: '12px', backgroundColor: theme.border, borderRadius: '6px', overflow: 'hidden', marginBottom: '8px' }}>
+        <div style={{ width: `${percentage}%`, height: '100%', background: gradient, transition: 'width 0.5s ease' }} />
       </div>
 
-      {/* Progress bar */}
-      <div style={{
-        width: '100%',
-        height: '24px',
-        backgroundColor: theme.border,
-        borderRadius: '4px',
-        overflow: 'hidden',
-        marginBottom: '8px'
-      }}>
-        <div style={{
-          width: `${percentage}%`,
-          height: '100%',
-          background: gradient,
-          transition: 'width 0.5s ease'
-        }} />
-      </div>
-
-      {/* Amount */}
-      <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text, marginBottom: '4px' }}>
-        ${current.toLocaleString()} / ${target.toLocaleString()}
-      </div>
-
-      {/* Percentage and status */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <div style={{ fontSize: '14px', color: theme.textSecondary }}>
-          {percentage.toFixed(0)}% Full
-        </div>
-        {percentage >= 100 && (
-          <span style={{ fontSize: '14px', color: '#22c55e' }}>✓</span>
-        )}
-        {percentage >= 80 && percentage < 100 && (
-          <span style={{ fontSize: '14px', color: '#eab308' }}>⚠</span>
-        )}
-        {percentage < 80 && (
-          <span style={{ fontSize: '14px', color: '#ef4444' }}>⚠</span>
-        )}
-      </div>
-
-      {/* Breakdown tooltip */}
-      {breakdown && hoveredBucket === title && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          left: '0',
-          marginTop: '8px',
-          backgroundColor: theme.bgCard,
-          border: `1px solid ${theme.border}`,
-          borderRadius: '8px',
-          padding: '12px',
-          minWidth: '200px',
-          zIndex: 10,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
-        }}>
-          <div style={{ fontSize: '11px', color: theme.textMuted, marginBottom: '8px', fontWeight: '600' }}>
-            BREAKDOWN
+      {target > 0 ? (
+        <>
+          <div style={{ fontSize: '18px', fontWeight: '700', color: theme.text }}>
+            {money(current)} <span style={{ fontSize: '13px', fontWeight: '500', color: theme.textMuted }}>of {money(target)}</span>
           </div>
-          {Object.entries(breakdown).map(([key, value]) => (
-            <div key={key} style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              fontSize: '13px',
-              color: theme.textSecondary,
-              marginBottom: '4px'
-            }}>
-              <span style={{ textTransform: 'capitalize' }}>{key}:</span>
-              <span style={{ fontWeight: '600', color: theme.text }}>${value.toLocaleString()}</span>
+          <div style={{ fontSize: '13px', color: percentage >= 100 ? '#22c55e' : theme.textSecondary, marginTop: '2px' }}>
+            {percentage >= 100 ? '✓ Covered' : `${money(target - current)} still needed`}
+          </div>
+        </>
+      ) : (
+        <div style={{ fontSize: '14px', color: theme.textMuted }}>Nothing due this period</div>
+      )}
+
+      {breakdown && target > 0 && (
+        <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: `1px solid ${theme.border}` }}>
+          {Object.entries(breakdown).filter(([, v]) => v > 0).map(([key, value]) => (
+            <div key={key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: theme.textSecondary, marginBottom: '2px' }}>
+              <span>{key}</span>
+              <span style={{ color: theme.text }}>{money(value)}</span>
             </div>
           ))}
         </div>
@@ -387,207 +355,97 @@ export default function CashFlowWaterfall({ dealerId, period = 'current-month' }
     </div>
   );
 
-  const FlowArrow = ({ visible }) => (
-    visible ? (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0 12px'
-      }}>
-        <svg width="40" height="24" viewBox="0 0 40 24" fill="none">
-          <path
-            d="M2 12 L30 12 M30 12 L24 6 M30 12 L24 18"
-            stroke={theme.accent}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <div style={{
-          fontSize: '11px',
-          color: theme.accent,
-          marginLeft: '4px',
-          fontWeight: '600'
-        }}>
-          overflow
-        </div>
-      </div>
-    ) : (
-      <div style={{ width: '80px' }} />
-    )
-  );
+  const p = data.profit || {};
 
   return (
     <div style={cardStyle}>
       {/* Header */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '24px'
-      }}>
-        <h2 style={{
-          fontSize: '18px',
-          fontWeight: '600',
-          color: theme.text,
-          margin: 0
-        }}>
-          Cash Flow Waterfall - {periodLabels[selectedPeriod]}
-        </h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', gap: '12px', flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: '18px', fontWeight: '600', color: theme.text, margin: 0 }}>
+            Where the profit goes — {periodLabels[selectedPeriod]}
+          </h2>
+          <div style={{ fontSize: '13px', color: theme.textMuted, marginTop: '4px' }}>
+            Profit pays the bills first, then savings, then commissions.
+          </div>
+        </div>
+        <select
+          value={selectedPeriod}
+          onChange={(e) => setSelectedPeriod(e.target.value)}
+          style={{ padding: '8px 12px', backgroundColor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: '6px', fontSize: '13px', cursor: 'pointer', outline: 'none' }}
+        >
+          <option value="current-month">This Month</option>
+          <option value="last-month">Last Month</option>
+          <option value="last-3-months">Last 3 Months</option>
+          <option value="ytd">Year to Date</option>
+        </select>
+      </div>
 
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          {/* Refresh Button */}
-          <button
-            onClick={() => fetchCashFlowData()}
-            disabled={loading}
-            style={{
-              padding: '8px 12px',
-              backgroundColor: theme.bg,
-              color: theme.textSecondary,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '6px',
-              fontSize: '13px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              opacity: loading ? 0.5 : 1
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-            </svg>
-            Refresh
-          </button>
-
-          {/* Period Selector */}
-          <select
-            value={selectedPeriod}
-            onChange={(e) => setSelectedPeriod(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              backgroundColor: theme.bg,
-              color: theme.text,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '6px',
-              fontSize: '13px',
-              cursor: 'pointer',
-              outline: 'none'
-            }}
-          >
-            <option value="current-month">This Month</option>
-            <option value="last-month">Last Month</option>
-            <option value="last-3-months">Last 3 Months</option>
-            <option value="ytd">Year to Date</option>
-          </select>
+      {/* Gross profit */}
+      <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+        <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>GROSS PROFIT</div>
+        <div style={{ fontSize: '32px', fontWeight: '700', color: data.revenue > 0 ? '#22c55e' : data.revenue < 0 ? '#ef4444' : theme.text }}>
+          {money(data.revenue)}
+        </div>
+        <div style={{ fontSize: '13px', color: theme.textSecondary, marginTop: '4px' }}>
+          {p.error
+            ? "Couldn't load sales for this period. Try Refresh."
+            : p.carsSold > 0
+              ? `${p.carsSold} car${p.carsSold === 1 ? '' : 's'} sold: ${money(p.carProfit)} profit (sale price − what you paid − recon)` +
+                (p.interestIncome > 0 ? ` + ${money(p.interestIncome)} BHPH interest` : '')
+              : p.interestIncome > 0
+                ? `No cars sold yet. ${money(p.interestIncome)} BHPH interest collected.`
+                : 'No sales recorded yet. A sale counts when its deal is marked Sold, or the car is marked Sold in Inventory with a sale date.'}
         </div>
       </div>
 
-      {/* Revenue Display */}
-      <div style={{
-        marginBottom: '32px',
-        padding: '16px',
-        backgroundColor: theme.bg,
-        borderRadius: '8px',
-        border: `1px solid ${theme.border}`
-      }}>
-        <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>
-          TOTAL REVENUE
-        </div>
-        <div style={{ fontSize: '32px', fontWeight: '700', color: theme.accent }}>
-          ${data.revenue.toLocaleString()}
-        </div>
-      </div>
-
-      {/* Waterfall Buckets */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        marginBottom: '24px',
-        flexWrap: 'wrap',
-        justifyContent: 'center'
-      }}>
+      {/* Buckets */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <BucketCard
-          title="BURN RATE"
+          step={1}
+          title="Bills"
+          help="Payroll, expenses and loan payments"
           current={data.flow.toBurn}
           target={data.burnRate}
           percentage={burnPct}
           gradient="linear-gradient(135deg, #ef4444 0%, #f97316 100%)"
           breakdown={data.burnRateBreakdown}
-          onHover={() => setHoveredBucket('BURN RATE')}
-          onLeave={() => setHoveredBucket(null)}
         />
-
-        <FlowArrow visible={data.flow.toCapital > 0} />
-
         <BucketCard
-          title="CAPITAL/DEBT"
+          step={2}
+          title="Savings"
+          help="Goal: 15% of profit (at least $5,000)"
           current={data.flow.toCapital}
           target={data.capitalTarget}
           percentage={capitalPct}
           gradient="linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)"
-          breakdown={null}
-          onHover={() => setHoveredBucket('CAPITAL/DEBT')}
-          onLeave={() => setHoveredBucket(null)}
         />
-
-        <FlowArrow visible={data.flow.toSpoils > 0} />
-
         <BucketCard
-          title="SPOILS"
+          step={3}
+          title="Commissions"
+          help="Commissions owed to your team"
           current={data.flow.toSpoils}
           target={data.spoilsRequired}
           percentage={spoilsPct}
           gradient="linear-gradient(135deg, #22c55e 0%, #10b981 100%)"
-          breakdown={null}
-          onHover={() => setHoveredBucket('SPOILS')}
-          onLeave={() => setHoveredBucket(null)}
         />
       </div>
 
-      {/* Status Summary */}
-      <div style={{
-        padding: '16px',
-        backgroundColor: theme.bg,
-        borderRadius: '8px',
-        border: `1px solid ${theme.border}`
-      }}>
-        <div style={{
-          fontSize: '12px',
-          color: theme.textMuted,
-          marginBottom: '8px',
-          fontWeight: '600'
-        }}>
-          STATUS
-        </div>
-        <div style={{ fontSize: '14px', color: theme.textSecondary, lineHeight: '1.6' }}>
-          {burnMet && (
-            <span style={{ color: '#22c55e' }}>✓ Burn Rate covered</span>
-          )}
-          {!burnMet && (
-            <span style={{ color: '#ef4444' }}>⚠ Burn Rate not covered (${(data.burnRate - data.flow.toBurn).toLocaleString()} short)</span>
-          )}
-
-          {data.flow.toCapital > 0 && (
-            <span style={{ color: theme.textSecondary }}>
-              {' '} • Saving ${data.flow.toCapital.toLocaleString()}
-            </span>
-          )}
-
-          {data.flow.toSpoils >= data.spoilsRequired && (
-            <span style={{ color: '#22c55e' }}>
-              {' '} • Commissions payable
-            </span>
-          )}
-
-          {data.flow.toSpoils < data.spoilsRequired && data.spoilsRequired > 0 && (
-            <span style={{ color: '#eab308' }}>
-              {' '} • ${data.spoilsRequired.toLocaleString()} pending commissions
-            </span>
-          )}
-        </div>
+      {/* Summary */}
+      <div style={{ padding: '12px 16px', backgroundColor: theme.bg, borderRadius: '8px', border: `1px solid ${theme.border}`, fontSize: '14px', lineHeight: '1.6' }}>
+        {data.burnRate === 0 && data.revenue === 0 ? (
+          <span style={{ color: theme.textMuted }}>No sales or bills recorded for this period yet.</span>
+        ) : burnMet ? (
+          <span style={{ color: '#22c55e' }}>✓ Profit covers this period's bills</span>
+        ) : (
+          <span style={{ color: '#ef4444' }}>Bills are {money(data.burnRate - data.flow.toBurn)} more than profit so far</span>
+        )}
+        {data.flow.toCapital > 0 && <span style={{ color: theme.textSecondary }}> • {money(data.flow.toCapital)} toward savings</span>}
+        {data.spoilsRequired > 0 && (
+          <span style={{ color: data.flow.toSpoils >= data.spoilsRequired ? '#22c55e' : '#eab308' }}>
+            {' '}• {data.flow.toSpoils >= data.spoilsRequired ? 'Commissions covered' : `${money(data.spoilsRequired)} in commissions owed`}
+          </span>
+        )}
       </div>
     </div>
   );

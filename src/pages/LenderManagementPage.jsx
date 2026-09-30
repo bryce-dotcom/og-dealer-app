@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function LenderManagementPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [tab, setTab] = useState('lenders');
   const [lenders, setLenders] = useState([]);
@@ -38,6 +37,14 @@ export default function LenderManagementPage() {
     buy_rate: '', reserve_amount: '', conditions: '', decline_reason: '', notes: ''
   });
 
+  // Approval / funding details, recorded when a submission's status changes
+  const [approvalSub, setApprovalSub] = useState(null);
+  const [approvalForm, setApprovalForm] = useState({
+    status: 'approved', approved_amount: '', approved_rate: '', approved_term: '',
+    buy_rate: '', reserve_amount: '', funded_amount: '', conditions: '', decline_reason: ''
+  });
+  const approvalStatuses = ['approved', 'conditional', 'countered', 'funded', 'declined'];
+
   const lenderTypes = { bank: 'Bank', credit_union: 'Credit Union', captive: 'Captive', subprime: 'Subprime', bhph: 'BHPH', online: 'Online', other: 'Other' };
   const subStatuses = ['pending', 'approved', 'conditional', 'countered', 'declined', 'expired', 'funded'];
   const subStatusColors = {
@@ -52,11 +59,13 @@ export default function LenderManagementPage() {
     const [l, s, d, c, v, e] = await Promise.all([
       supabase.from('lenders').select('*').eq('dealer_id', dealerId).order('name'),
       supabase.from('lender_submissions').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }),
-      supabase.from('deals').select('id, customer_name, vehicle_description').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(50),
-      supabase.from('customers').select('id, first_name, last_name').eq('dealer_id', dealerId),
+      supabase.from('deals').select('id, purchaser_name, vehicle_id, customer_id, amount_financed, term_months, apr').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(200),
+      supabase.from('customers').select('id, name, first_name, last_name').eq('dealer_id', dealerId),
       supabase.from('inventory').select('id, year, make, model, stock_number').eq('dealer_id', dealerId),
       supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true)
     ]);
+    const loadErr = l.error || s.error || d.error || c.error || v.error || e.error;
+    if (loadErr) alert('Some lender data could not be loaded: ' + loadErr.message);
     setLenders(l.data || []);
     setSubmissions(s.data || []);
     setDeals(d.data || []);
@@ -91,10 +100,12 @@ export default function LenderManagementPage() {
       submission_method: form.submission_method || null,
       active: form.active, notes: form.notes || null
     };
-    if (editingLender) {
-      await supabase.from('lenders').update(payload).eq('id', editingLender.id);
-    } else {
-      await supabase.from('lenders').insert(payload);
+    const { error } = editingLender
+      ? await supabase.from('lenders').update(payload).eq('id', editingLender.id).eq('dealer_id', dealerId)
+      : await supabase.from('lenders').insert(payload);
+    if (error) {
+      alert('Could not save lender: ' + error.message);
+      return;
     }
     setShowModal(false);
     setEditingLender(null);
@@ -134,14 +145,33 @@ export default function LenderManagementPage() {
     setShowModal(true);
   };
 
-  const deleteLender = async (id) => {
-    if (!confirm('Delete this lender?')) return;
-    await supabase.from('lenders').delete().eq('id', id);
+  const deleteLender = async (lender) => {
+    const subCount = submissions.filter(s => s.lender_id === lender.id).length;
+    const msg = subCount > 0
+      ? `Delete ${lender.name}?\n\nThis also permanently deletes ${subCount} deal submission${subCount === 1 ? '' : 's'} sent to this lender (approvals, rates, reserve and funding history). This cannot be undone.\n\nTip: to hide a lender but keep its history, edit it and uncheck Active instead.`
+      : `Delete ${lender.name}? This cannot be undone.`;
+    if (!confirm(msg)) return;
+    const { error } = await supabase.from('lenders').delete().eq('id', lender.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not delete lender: ' + error.message); return; }
     fetchAll();
   };
 
+  // Picking a deal fills in the vehicle, customer, amount, term and rate from it
+  const selectDealForSubmission = (dealId) => {
+    const d = deals.find(x => String(x.id) === String(dealId));
+    setSubForm(prev => ({
+      ...prev,
+      deal_id: dealId,
+      vehicle_id: d?.vehicle_id || prev.vehicle_id,
+      customer_id: d?.customer_id ? String(d.customer_id) : prev.customer_id,
+      amount_requested: d?.amount_financed != null ? String(d.amount_financed) : prev.amount_requested,
+      term_requested: d?.term_months != null ? String(d.term_months) : prev.term_requested,
+      rate_requested: d?.apr != null ? String(d.apr) : prev.rate_requested
+    }));
+  };
+
   const handleSubmitDeal = async () => {
-    await supabase.from('lender_submissions').insert({
+    const { error } = await supabase.from('lender_submissions').insert({
       dealer_id: dealerId,
       lender_id: subForm.lender_id,
       deal_id: subForm.deal_id ? parseInt(subForm.deal_id) : null,
@@ -152,19 +182,66 @@ export default function LenderManagementPage() {
       rate_requested: subForm.rate_requested ? parseFloat(subForm.rate_requested) : null,
       status: 'pending', notes: subForm.notes || null
     });
+    if (error) { alert('Could not save submission: ' + error.message); return; }
     setShowSubModal(false);
     setSubForm({ lender_id: '', deal_id: '', customer_id: '', vehicle_id: '', amount_requested: '', term_requested: '', rate_requested: '', status: 'pending', approved_amount: '', approved_rate: '', approved_term: '', buy_rate: '', reserve_amount: '', conditions: '', decline_reason: '', notes: '' });
     fetchAll();
   };
 
-  const updateSubStatus = async (id, status) => {
+  const openApproval = (sub, status) => {
+    setApprovalSub(sub);
+    setApprovalForm({
+      status,
+      approved_amount: (sub.approved_amount ?? sub.amount_requested ?? '').toString(),
+      approved_rate: (sub.approved_rate ?? '').toString(),
+      approved_term: (sub.approved_term ?? sub.term_requested ?? '').toString(),
+      buy_rate: (sub.buy_rate ?? '').toString(),
+      reserve_amount: (sub.reserve_amount ?? '').toString(),
+      funded_amount: (sub.funded_amount ?? sub.approved_amount ?? '').toString(),
+      conditions: sub.conditions || '',
+      decline_reason: sub.decline_reason || ''
+    });
+  };
+
+  const updateSubStatus = async (sub, status) => {
+    // Approvals, fundings and declines have details worth recording
+    if (approvalStatuses.includes(status)) {
+      openApproval(sub, status);
+      return;
+    }
     const updates = { status, response_at: new Date().toISOString() };
-    if (status === 'funded') updates.funded_at = new Date().toISOString();
-    await supabase.from('lender_submissions').update(updates).eq('id', id);
+    const { error } = await supabase.from('lender_submissions').update(updates).eq('id', sub.id).eq('dealer_id', dealerId);
+    if (error) alert('Could not update status: ' + error.message);
+    fetchAll();
+  };
+
+  const saveApproval = async () => {
+    if (!approvalSub) return;
+    const num = (v) => (v === '' || v == null ? null : parseFloat(v));
+    const status = approvalForm.status;
+    const updates = { status, response_at: new Date().toISOString() };
+    if (status === 'declined') {
+      updates.decline_reason = approvalForm.decline_reason || null;
+    } else {
+      updates.approved_amount = num(approvalForm.approved_amount);
+      updates.approved_rate = num(approvalForm.approved_rate);
+      updates.approved_term = approvalForm.approved_term ? parseInt(approvalForm.approved_term) : null;
+      updates.buy_rate = num(approvalForm.buy_rate);
+      updates.reserve_amount = num(approvalForm.reserve_amount);
+      updates.conditions = approvalForm.conditions || null;
+      if (status === 'funded') {
+        updates.funded_amount = num(approvalForm.funded_amount);
+        updates.funded_at = approvalSub.funded_at || new Date().toISOString();
+      }
+    }
+    const { error } = await supabase.from('lender_submissions').update(updates).eq('id', approvalSub.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not save details: ' + error.message); return; }
+    setApprovalSub(null);
     fetchAll();
   };
 
   const getLender = (id) => lenders.find(l => l.id === id);
+  const getDeal = (id) => deals.find(d => d.id === id);
 
   const stats = {
     totalLenders: lenders.filter(l => l.active).length,
@@ -181,7 +258,7 @@ export default function LenderManagementPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Lender Management</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Manage lending partners and deal submissions</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>The banks and finance companies you send deals to, and where each loan application stands.</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={() => setShowSubModal(true)} style={{
@@ -226,7 +303,7 @@ export default function LenderManagementPage() {
       ) : tab === 'lenders' ? (
         /* Lender Cards */
         lenders.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No lenders added yet</div>
+          <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No lenders added yet. Click + Add Lender to add the banks and credit unions you send deals to.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
             {lenders.map(l => (
@@ -238,7 +315,7 @@ export default function LenderManagementPage() {
                   </div>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button onClick={() => openEditLender(l)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '12px' }}>Edit</button>
-                    <button onClick={() => deleteLender(l.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Del</button>
+                    <button onClick={() => deleteLender(l)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Del</button>
                   </div>
                 </div>
                 {l.contact_name && <div style={{ fontSize: '13px', color: theme.textSecondary }}>{l.contact_name}</div>}
@@ -260,13 +337,17 @@ export default function LenderManagementPage() {
       ) : (
         /* Submissions Table */
         submissions.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No submissions yet</div>
+          <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No submissions yet. Click Submit Deal to record a deal you sent to a lender.</div>
         ) : (
           <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'auto' }}>
+            <div style={{ padding: '10px 12px', fontSize: '12px', color: theme.textMuted, borderBottom: `1px solid ${theme.border}` }}>
+              Change the status when the lender answers. For approved or funded deals you'll be asked for the amount, rate and reserve.
+              <b> Reserve</b> = what the lender pays the dealership for bringing them the loan.
+            </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
-                  {['Lender', 'Deal', 'Requested', 'Approved', 'Rate', 'Reserve', 'Status'].map(h => (
+                  {['Lender', 'Deal', 'Requested', 'Approved', 'Rate', 'Reserve', 'Funded', 'Status', ''].map(h => (
                     <th key={h} style={{ padding: '12px', textAlign: 'left', color: theme.textSecondary, fontWeight: '600', fontSize: '12px' }}>{h}</th>
                   ))}
                 </tr>
@@ -274,16 +355,21 @@ export default function LenderManagementPage() {
               <tbody>
                 {submissions.map(sub => {
                   const lender = getLender(sub.lender_id);
+                  const deal = getDeal(sub.deal_id);
                   return (
                     <tr key={sub.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
                       <td style={{ padding: '12px', fontWeight: '600', color: theme.text }}>{lender?.name || '-'}</td>
-                      <td style={{ padding: '12px', color: theme.textSecondary }}>#{sub.deal_id || '-'}</td>
+                      <td style={{ padding: '12px', color: theme.textSecondary }}>
+                        {sub.deal_id ? `#${sub.deal_id}` : '-'}
+                        {deal?.purchaser_name && <div style={{ fontSize: '12px', color: theme.textMuted }}>{deal.purchaser_name}</div>}
+                      </td>
                       <td style={{ padding: '12px', color: theme.text }}>{sub.amount_requested ? `$${parseFloat(sub.amount_requested).toLocaleString()}` : '-'}</td>
                       <td style={{ padding: '12px', color: '#22c55e', fontWeight: '600' }}>{sub.approved_amount ? `$${parseFloat(sub.approved_amount).toLocaleString()}` : '-'}</td>
                       <td style={{ padding: '12px', color: theme.text }}>{sub.approved_rate ? `${sub.approved_rate}%` : sub.rate_requested ? `${sub.rate_requested}% req` : '-'}</td>
                       <td style={{ padding: '12px', color: '#06b6d4' }}>{sub.reserve_amount ? `$${parseFloat(sub.reserve_amount).toLocaleString()}` : '-'}</td>
+                      <td style={{ padding: '12px', color: theme.text }}>{sub.funded_amount ? `$${parseFloat(sub.funded_amount).toLocaleString()}` : '-'}</td>
                       <td style={{ padding: '12px' }}>
-                        <select value={sub.status} onChange={e => updateSubStatus(sub.id, e.target.value)} style={{
+                        <select value={sub.status} onChange={e => updateSubStatus(sub, e.target.value)} style={{
                           padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
                           backgroundColor: (subStatusColors[sub.status] || '#71717a') + '22',
                           color: subStatusColors[sub.status] || '#71717a',
@@ -291,6 +377,11 @@ export default function LenderManagementPage() {
                         }}>
                           {subStatuses.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
+                      </td>
+                      <td style={{ padding: '12px' }}>
+                        {approvalStatuses.includes(sub.status) && (
+                          <button onClick={() => openApproval(sub, sub.status)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '13px' }}>Details</button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -323,9 +414,13 @@ export default function LenderManagementPage() {
               <div><label style={labelStyle}>Base Rate %</label><input type="number" step="0.01" value={form.base_rate} onChange={e => setForm({ ...form, base_rate: e.target.value })} style={inputStyle} /></div>
               <div><label style={labelStyle}>Max Rate %</label><input type="number" step="0.01" value={form.max_rate} onChange={e => setForm({ ...form, max_rate: e.target.value })} style={inputStyle} /></div>
               <div><label style={labelStyle}>Min Credit Score</label><input type="number" value={form.min_credit_score} onChange={e => setForm({ ...form, min_credit_score: e.target.value })} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Max LTV %</label><input type="number" step="0.01" value={form.max_ltv} onChange={e => setForm({ ...form, max_ltv: e.target.value })} style={inputStyle} /></div>
+              <div><label style={labelStyle}>Max LTV %</label><input type="number" step="0.01" value={form.max_ltv} onChange={e => setForm({ ...form, max_ltv: e.target.value })} style={inputStyle} />
+                <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '4px' }}>LTV (loan-to-value) = loan amount ÷ the car's value. 120 means they'll lend up to 1.2× the car's value.</div></div>
               <div><label style={labelStyle}>Max Term New (mo)</label><input type="number" value={form.max_term_new} onChange={e => setForm({ ...form, max_term_new: e.target.value })} style={inputStyle} /></div>
               <div><label style={labelStyle}>Max Term Used (mo)</label><input type="number" value={form.max_term_used} onChange={e => setForm({ ...form, max_term_used: e.target.value })} style={inputStyle} /></div>
+              <div style={{ gridColumn: '1 / -1', fontSize: '11px', color: theme.textMuted, marginBottom: '-8px' }}>
+                Reserve = what this lender pays the dealership for bringing them a loan. Some pay a flat dollar amount per deal, others a percent of the amount financed.
+              </div>
               <div><label style={labelStyle}>Reserve Flat $</label><input type="number" step="0.01" value={form.reserve_flat} onChange={e => setForm({ ...form, reserve_flat: e.target.value })} style={inputStyle} /></div>
               <div><label style={labelStyle}>Reserve %</label><input type="number" step="0.01" value={form.reserve_percent} onChange={e => setForm({ ...form, reserve_percent: e.target.value })} style={inputStyle} /></div>
 
@@ -337,6 +432,10 @@ export default function LenderManagementPage() {
                 {['dealertrack', 'routeone', 'cudl', 'manual', 'portal', 'email', 'fax'].map(m => <option key={m} value={m}>{m}</option>)}
               </select></div>
               <div><label style={labelStyle}>Portal URL</label><input value={form.portal_url} onChange={e => setForm({ ...form, portal_url: e.target.value })} style={inputStyle} /></div>
+              <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: theme.text, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} />
+                Active (uncheck to hide this lender from Submit Deal but keep its history)
+              </label>
 
               <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Notes</label><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} style={{ ...inputStyle, minHeight: '50px', resize: 'vertical' }} /></div>
             </div>
@@ -360,9 +459,13 @@ export default function LenderManagementPage() {
               <div><label style={labelStyle}>Lender *</label><select value={subForm.lender_id} onChange={e => setSubForm({ ...subForm, lender_id: e.target.value })} style={inputStyle}>
                 <option value="">Select lender</option>{lenders.filter(l => l.active).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select></div>
-              <div><label style={labelStyle}>Deal</label><select value={subForm.deal_id} onChange={e => setSubForm({ ...subForm, deal_id: e.target.value })} style={inputStyle}>
-                <option value="">Select deal</option>{deals.map(d => <option key={d.id} value={d.id}>#{d.id} - {d.customer_name}</option>)}
-              </select></div>
+              <div><label style={labelStyle}>Deal</label><select value={subForm.deal_id} onChange={e => selectDealForSubmission(e.target.value)} style={inputStyle}>
+                <option value="">Select deal</option>{deals.map(d => {
+                  const v = vehicles.find(x => x.id === d.vehicle_id);
+                  return <option key={d.id} value={d.id}>#{d.id} - {d.purchaser_name || 'No buyer name'}{v ? ` (${[v.year, v.make, v.model].filter(Boolean).join(' ')})` : ''}</option>;
+                })}
+              </select>
+                <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '4px' }}>Picking a deal fills in the vehicle, amount financed, term and rate.</div></div>
               <div><label style={labelStyle}>Vehicle</label><select value={subForm.vehicle_id} onChange={e => setSubForm({ ...subForm, vehicle_id: e.target.value })} style={inputStyle}>
                 <option value="">Select vehicle</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.stock_number} - {v.year} {v.make} {v.model}</option>)}
               </select></div>
@@ -376,6 +479,46 @@ export default function LenderManagementPage() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '20px' }}>
               <button onClick={() => setShowSubModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button>
               <button onClick={handleSubmitDeal} disabled={!subForm.lender_id} style={{ padding: '10px 20px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', opacity: !subForm.lender_id ? 0.5 : 1 }}>Submit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approval / Funding Details Modal */}
+      {approvalSub && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '20px' }}>
+          <div style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, width: '100%', maxWidth: '500px', maxHeight: '85vh', overflow: 'auto', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '700', color: theme.text, margin: 0, textTransform: 'capitalize' }}>
+                {approvalForm.status === 'declined' ? 'Declined' : `${approvalForm.status} - details`}
+              </h2>
+              <button onClick={() => setApprovalSub(null)} style={{ background: 'none', border: 'none', color: theme.textSecondary, cursor: 'pointer', fontSize: '20px' }}>×</button>
+            </div>
+            <p style={{ fontSize: '13px', color: theme.textSecondary, margin: '0 0 16px' }}>
+              {getLender(approvalSub.lender_id)?.name || 'Lender'}{approvalSub.deal_id ? ` · Deal #${approvalSub.deal_id}` : ''}. Leave blank anything you don't know yet.
+            </p>
+            {approvalForm.status === 'declined' ? (
+              <div><label style={labelStyle}>Decline reason</label>
+                <textarea value={approvalForm.decline_reason} onChange={e => setApprovalForm({ ...approvalForm, decline_reason: e.target.value })} style={{ ...inputStyle, minHeight: '60px', resize: 'vertical' }} /></div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div><label style={labelStyle}>Approved amount $</label><input type="number" step="0.01" value={approvalForm.approved_amount} onChange={e => setApprovalForm({ ...approvalForm, approved_amount: e.target.value })} style={inputStyle} /></div>
+                <div><label style={labelStyle}>Customer rate %</label><input type="number" step="0.01" value={approvalForm.approved_rate} onChange={e => setApprovalForm({ ...approvalForm, approved_rate: e.target.value })} style={inputStyle} /></div>
+                <div><label style={labelStyle}>Term (mo)</label><input type="number" value={approvalForm.approved_term} onChange={e => setApprovalForm({ ...approvalForm, approved_term: e.target.value })} style={inputStyle} /></div>
+                <div><label style={labelStyle}>Buy rate %</label><input type="number" step="0.01" value={approvalForm.buy_rate} onChange={e => setApprovalForm({ ...approvalForm, buy_rate: e.target.value })} style={inputStyle} /></div>
+                <div style={{ gridColumn: '1 / -1', fontSize: '11px', color: theme.textMuted, marginTop: '-4px' }}>Buy rate = the lender's rate before the dealership's markup. The customer rate is what the buyer actually pays.</div>
+                <div><label style={labelStyle}>Reserve $</label><input type="number" step="0.01" value={approvalForm.reserve_amount} onChange={e => setApprovalForm({ ...approvalForm, reserve_amount: e.target.value })} style={inputStyle} /></div>
+                {approvalForm.status === 'funded' && (
+                  <div><label style={labelStyle}>Funded amount $</label><input type="number" step="0.01" value={approvalForm.funded_amount} onChange={e => setApprovalForm({ ...approvalForm, funded_amount: e.target.value })} style={inputStyle} /></div>
+                )}
+                <div style={{ gridColumn: '1 / -1', fontSize: '11px', color: theme.textMuted, marginTop: '-4px' }}>Reserve = what the lender pays the dealership for this loan. Funded amount = what the lender actually paid out.</div>
+                <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Conditions (what the lender still needs)</label>
+                  <textarea value={approvalForm.conditions} onChange={e => setApprovalForm({ ...approvalForm, conditions: e.target.value })} style={{ ...inputStyle, minHeight: '50px', resize: 'vertical' }} placeholder="e.g., proof of income, 2 references" /></div>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '20px' }}>
+              <button onClick={() => setApprovalSub(null)} style={{ padding: '10px 20px', backgroundColor: 'transparent', color: theme.textSecondary, border: `1px solid ${theme.border}`, borderRadius: '8px', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={saveApproval} style={{ padding: '10px 20px', backgroundColor: theme.accent, color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>Save</button>
             </div>
           </div>
         </div>

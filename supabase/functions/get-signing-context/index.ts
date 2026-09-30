@@ -54,14 +54,35 @@ serve(async (req) => {
       : Promise.resolve({ data: null }),
   ]);
 
-  // Normalize doc list from either `documents` or `generated_docs` column.
-  const docs = Array.isArray(deal.documents) ? deal.documents
+  // Source of truth is the generated_documents table (newest copy of each form).
+  // Older deals only have a JSON list on the deal row, so fall back to that.
+  const { data: genRows } = await supabase
+    .from("generated_documents")
+    .select("form_number, form_name, storage_path, public_url, generated_at")
+    .eq("deal_id", deal.id)
+    .eq("dealer_id", deal.dealer_id)
+    .order("generated_at", { ascending: false });
+  const newestPerForm = new Map<string, any>();
+  (genRows || []).forEach((g: any) => {
+    const k = g.form_number || g.storage_path;
+    if (!newestPerForm.has(k)) newestPerForm.set(k, g);
+  });
+  const docs = newestPerForm.size ? [...newestPerForm.values()]
+    : Array.isArray(deal.documents) ? deal.documents
     : Array.isArray(deal.generated_docs) ? deal.generated_docs
     : [];
+  // Stored links are signed URLs that expire after 24h; mint fresh ones so a
+  // buyer opening the link days later can still read the paperwork.
+  const paths = docs.map((d: any) => d.storage_path).filter(Boolean);
+  const fresh: Record<string, string> = {};
+  if (paths.length) {
+    const { data: signed } = await supabase.storage.from("deal-documents").createSignedUrls(paths, 12 * 3600);
+    (signed || []).forEach((s: any) => { if (s.signedUrl && s.path) fresh[s.path] = s.signedUrl; });
+  }
   const docSummary = docs.map((d: any) => ({
     form_number: d.form_number || d.formNumber || "",
     form_name: d.form_name || d.formName || d.name || "",
-    public_url: d.public_url || d.url || null,
+    public_url: (d.storage_path && fresh[d.storage_path]) || d.public_url || d.url || null,
   }));
 
   return new Response(JSON.stringify({

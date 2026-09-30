@@ -3,6 +3,12 @@ import { useTheme } from '../components/Layout';
 import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 
+// Many customers only have `name` set (first_name/last_name are often null).
+const displayName = (c) => (c && (c.name || [c.first_name, c.last_name].filter(Boolean).join(' '))) || '';
+
+// NOTE: the customer-facing portal does not exist yet (there is no /portal route and no customer login),
+// so this page only records who should get access once it launches. Nothing is sent to customers.
+
 export default function CustomerPortalPage() {
   const { theme } = useTheme();
   const { dealerId, customers } = useStore();
@@ -30,10 +36,12 @@ export default function CustomerPortalPage() {
 
   async function loadData() {
     setLoading(true);
-    const [{ data: access }, { data: payments }] = await Promise.all([
+    const [{ data: access, error: accessError }, { data: payments, error: paymentsError }] = await Promise.all([
       supabase.from('customer_portal_access').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }),
       supabase.from('customer_portal_payments').select('*').eq('dealer_id', dealerId).order('created_at', { ascending: false }).limit(50)
     ]);
+    if (accessError) console.error('Error loading portal access:', accessError);
+    if (paymentsError) console.error('Error loading portal payments:', paymentsError);
     setPortalAccess(access || []);
     setPortalPayments(payments || []);
     setLoading(false);
@@ -58,7 +66,7 @@ export default function CustomerPortalPage() {
 
   async function handleInvite() {
     try {
-      if (!inviteForm.customer_id || !inviteForm.email) {
+      if (!inviteForm.customer_id || !inviteForm.email.trim()) {
         alert('Please select a customer and enter their email.');
         return;
       }
@@ -66,7 +74,7 @@ export default function CustomerPortalPage() {
       const { error } = await supabase.from('customer_portal_access').insert({
         dealer_id: dealerId,
         customer_id: parseInt(inviteForm.customer_id),
-        email: inviteForm.email,
+        email: inviteForm.email.trim(),
         active: true,
         can_view_payments: inviteForm.can_view_payments,
         can_make_payments: inviteForm.can_make_payments,
@@ -81,23 +89,27 @@ export default function CustomerPortalPage() {
       setInviteForm({ customer_id: '', email: '', can_view_payments: true, can_make_payments: true, can_view_documents: true, can_view_appointments: true, can_schedule_appointments: false, can_message_dealer: true });
       loadData();
     } catch (err) {
-      alert('Failed to create portal access: ' + err.message);
+      alert('Failed to save portal access: ' + err.message);
     }
   }
 
   async function toggleAccess(id, active) {
-    await supabase.from('customer_portal_access').update({ active: !active }).eq('id', id);
+    const { error } = await supabase.from('customer_portal_access').update({ active: !active, updated_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update access: ' + error.message); return; }
     loadData();
   }
 
   async function updatePermissions(id, perms) {
-    await supabase.from('customer_portal_access').update(perms).eq('id', id);
+    const { error } = await supabase.from('customer_portal_access').update({ ...perms, updated_at: new Date().toISOString() }).eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to update permissions: ' + error.message); return false; }
     loadData();
+    return true;
   }
 
   async function handleRevokeAccess(id) {
-    if (!confirm('Revoke this customer\'s portal access?')) return;
-    await supabase.from('customer_portal_access').delete().eq('id', id);
+    if (!confirm('Remove this customer\'s portal access? This cannot be undone.')) return;
+    const { error } = await supabase.from('customer_portal_access').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to remove access: ' + error.message); return; }
     loadData();
   }
 
@@ -107,8 +119,7 @@ export default function CustomerPortalPage() {
     const s = search.toLowerCase();
     filteredAccess = filteredAccess.filter(a =>
       a.email?.toLowerCase().includes(s) ||
-      a.customer?.first_name?.toLowerCase().includes(s) ||
-      a.customer?.last_name?.toLowerCase().includes(s)
+      displayName(a.customer).toLowerCase().includes(s)
     );
   }
 
@@ -124,12 +135,18 @@ export default function CustomerPortalPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Customer Portal</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>Self-service portal for customer payments & documents</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', marginTop: '4px' }}>A future website where customers can log in to see payments and documents. Choose here who will get access.</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={() => setShowSettingsModal(true)} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>Portal Settings</button>
-          <button onClick={() => setShowInviteModal(true)} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ Invite Customer</button>
+          <button onClick={() => { setSelectedCustomer(null); setShowSettingsModal(true); }} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>Portal Settings</button>
+          <button onClick={() => setShowInviteModal(true)} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>+ Give Customer Access</button>
         </div>
+      </div>
+
+      {/* Honesty notice: there is no customer-facing portal yet */}
+      <div style={{ marginBottom: '24px', padding: '14px 16px', borderRadius: '10px', border: '1px solid #eab30860', backgroundColor: '#eab30815', color: theme.text, fontSize: '13px', lineHeight: '1.5' }}>
+        <strong style={{ color: '#eab308' }}>The customer portal isn't live yet.</strong> There is no customer login page, so customers can't sign in, make payments,
+        or see documents. You can choose who should get access for when it launches, but no invite or email is sent to the customer.
       </div>
 
       {/* Stats */}
@@ -140,7 +157,7 @@ export default function CustomerPortalPage() {
           { label: 'Logged In (30d)', value: recentLogins, color: '#3b82f6' },
           { label: 'Total Payments', value: totalPayments, color: '#8b5cf6' },
           { label: 'Payment Volume', value: `$${totalPaymentAmount.toLocaleString()}`, color: '#22c55e' },
-          { label: 'Eligible', value: customersWithoutAccess.length, color: theme.accent }
+          { label: 'Without Access', value: customersWithoutAccess.length, color: theme.accent }
         ].map((s, i) => (
           <div key={i} style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '10px', padding: '16px' }}>
             <div style={{ fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>{s.label}</div>
@@ -167,7 +184,9 @@ export default function CustomerPortalPage() {
           {filteredAccess.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
               <div style={{ fontSize: '48px', marginBottom: '12px' }}>🔑</div>
-              <p>No customers have portal access yet. Invite your first customer.</p>
+              <p>{search
+                ? 'No one with portal access matches your search.'
+                : 'No customers have portal access yet. Click "+ Give Customer Access" to set someone up for when the portal launches.'}</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -176,11 +195,11 @@ export default function CustomerPortalPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: theme.accentBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.accent, fontWeight: '700', fontSize: '16px' }}>
-                        {(access.customer?.first_name || access.email || '?')[0].toUpperCase()}
+                        {(displayName(access.customer) || access.email || '?')[0].toUpperCase()}
                       </div>
                       <div>
                         <div style={{ color: theme.text, fontWeight: '600', fontSize: '15px' }}>
-                          {access.customer ? `${access.customer.first_name} ${access.customer.last_name || ''}` : 'Unknown Customer'}
+                          {displayName(access.customer) || 'Unknown Customer'}
                         </div>
                         <div style={{ color: theme.textMuted, fontSize: '13px' }}>{access.email}</div>
                       </div>
@@ -201,8 +220,8 @@ export default function CustomerPortalPage() {
                         <button onClick={() => toggleAccess(access.id, access.active)} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: access.active ? '#f59e0b' : '#22c55e', cursor: 'pointer', fontSize: '12px' }}>
                           {access.active ? 'Disable' : 'Enable'}
                         </button>
-                        <button onClick={() => { setSelectedCustomer(access); setShowSettingsModal(true); }} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px' }}>Perms</button>
-                        <button onClick={() => handleRevokeAccess(access.id)} style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Revoke</button>
+                        <button onClick={() => { setSelectedCustomer(access); setShowSettingsModal(true); }} title="Choose what this customer will be allowed to see and do" style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: theme.textSecondary, cursor: 'pointer', fontSize: '12px' }}>Permissions</button>
+                        <button onClick={() => handleRevokeAccess(access.id)} title="Remove this customer's portal access" style={{ padding: '6px 10px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '6px', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>Remove</button>
                       </div>
                     </div>
                   </div>
@@ -235,7 +254,7 @@ export default function CustomerPortalPage() {
           {portalPayments.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
               <div style={{ fontSize: '48px', marginBottom: '12px' }}>💳</div>
-              <p>No portal payments yet.</p>
+              <p>No portal payments. Online payments aren't available until the customer portal launches.</p>
             </div>
           ) : (
             <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '12px', overflow: 'hidden' }}>
@@ -253,7 +272,7 @@ export default function CustomerPortalPage() {
                     const statusColors = { pending: '#f59e0b', processing: '#3b82f6', completed: '#22c55e', failed: '#ef4444', refunded: '#8b5cf6' };
                     return (
                       <tr key={payment.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
-                        <td style={{ padding: '12px 14px', color: theme.text }}>{cust ? `${cust.first_name} ${cust.last_name || ''}` : `ID: ${payment.customer_id}`}</td>
+                        <td style={{ padding: '12px 14px', color: theme.text }}>{displayName(cust) || `ID: ${payment.customer_id}`}</td>
                         <td style={{ padding: '12px 14px', color: theme.text, fontWeight: '700' }}>${parseFloat(payment.amount).toLocaleString()}</td>
                         <td style={{ padding: '12px 14px', color: theme.textSecondary, fontSize: '13px', textTransform: 'uppercase' }}>{payment.payment_method}</td>
                         <td style={{ padding: '12px 14px' }}>
@@ -274,7 +293,8 @@ export default function CustomerPortalPage() {
       {showInviteModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '16px', padding: '24px', width: '500px' }}>
-            <h2 style={{ color: theme.text, fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>Invite Customer to Portal</h2>
+            <h2 style={{ color: theme.text, fontSize: '18px', fontWeight: '700', marginBottom: '8px' }}>Give Customer Portal Access</h2>
+            <p style={{ color: theme.textMuted, fontSize: '13px', margin: '0 0 20px' }}>This saves their access for when the portal launches. Nothing is sent to the customer.</p>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '12px', color: theme.textMuted, marginBottom: '4px' }}>Customer *</label>
@@ -284,7 +304,7 @@ export default function CustomerPortalPage() {
               }} style={{ width: '100%', padding: '10px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text }}>
                 <option value="">Select customer...</option>
                 {customersWithoutAccess.map(c => (
-                  <option key={c.id} value={c.id}>{c.first_name} {c.last_name || ''} {c.email ? `(${c.email})` : ''}</option>
+                  <option key={c.id} value={c.id}>{displayName(c) || 'Unnamed customer'} {c.email ? `(${c.email})` : ''}</option>
                 ))}
               </select>
             </div>
@@ -313,7 +333,7 @@ export default function CustomerPortalPage() {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button onClick={() => setShowInviteModal(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={handleInvite} disabled={!inviteForm.customer_id || !inviteForm.email} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontWeight: '600', opacity: inviteForm.customer_id && inviteForm.email ? 1 : 0.5 }}>Send Invite</button>
+              <button onClick={handleInvite} disabled={!inviteForm.customer_id || !inviteForm.email} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontWeight: '600', opacity: inviteForm.customer_id && inviteForm.email ? 1 : 0.5 }}>Save Access</button>
             </div>
           </div>
         </div>
@@ -324,8 +344,9 @@ export default function CustomerPortalPage() {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '16px', padding: '24px', width: '450px' }}>
             <h2 style={{ color: theme.text, fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>
-              Permissions: {selectedCustomer.customer?.first_name || selectedCustomer.email}
+              Permissions: {displayName(selectedCustomer.customer) || selectedCustomer.email}
             </h2>
+            <p style={{ color: theme.textMuted, fontSize: '13px', margin: '-12px 0 12px' }}>What this customer will be allowed to do once the portal launches. Changes save right away.</p>
             {[
               { key: 'can_view_payments', label: 'View payment history' },
               { key: 'can_make_payments', label: 'Make payments online' },
@@ -335,9 +356,12 @@ export default function CustomerPortalPage() {
               { key: 'can_message_dealer', label: 'Send messages to dealer' }
             ].map(perm => (
               <label key={perm.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
-                <input type="checkbox" checked={selectedCustomer[perm.key]} onChange={e => {
-                  updatePermissions(selectedCustomer.id, { [perm.key]: e.target.checked });
-                  setSelectedCustomer({ ...selectedCustomer, [perm.key]: e.target.checked });
+                <input type="checkbox" checked={!!selectedCustomer[perm.key]} onChange={async e => {
+                  const checked = e.target.checked;
+                  const previous = selectedCustomer;
+                  setSelectedCustomer({ ...selectedCustomer, [perm.key]: checked });
+                  const ok = await updatePermissions(selectedCustomer.id, { [perm.key]: checked });
+                  if (!ok) setSelectedCustomer(previous);
                 }} style={{ accentColor: theme.accent }} />
                 <span style={{ color: theme.textSecondary, fontSize: '14px' }}>{perm.label}</span>
               </label>
@@ -354,15 +378,12 @@ export default function CustomerPortalPage() {
           <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '16px', padding: '24px', width: '500px' }}>
             <h2 style={{ color: theme.text, fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>Portal Settings</h2>
             <div style={{ backgroundColor: theme.bg, borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
-              <h3 style={{ color: theme.text, fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Portal URL</h3>
-              <div style={{ padding: '10px', backgroundColor: theme.bgCard, borderRadius: '6px', border: `1px solid ${theme.border}`, color: theme.accent, fontSize: '13px', wordBreak: 'break-all' }}>
-                {window.location.origin}/portal/{dealerId}
-              </div>
-              <p style={{ color: theme.textMuted, fontSize: '12px', marginTop: '8px' }}>Share this link with customers to access their portal.</p>
+              <h3 style={{ color: theme.text, fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Portal Link</h3>
+              <p style={{ color: theme.textMuted, fontSize: '13px', margin: 0 }}>Not available yet. The customer login page hasn't been built, so there is no link to share with customers.</p>
             </div>
             <div style={{ backgroundColor: theme.bg, borderRadius: '8px', padding: '16px' }}>
-              <h3 style={{ color: theme.text, fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Payment Methods</h3>
-              <p style={{ color: theme.textMuted, fontSize: '13px' }}>Stripe integration required for online payments. Configure in Settings.</p>
+              <h3 style={{ color: theme.text, fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Online Payments</h3>
+              <p style={{ color: theme.textMuted, fontSize: '13px' }}>Not available yet. Customers can't pay online through the portal. Keep taking payments the usual way.</p>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
               <button onClick={() => setShowSettingsModal(false)} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontWeight: '600' }}>Close</button>

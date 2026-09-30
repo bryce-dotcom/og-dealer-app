@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { useStore } from '../lib/store';
 import { parseCSV, fileToBase64, downloadCSV, formatValidationErrors, getDataTypeLabel, getDataTypeIcon, validateFile, getConfidenceBadgeColor, formatConfidence } from '../lib/importHelpers';
 
 export default function DataImportPage() {
@@ -32,7 +33,24 @@ export default function DataImportPage() {
   const [importProgress, setImportProgress] = useState(0);
 
   const fileInputRef = useRef(null);
-  const dealerId = parseInt(localStorage.getItem('dealer_id'));
+  // Dealer id comes from the app store (nothing ever writes localStorage 'dealer_id')
+  const { dealerId } = useStore();
+
+  // Required fields per data type. Customers need a full name OR first + last name
+  // (matches what validate-import-data accepts).
+  const computeMissingRequired = (mappedFields, type) => {
+    const fields = new Set(mappedFields.filter(Boolean));
+    if (type === 'customers') {
+      return fields.has('name') || (fields.has('first_name') && fields.has('last_name'))
+        ? []
+        : ['name (or first name + last name)'];
+    }
+    const schemas = {
+      inventory: ['vin', 'year', 'make', 'model'],
+      deals: ['vehicle_id', 'purchaser_name', 'date_of_sale', 'price']
+    };
+    return (schemas[type] || []).filter(f => !fields.has(f));
+  };
 
   // ============================================
   // STEP 1: File Upload
@@ -40,6 +58,17 @@ export default function DataImportPage() {
   const handleFileSelect = async (e) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
+
+    // Only CSV is parsed. Excel files must be saved as CSV first.
+    if (!selectedFile.name.toLowerCase().endsWith('.csv')) {
+      setError('Please upload a CSV file. In Excel, use File > Save As > "CSV (Comma delimited)", then upload that file.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    if (!dealerId) {
+      setError('Your dealership could not be identified. Please refresh the page and try again.');
+      return;
+    }
 
     const validation = validateFile(selectedFile);
     if (!validation.valid) {
@@ -123,8 +152,11 @@ export default function DataImportPage() {
       }
 
       setMappings(data.mappings);
-      setRequiredFieldsPresent(data.required_fields_present);
-      setMissingRequired(data.missing_required || []);
+      // Recheck required fields on our side (the mapper only accepts "name" for customers,
+      // but first + last name is fine too)
+      const missing = computeMissingRequired((data.mappings || []).map(m => m.db_field), detectedType);
+      setRequiredFieldsPresent(missing.length === 0);
+      setMissingRequired(missing);
       setStep(3);
 
     } catch (err) {
@@ -150,14 +182,7 @@ export default function DataImportPage() {
       .concat([newDbField])
       .filter(f => f);
 
-    const schemas = {
-      inventory: ['vin', 'year', 'make', 'model'],
-      deals: ['vehicle_id', 'purchaser_name', 'date_of_sale', 'price'],
-      customers: ['name']
-    };
-
-    const required = schemas[detectedType] || [];
-    const missing = required.filter(f => !mappedFields.includes(f));
+    const missing = computeMissingRequired(mappedFields, detectedType);
 
     setMissingRequired(missing);
     setRequiredFieldsPresent(missing.length === 0);
@@ -292,7 +317,7 @@ export default function DataImportPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Import Data</h1>
         <p className="text-gray-600 mt-1">
-          Import historical inventory, sales, or customer data from CSV files with AI-powered column mapping
+          Bring in your old inventory, sales, or customer lists from a CSV file. We'll match your columns to OG Dealer's fields for you to review.
         </p>
       </div>
 
@@ -344,7 +369,7 @@ export default function DataImportPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,.xlsx,.xls"
+              accept=".csv"
               onChange={handleFileSelect}
               className="hidden"
               id="file-upload"
@@ -357,10 +382,10 @@ export default function DataImportPage() {
                 <path strokeLinecap="round" strokeLinejoin="width" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
               <span className="text-lg font-medium text-gray-700">
-                {file ? file.name : 'Click to upload or drag and drop'}
+                {file ? file.name : 'Click to choose a file'}
               </span>
               <span className="text-sm text-gray-500 mt-1">
-                CSV, XLSX, or XLS (up to 10MB)
+                CSV files only (export from Excel as CSV), up to 10MB
               </span>
             </label>
           </div>
@@ -427,6 +452,17 @@ export default function DataImportPage() {
             </div>
           </div>
 
+          {confidence < 0.5 && (
+            <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-yellow-800 font-medium">
+                We can't tell what kind of data this file has (less than 50% sure), so we can't continue.
+              </p>
+              <p className="text-sm text-yellow-700 mt-1">
+                Make sure the first row is column headers, e.g. VIN, Year, Make, Model for inventory, or Name, Phone, Email for customers. Then click Cancel and upload the file again.
+              </p>
+            </div>
+          )}
+
           <div className="flex gap-4">
             <button
               onClick={resetImport}
@@ -437,6 +473,7 @@ export default function DataImportPage() {
             <button
               onClick={proceedToMapping}
               disabled={loading || confidence < 0.5}
+              title={confidence < 0.5 ? 'Disabled: the file type could not be detected with at least 50% confidence' : undefined}
               className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
             >
               {loading ? 'Mapping Columns...' : 'Continue to Column Mapping'}
@@ -520,7 +557,7 @@ export default function DataImportPage() {
                     )}
                     {detectedType === 'customers' && (
                       <>
-                        <optgroup label="Required">
+                        <optgroup label="Required: Full Name, or First + Last Name">
                           <option value="name">Full Name</option>
                           <option value="first_name">First Name</option>
                           <option value="last_name">Last Name</option>

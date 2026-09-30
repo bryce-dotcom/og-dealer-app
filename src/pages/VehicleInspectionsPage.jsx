@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function VehicleInspectionsPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [inspections, setInspections] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -88,6 +87,7 @@ export default function VehicleInspectionsPage() {
   };
 
   const handleSave = async () => {
+    if (!form.vehicle_id) { alert('Please pick a Vehicle.'); return; }
     const emp = employees.find(e => e.id === parseInt(form.inspector_id));
     const issuesFound = [...form.exterior, ...form.interior, ...form.mechanical, ...form.tires_brakes]
       .filter(i => i.condition === 'poor' || i.condition === 'fair').length;
@@ -114,11 +114,10 @@ export default function VehicleInspectionsPage() {
       notes: form.notes || null
     };
 
-    if (editingInspection) {
-      await supabase.from('vehicle_inspections').update(payload).eq('id', editingInspection.id);
-    } else {
-      await supabase.from('vehicle_inspections').insert(payload);
-    }
+    const { error } = editingInspection
+      ? await supabase.from('vehicle_inspections').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingInspection.id).eq('dealer_id', dealerId)
+      : await supabase.from('vehicle_inspections').insert(payload);
+    if (error) { alert('Failed to save inspection: ' + error.message); return; }
     setShowModal(false);
     setEditingInspection(null);
     resetForm();
@@ -153,8 +152,9 @@ export default function VehicleInspectionsPage() {
   };
 
   const deleteInspection = async (id) => {
-    if (!confirm('Delete this inspection?')) return;
-    await supabase.from('vehicle_inspections').delete().eq('id', id);
+    if (!confirm('Delete this inspection? This cannot be undone.')) return;
+    const { error } = await supabase.from('vehicle_inspections').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Failed to delete inspection: ' + error.message); return; }
     fetchInspections();
   };
 
@@ -184,7 +184,7 @@ export default function VehicleInspectionsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Vehicle Inspections</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Inspection checklists and condition reports</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Checklists for looking a car over when you buy it, take it in trade, or deliver it, so you know what needs fixing</p>
         </div>
         <button onClick={() => { resetForm(); setEditingInspection(null); setShowModal(true); }} style={{
           padding: '10px 20px', backgroundColor: theme.accent, color: '#fff',
@@ -227,7 +227,9 @@ export default function VehicleInspectionsPage() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: theme.textSecondary }}>Loading...</div>
       ) : filtered.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No inspections found</div>
+        <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+          {inspections.length === 0 ? 'No inspections yet. Click "+ New Inspection" to fill out a checklist for a car.' : 'No inspections of this type. Pick "All" to see every inspection.'}
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {filtered.map(insp => {
@@ -244,12 +246,12 @@ export default function VehicleInspectionsPage() {
                   }}>{insp.pass === true ? 'P' : insp.pass === false ? 'F' : '?'}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: '600', color: theme.text, fontSize: '14px' }}>
-                      {veh ? `${veh.year} ${veh.make} ${veh.model}` : insp.vehicle_id?.substring(0, 8)}
+                      {veh ? `${veh.year} ${veh.make} ${veh.model}${veh.stock_number ? ` #${veh.stock_number}` : ''}` : 'Vehicle no longer in inventory'}
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '2px' }}>
                       <span style={{ fontSize: '12px', padding: '1px 6px', borderRadius: '4px', backgroundColor: theme.accentBg, color: theme.accent }}>{inspectionTypes[insp.inspection_type]}</span>
                       {insp.overall_condition && <span style={{ fontSize: '12px', color: conditionColors[insp.overall_condition] }}>{insp.overall_condition}</span>}
-                      {insp.score && <span style={{ fontSize: '12px', color: theme.textMuted }}>Score: {insp.score}</span>}
+                      {insp.score != null && <span style={{ fontSize: '12px', color: theme.textMuted }}>Score: {insp.score}/100</span>}
                       <span style={{ fontSize: '12px', color: theme.textMuted }}>{new Date(insp.inspected_at).toLocaleDateString()}</span>
                     </div>
                   </div>
@@ -297,7 +299,7 @@ export default function VehicleInspectionsPage() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
               <div><label style={labelStyle}>Vehicle *</label><select value={form.vehicle_id} onChange={e => setForm({ ...form, vehicle_id: e.target.value })} style={inputStyle}>
-                <option value="">Select</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.stock_number} - {v.year} {v.make} {v.model}</option>)}
+                <option value="">Select</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.stock_number ? `#${v.stock_number} - ` : ''}{v.year} {v.make} {v.model}</option>)}
               </select></div>
               <div><label style={labelStyle}>Type</label><select value={form.inspection_type} onChange={e => setForm({ ...form, inspection_type: e.target.value })} style={inputStyle}>
                 {Object.entries(inspectionTypes).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -314,6 +316,9 @@ export default function VehicleInspectionsPage() {
               <div><label style={labelStyle}>Score (0-100)</label><input type="number" min="0" max="100" value={form.score} onChange={e => setForm({ ...form, score: e.target.value })} style={inputStyle} /></div>
               <div><label style={labelStyle}>Mileage</label><input type="number" value={form.mileage} onChange={e => setForm({ ...form, mileage: e.target.value })} style={inputStyle} /></div>
               <div><label style={labelStyle}>Est. Repair Cost</label><input type="number" step="0.01" value={form.estimated_repair_cost} onChange={e => setForm({ ...form, estimated_repair_cost: e.target.value })} style={inputStyle} /></div>
+            </div>
+            <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '10px', lineHeight: 1.5 }}>
+              <strong>Condition</strong> = your overall grade of the car (excellent to salvage). <strong>Pass/Fail</strong> = did it pass this inspection (e.g. safety or emissions); leave N/A if it doesn't apply. <strong>Score</strong> = optional 0-100 number if you use a point system. Fill in whichever you use; none are required.
             </div>
 
             {/* Section Checklists */}

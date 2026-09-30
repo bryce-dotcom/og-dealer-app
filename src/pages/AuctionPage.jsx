@@ -5,8 +5,9 @@ import { useTheme } from '../components/Layout';
 
 export default function AuctionPage() {
   const { theme } = useTheme();
-  const { dealer, inventory } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
+  // Today's LOCAL date as YYYY-MM-DD (toISOString gives the UTC date)
+  const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
   const [activeTab, setActiveTab] = useState('transactions');
   const [accounts, setAccounts] = useState([]);
@@ -21,7 +22,7 @@ export default function AuctionPage() {
   const [filterType, setFilterType] = useState('all');
   const [filterAuction, setFilterAuction] = useState('all');
   const [acctForm, setAcctForm] = useState({ auction_name: '', location: '', contact_name: '', contact_phone: '', contact_email: '', account_number: '', buyer_number: '', buy_fee: '', sell_fee: '' });
-  const [txnForm, setTxnForm] = useState({ auction_id: '', transaction_type: 'buy', transaction_date: new Date().toISOString().split('T')[0], vin: '', year: '', make: '', model: '', mileage: '', hammer_price: '', buy_fee: '', sell_fee: '', transport_cost: '', run_number: '', lane: '', condition_grade: '' });
+  const [txnForm, setTxnForm] = useState({ auction_id: '', transaction_type: 'buy', transaction_date: localToday(), vin: '', year: '', make: '', model: '', mileage: '', hammer_price: '', buy_fee: '', sell_fee: '', transport_cost: '', run_number: '', lane: '', condition_grade: '' });
   const [buyerForm, setBuyerForm] = useState({ name: '', company: '', phone: '', email: '', dealer_license: '', price_range_min: '', price_range_max: '' });
 
   useEffect(() => { if (dealerId) loadData(); }, [dealerId]);
@@ -40,10 +41,11 @@ export default function AuctionPage() {
   };
 
   const formatCurrency = (amt) => amt == null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amt);
-  const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
+  // Date-only values (YYYY-MM-DD) are parsed as LOCAL dates so they don't show as the day before
+  const formatDate = (d) => d ? new Date(typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d + 'T00:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 
   const handleSaveAccount = async () => {
-    if (!acctForm.auction_name) return;
+    if (!acctForm.auction_name) { alert('Auction Name is required.'); return; }
     const payload = {
       dealer_id: dealerId,
       auction_name: acctForm.auction_name,
@@ -56,11 +58,10 @@ export default function AuctionPage() {
       buy_fee: acctForm.buy_fee ? parseFloat(acctForm.buy_fee) : 0,
       sell_fee: acctForm.sell_fee ? parseFloat(acctForm.sell_fee) : 0,
     };
-    if (editingAccount) {
-      await supabase.from('auction_accounts').update(payload).eq('id', editingAccount.id);
-    } else {
-      await supabase.from('auction_accounts').insert(payload);
-    }
+    const { error } = editingAccount
+      ? await supabase.from('auction_accounts').update(payload).eq('id', editingAccount.id).eq('dealer_id', dealerId)
+      : await supabase.from('auction_accounts').insert(payload);
+    if (error) { alert('Failed to save auction: ' + error.message); return; }
     setShowAccountModal(false);
     setEditingAccount(null);
     setAcctForm({ auction_name: '', location: '', contact_name: '', contact_phone: '', contact_email: '', account_number: '', buyer_number: '', buy_fee: '', sell_fee: '' });
@@ -68,12 +69,16 @@ export default function AuctionPage() {
   };
 
   const handleSaveTxn = async () => {
-    if (!txnForm.auction_id || !txnForm.hammer_price) return;
+    const missing = [];
+    if (!txnForm.auction_id) missing.push('Auction');
+    if (!txnForm.transaction_date) missing.push('Date');
+    if (!txnForm.hammer_price) missing.push('Winning bid / sale price');
+    if (missing.length) { alert('Please fill in: ' + missing.join(', ')); return; }
     const hammer = parseFloat(txnForm.hammer_price) || 0;
     const buyFee = parseFloat(txnForm.buy_fee) || 0;
     const sellFee = parseFloat(txnForm.sell_fee) || 0;
     const transport = parseFloat(txnForm.transport_cost) || 0;
-    await supabase.from('auction_transactions').insert({
+    const { error } = await supabase.from('auction_transactions').insert({
       dealer_id: dealerId,
       auction_id: txnForm.auction_id,
       transaction_type: txnForm.transaction_type,
@@ -95,13 +100,14 @@ export default function AuctionPage() {
       status: 'completed',
       arbitration_status: 'none',
     });
+    if (error) { alert('Failed to save transaction: ' + error.message); return; }
     setShowTxnModal(false);
-    setTxnForm({ auction_id: '', transaction_type: 'buy', transaction_date: new Date().toISOString().split('T')[0], vin: '', year: '', make: '', model: '', mileage: '', hammer_price: '', buy_fee: '', sell_fee: '', transport_cost: '', run_number: '', lane: '', condition_grade: '' });
+    setTxnForm({ auction_id: '', transaction_type: 'buy', transaction_date: localToday(), vin: '', year: '', make: '', model: '', mileage: '', hammer_price: '', buy_fee: '', sell_fee: '', transport_cost: '', run_number: '', lane: '', condition_grade: '' });
     loadData();
   };
 
   const handleSaveBuyer = async () => {
-    if (!buyerForm.name) return;
+    if (!buyerForm.name) { alert('Name is required.'); return; }
     const payload = {
       dealer_id: dealerId,
       name: buyerForm.name,
@@ -112,11 +118,10 @@ export default function AuctionPage() {
       price_range_min: buyerForm.price_range_min ? parseFloat(buyerForm.price_range_min) : null,
       price_range_max: buyerForm.price_range_max ? parseFloat(buyerForm.price_range_max) : null,
     };
-    if (editingBuyer) {
-      await supabase.from('wholesale_buyers').update(payload).eq('id', editingBuyer.id);
-    } else {
-      await supabase.from('wholesale_buyers').insert(payload);
-    }
+    const { error } = editingBuyer
+      ? await supabase.from('wholesale_buyers').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingBuyer.id).eq('dealer_id', dealerId)
+      : await supabase.from('wholesale_buyers').insert(payload);
+    if (error) { alert('Failed to save buyer: ' + error.message); return; }
     setShowBuyerModal(false);
     setEditingBuyer(null);
     setBuyerForm({ name: '', company: '', phone: '', email: '', dealer_license: '', price_range_min: '', price_range_max: '' });
@@ -144,9 +149,9 @@ export default function AuctionPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>Auction & Wholesale</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Manage auction buying/selling and wholesale buyers</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Log cars you buy or sell at auction, the auctions you use, and dealers who buy your wholesale cars</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button onClick={() => { setEditingBuyer(null); setBuyerForm({ name: '', company: '', phone: '', email: '', dealer_license: '', price_range_min: '', price_range_max: '' }); setShowBuyerModal(true); }} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>+ Buyer</button>
           <button onClick={() => { setEditingAccount(null); setAcctForm({ auction_name: '', location: '', contact_name: '', contact_phone: '', contact_email: '', account_number: '', buyer_number: '', buy_fee: '', sell_fee: '' }); setShowAccountModal(true); }} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.textSecondary, cursor: 'pointer', fontSize: '13px' }}>+ Auction</button>
           <button onClick={() => setShowTxnModal(true)} style={{ padding: '10px 16px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>+ Transaction</button>
@@ -154,7 +159,7 @@ export default function AuctionPage() {
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '24px' }}>
         {[
           { label: 'Vehicles Bought', val: buys.length, color: theme.text },
           { label: 'Total Spent', val: formatCurrency(totalBought), color: '#ef4444' },
@@ -195,14 +200,18 @@ export default function AuctionPage() {
             </select>
           </div>
           {filteredTxns.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No transactions found</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+              {transactions.length === 0
+                ? (accounts.length === 0 ? 'No auction transactions yet. Click "+ Auction" to add the auction you use, then "+ Transaction" to log a car you bought or sold there.' : 'No auction transactions yet. Click "+ Transaction" to log a car you bought or sold at auction.')
+                : 'No transactions match these filters.'}
+            </div>
           ) : (
             <div style={card}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
-                    {['Date', 'Type', 'Auction', 'Vehicle', 'Hammer', 'Fees', 'Transport', 'Total', 'Status'].map(h => (
-                      <th key={h} style={{ padding: '10px 8px', textAlign: 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
+                    {['Date', 'Type', 'Auction', 'Vehicle', 'Winning bid / sale price', 'Fees', 'Transport', 'Total', 'Status'].map(h => (
+                      <th key={h} title={h === 'Winning bid / sale price' ? 'The final bid when the auctioneer\'s hammer drops (before fees)' : h === 'Total' ? 'Buys: price + buy fee + transport. Sells: price minus sell fee.' : undefined} style={{ padding: '10px 8px', textAlign: 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -222,8 +231,8 @@ export default function AuctionPage() {
                         <td style={{ padding: '10px 8px', color: theme.textSecondary, fontSize: '13px' }}>{formatCurrency(t.transport_cost)}</td>
                         <td style={{ padding: '10px 8px', color: theme.accent, fontSize: '13px', fontWeight: '600' }}>{formatCurrency(t.total_cost || t.total_proceeds)}</td>
                         <td style={{ padding: '10px 8px' }}>
-                          <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: t.arbitration_status !== 'none' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)', color: t.arbitration_status !== 'none' ? '#ef4444' : '#22c55e' }}>
-                            {t.arbitration_status !== 'none' ? `Arb: ${t.arbitration_status}` : t.status}
+                          <span title={t.arbitration_status && t.arbitration_status !== 'none' ? 'Arbitration: a dispute with the auction over the car (e.g. undisclosed damage), asking to return it or get money back' : undefined} style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: t.arbitration_status && t.arbitration_status !== 'none' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)', color: t.arbitration_status && t.arbitration_status !== 'none' ? '#ef4444' : '#22c55e' }}>
+                            {t.arbitration_status && t.arbitration_status !== 'none' ? `Arbitration (dispute): ${t.arbitration_status}` : t.status}
                           </span>
                         </td>
                       </tr>
@@ -239,7 +248,7 @@ export default function AuctionPage() {
       {activeTab === 'auctions' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
           {accounts.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No auction accounts</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No auctions yet. Click "+ Auction" to add an auction you buy or sell at (e.g. Manheim, ADESA).</div>
           ) : accounts.map(a => {
             const aTxns = transactions.filter(t => t.auction_id === a.id);
             return (
@@ -265,7 +274,7 @@ export default function AuctionPage() {
       {activeTab === 'buyers' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
           {buyers.length === 0 ? (
-            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No wholesale buyers</div>
+            <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted, gridColumn: '1 / -1' }}>No wholesale buyers yet. Click "+ Buyer" to add a dealer or person who buys cars from you wholesale.</div>
           ) : buyers.map(b => (
             <div key={b.id} style={card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
@@ -339,7 +348,7 @@ export default function AuctionPage() {
               </div>
             </div>
             {[
-              { key: 'transaction_date', label: 'Date', type: 'date' },
+              { key: 'transaction_date', label: 'Date *', type: 'date' },
               { key: 'vin', label: 'VIN', type: 'text' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '12px' }}>
@@ -356,17 +365,19 @@ export default function AuctionPage() {
               ))}
             </div>
             {[
-              { key: 'hammer_price', label: 'Hammer Price ($) *', type: 'number' },
-              { key: 'buy_fee', label: 'Buy Fee ($)', type: 'number' },
-              { key: 'sell_fee', label: 'Sell Fee ($)', type: 'number' },
+              { key: 'mileage', label: 'Mileage', type: 'number' },
+              { key: 'hammer_price', label: 'Winning bid / sale price ($) *', type: 'number', help: 'The final bid when the hammer drops, before auction fees' },
+              { key: 'buy_fee', label: 'Buy Fee ($)', type: 'number', help: 'Fee the auction charges the buyer' },
+              { key: 'sell_fee', label: 'Sell Fee ($)', type: 'number', help: 'Fee the auction charges the seller' },
               { key: 'transport_cost', label: 'Transport ($)', type: 'number' },
-              { key: 'run_number', label: 'Run #', type: 'text' },
+              { key: 'run_number', label: 'Run #', type: 'text', help: 'The car\'s run/lot number at the auction' },
               { key: 'lane', label: 'Lane', type: 'text' },
-              { key: 'condition_grade', label: 'Condition Grade', type: 'text' },
+              { key: 'condition_grade', label: 'Condition Grade', type: 'text', help: 'The auction\'s condition score, e.g. 3.5' },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>{f.label}</label>
                 <input type={f.type} value={txnForm[f.key]} onChange={e => setTxnForm(p => ({ ...p, [f.key]: e.target.value }))} style={inputStyle} />
+                {f.help && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '3px' }}>{f.help}</div>}
               </div>
             ))}
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>

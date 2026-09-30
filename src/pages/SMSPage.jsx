@@ -3,8 +3,15 @@ import { useStore } from '../lib/store';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../components/Layout';
 
+// Texting is NOT connected: nothing in OG Dealer sends or receives SMS yet.
+// This page only keeps a record of texts staff send from their own phones.
+// (The old Twilio settings form stored the auth token from the browser; it was removed on purpose.)
+
+const displayName = (c) => (c && (c.name || [c.first_name, c.last_name].filter(Boolean).join(' '))) || 'Unnamed customer';
+const smsHref = (phone) => `sms:${String(phone || '').replace(/[^\d+]/g, '')}`;
+
 export default function SMSPage() {
-  const { dealerId, customers, employees } = useStore();
+  const { dealerId, customers, currentEmployee } = useStore();
   const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
   const [conversations, setConversations] = useState([]);
@@ -13,22 +20,11 @@ export default function SMSPage() {
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [search, setSearch] = useState('');
-  const [smsSettings, setSmsSettings] = useState(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settingsForm, setSettingsForm] = useState({
-    twilio_phone_number: '',
-    twilio_account_sid: '',
-    twilio_auth_token: '',
-    auto_payment_reminders: true,
-    reminder_days_before: 3,
-    auto_appointment_reminders: true,
-  });
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
     if (dealerId) {
       loadConversations();
-      loadSettings();
     }
   }, [dealerId]);
 
@@ -40,35 +36,17 @@ export default function SMSPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  async function loadSettings() {
-    const { data } = await supabase
-      .from('sms_settings')
-      .select('*')
-      .eq('dealer_id', dealerId)
-      .maybeSingle();
-    if (data) {
-      setSmsSettings(data);
-      setSettingsForm({
-        twilio_phone_number: data.twilio_phone_number || '',
-        twilio_account_sid: data.twilio_account_sid || '',
-        twilio_auth_token: data.twilio_auth_token || '',
-        auto_payment_reminders: data.auto_payment_reminders ?? true,
-        reminder_days_before: data.reminder_days_before || 3,
-        auto_appointment_reminders: data.auto_appointment_reminders ?? true,
-      });
-    }
-  }
-
   async function loadConversations() {
     try {
       setLoading(true);
       // Get recent messages grouped by customer
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sms_messages')
-        .select('*, customers(id, name, phone)')
+        .select('*, customers(id, name, first_name, last_name, phone)')
         .eq('dealer_id', dealerId)
         .order('created_at', { ascending: false })
         .limit(500);
+      if (error) throw error;
 
       // Group by customer
       const grouped = {};
@@ -100,76 +78,75 @@ export default function SMSPage() {
   }
 
   async function loadMessages(customerId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('sms_messages')
       .select('*')
       .eq('dealer_id', dealerId)
       .eq('customer_id', customerId)
       .order('created_at', { ascending: true })
       .limit(100);
+    if (error) console.error('Error loading messages:', error);
     setMessages(data || []);
   }
 
-  async function handleSendMessage() {
-    if (!newMessage.trim() || !selectedCustomer?.phone) return;
+  // Saves a record of a text the staff member sent from their own phone. This does NOT send anything.
+  async function handleLogMessage() {
+    const body = newMessage.trim();
+    if (!body) return;
+    if (!selectedCustomer?.phone) {
+      alert('This customer has no phone number on file. Add one on the Customers page first.');
+      return;
+    }
 
     try {
       setSending(true);
 
-      // Save message to database
       const { error } = await supabase.from('sms_messages').insert({
         dealer_id: dealerId,
         customer_id: selectedCustomer.id,
         direction: 'outbound',
-        from_number: smsSettings?.twilio_phone_number || 'pending',
+        from_number: 'staff phone',
         to_number: selectedCustomer.phone,
-        body: newMessage.trim(),
-        status: smsSettings?.is_active ? 'queued' : 'sent',
+        body,
+        // provider 'manual' = logged by staff, not sent by OG Dealer (no provider_message_id).
+        status: 'sent',
+        provider: 'manual',
         message_type: 'manual',
+        sent_by: currentEmployee?.id || null,
+        sent_by_name: currentEmployee?.name || null,
       });
-
       if (error) throw error;
 
-      // Log interaction
-      await supabase.from('customer_interactions').insert({
+      // Add to the customer's history (not critical - the text log above already saved)
+      const { error: logError } = await supabase.from('customer_interactions').insert({
         dealer_id: dealerId,
         customer_id: selectedCustomer.id,
         interaction_type: 'sms',
         direction: 'outbound',
-        summary: `SMS sent: ${newMessage.trim().substring(0, 80)}...`,
-        details: newMessage.trim(),
+        summary: `Text logged (sent from staff phone): ${body.length > 80 ? body.substring(0, 80) + '...' : body}`,
+        details: body,
+        employee_id: currentEmployee?.id || null,
+        employee_name: currentEmployee?.name || null,
       });
+      if (logError) console.warn('Text logged, but adding it to the customer history failed:', logError);
 
       setNewMessage('');
       loadMessages(selectedCustomer.id);
       loadConversations();
     } catch (error) {
-      alert('Failed to send: ' + error.message);
+      alert('Could not log text: ' + error.message);
     } finally {
       setSending(false);
     }
   }
 
-  async function saveSettings() {
-    try {
-      const payload = {
-        dealer_id: dealerId,
-        ...settingsForm,
-        is_active: !!settingsForm.twilio_account_sid && !!settingsForm.twilio_auth_token,
-      };
-
-      if (smsSettings?.id) {
-        await supabase.from('sms_settings').update(payload).eq('id', smsSettings.id);
-      } else {
-        await supabase.from('sms_settings').insert(payload);
-      }
-
-      alert('SMS settings saved');
-      setShowSettings(false);
-      loadSettings();
-    } catch (error) {
-      alert('Failed to save: ' + error.message);
-    }
+  function outboundStatusLabel(msg) {
+    if (msg.provider === 'manual') return 'Logged';
+    if (!msg.provider_message_id) return 'Not sent';
+    if (msg.status === 'delivered') return 'Delivered';
+    if (msg.status === 'sent') return 'Sent';
+    if (msg.status === 'failed') return 'Failed';
+    return 'Not sent';
   }
 
   function timeAgo(dateStr) {
@@ -180,8 +157,9 @@ export default function SMSPage() {
     return `${Math.floor(s / 86400)}d`;
   }
 
+  const searchLower = search.toLowerCase();
   const filteredConversations = conversations.filter(c =>
-    !search || c.customer?.name?.toLowerCase().includes(search.toLowerCase()) ||
+    !search || displayName(c.customer).toLowerCase().includes(searchLower) ||
     c.customer?.phone?.includes(search)
   );
 
@@ -189,25 +167,24 @@ export default function SMSPage() {
   const existingCustomerIds = new Set(conversations.map(c => c.customer?.id));
   const newCustomerOptions = (customers || []).filter(c =>
     c.phone && !existingCustomerIds.has(c.id) &&
-    (!search || c.name?.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search))
+    (!search || displayName(c).toLowerCase().includes(searchLower) || c.phone.includes(search))
   );
 
   return (
     <div style={{ height: 'calc(100vh - 0px)', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div style={{ padding: '20px 24px', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '20px 24px', borderBottom: `1px solid ${theme.border}` }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>SMS Messaging</h1>
           <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>
-            Send texts to customers {smsSettings?.is_active ? '(Twilio connected)' : '(messages saved locally)'}
+            Keep a record of the texts you trade with customers, so the whole team can see them.
           </p>
         </div>
-        <button
-          onClick={() => setShowSettings(true)}
-          style={{ padding: '8px 16px', backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px', cursor: 'pointer' }}
-        >
-          Settings
-        </button>
+        <div style={{ marginTop: '12px', padding: '12px 14px', borderRadius: '8px', border: '1px solid #eab30860', backgroundColor: '#eab30815', color: theme.text, fontSize: '13px', lineHeight: '1.5' }}>
+          <strong style={{ color: '#eab308' }}>Texting isn't connected yet.</strong> OG Dealer can't send or receive texts on its own.
+          To text a customer, tap <strong>Text from my phone</strong> to open your phone's messaging app. Then type what you sent below
+          and click <strong>Log Text</strong> to save a copy here. Automatic payment and appointment reminders are not running either.
+        </div>
       </div>
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -234,7 +211,7 @@ export default function SMSPage() {
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <span style={{ fontWeight: '600', fontSize: '14px' }}>{conv.customer?.name}</span>
+                  <span style={{ fontWeight: '600', fontSize: '14px' }}>{displayName(conv.customer)}</span>
                   <span style={{ color: theme.textMuted, fontSize: '12px' }}>{timeAgo(conv.lastMessage.created_at)}</span>
                 </div>
                 <div style={{ color: theme.textSecondary, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -248,6 +225,12 @@ export default function SMSPage() {
               </div>
             ))}
 
+            {search && filteredConversations.length === 0 && newCustomerOptions.length === 0 && (
+              <div style={{ padding: '24px 16px', textAlign: 'center', color: theme.textMuted, fontSize: '13px' }}>
+                No customers with a phone number match "{search}".
+              </div>
+            )}
+
             {/* New conversation starters */}
             {search && newCustomerOptions.length > 0 && (
               <>
@@ -260,7 +243,7 @@ export default function SMSPage() {
                     onClick={() => setSelectedCustomer(c)}
                     style={{ padding: '10px 16px', cursor: 'pointer', borderBottom: `1px solid ${theme.border}` }}
                   >
-                    <div style={{ fontWeight: '600', fontSize: '14px' }}>{c.name}</div>
+                    <div style={{ fontWeight: '600', fontSize: '14px' }}>{displayName(c)}</div>
                     <div style={{ color: theme.textMuted, fontSize: '12px' }}>{c.phone}</div>
                   </div>
                 ))}
@@ -269,8 +252,8 @@ export default function SMSPage() {
 
             {!loading && filteredConversations.length === 0 && !search && (
               <div style={{ padding: '40px 20px', textAlign: 'center', color: theme.textMuted }}>
-                <p>No conversations yet</p>
-                <p style={{ fontSize: '13px' }}>Search for a customer to start texting</p>
+                <p>No logged texts yet</p>
+                <p style={{ fontSize: '13px' }}>Type a customer's name or phone in the search box above to pick them.</p>
               </div>
             )}
           </div>
@@ -283,10 +266,13 @@ export default function SMSPage() {
               {/* Chat Header */}
               <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <h2 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>{selectedCustomer.name}</h2>
+                  <h2 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>{displayName(selectedCustomer)}</h2>
                   <p style={{ color: theme.textMuted, fontSize: '13px', margin: '2px 0 0' }}>{selectedCustomer.phone}</p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
+                  <a href={smsHref(selectedCustomer.phone)} title="Opens the texting app on this device (works best on a phone)" style={{ padding: '8px 12px', backgroundColor: '#3b82f620', color: '#3b82f6', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: '600' }}>
+                    Text from my phone
+                  </a>
                   <a href={`tel:${selectedCustomer.phone}`} style={{ padding: '8px 12px', backgroundColor: '#22c55e20', color: '#22c55e', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: '600' }}>
                     Call
                   </a>
@@ -295,6 +281,11 @@ export default function SMSPage() {
 
               {/* Messages */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+                {messages.length === 0 && (
+                  <div style={{ textAlign: 'center', color: theme.textMuted, fontSize: '13px', padding: '40px 20px' }}>
+                    No texts logged for this customer yet. After you text them from your phone, type what you sent below and click Log Text.
+                  </div>
+                )}
                 {messages.map(msg => (
                   <div key={msg.id} style={{
                     display: 'flex',
@@ -317,8 +308,8 @@ export default function SMSPage() {
                       }}>
                         {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         {msg.direction === 'outbound' && (
-                          <span style={{ marginLeft: '6px' }}>
-                            {msg.status === 'delivered' ? '✓✓' : msg.status === 'sent' ? '✓' : msg.status === 'failed' ? '!' : '...'}
+                          <span style={{ marginLeft: '6px' }} title={msg.provider === 'manual' ? 'Sent from a staff phone and logged here. OG Dealer did not send it.' : undefined}>
+                            {outboundStatusLabel(msg)}{msg.sent_by_name ? ` by ${msg.sent_by_name}` : ''}
                           </span>
                         )}
                       </div>
@@ -328,28 +319,34 @@ export default function SMSPage() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Compose */}
-              <div style={{ padding: '16px', borderTop: `1px solid ${theme.border}`, display: 'flex', gap: '8px' }}>
-                <input
-                  type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                  placeholder="Type a message..."
-                  style={{ flex: 1, padding: '12px 16px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '24px', color: theme.text, fontSize: '14px', outline: 'none' }}
-                />
-                <button
-                  onClick={handleSendMessage}
-                  disabled={sending || !newMessage.trim()}
-                  style={{
-                    padding: '12px 20px', backgroundColor: theme.accent, color: '#fff',
-                    borderRadius: '24px', border: 'none', fontWeight: '600', fontSize: '14px',
-                    cursor: sending || !newMessage.trim() ? 'not-allowed' : 'pointer',
-                    opacity: sending || !newMessage.trim() ? 0.5 : 1,
-                  }}
-                >
-                  {sending ? '...' : 'Send'}
-                </button>
+              {/* Log a text (does not send) */}
+              <div style={{ padding: '16px', borderTop: `1px solid ${theme.border}` }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleLogMessage()}
+                    placeholder="Type what you texted the customer..."
+                    style={{ flex: 1, padding: '12px 16px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '24px', color: theme.text, fontSize: '14px', outline: 'none' }}
+                  />
+                  <button
+                    onClick={handleLogMessage}
+                    disabled={sending || !newMessage.trim()}
+                    title="Saves a copy of a text you sent from your own phone. This does NOT send a text."
+                    style={{
+                      padding: '12px 20px', backgroundColor: theme.accent, color: '#fff',
+                      borderRadius: '24px', border: 'none', fontWeight: '600', fontSize: '14px',
+                      cursor: sending || !newMessage.trim() ? 'not-allowed' : 'pointer',
+                      opacity: sending || !newMessage.trim() ? 0.5 : 1,
+                    }}
+                  >
+                    {sending ? 'Saving...' : 'Log Text'}
+                  </button>
+                </div>
+                <div style={{ color: theme.textMuted, fontSize: '12px', marginTop: '6px', paddingLeft: '4px' }}>
+                  Log Text only saves a note here. It does not send anything to the customer.
+                </div>
               </div>
             </>
           ) : (
@@ -358,65 +355,13 @@ export default function SMSPage() {
                 <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" style={{ marginBottom: '12px', opacity: 0.5 }}>
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
-                <p style={{ fontSize: '16px' }}>Select a conversation</p>
-                <p style={{ fontSize: '13px' }}>or search for a customer to start texting</p>
+                <p style={{ fontSize: '16px' }}>Pick a customer</p>
+                <p style={{ fontSize: '13px' }}>Choose a conversation on the left, or search for a customer to log a text.</p>
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* Settings Modal */}
-      {showSettings && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={() => setShowSettings(false)}>
-          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: theme.bgCard, borderRadius: '16px', border: `1px solid ${theme.border}`, padding: '32px', width: '500px', maxHeight: '80vh', overflowY: 'auto' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px' }}>SMS Settings</h2>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: theme.textSecondary }}>Twilio Phone Number</label>
-                <input type="text" value={settingsForm.twilio_phone_number} onChange={(e) => setSettingsForm({ ...settingsForm, twilio_phone_number: e.target.value })}
-                  placeholder="+1234567890" style={{ width: '100%', padding: '10px 12px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: theme.textSecondary }}>Account SID</label>
-                <input type="text" value={settingsForm.twilio_account_sid} onChange={(e) => setSettingsForm({ ...settingsForm, twilio_account_sid: e.target.value })}
-                  placeholder="ACxxxxxxx" style={{ width: '100%', padding: '10px 12px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: theme.textSecondary }}>Auth Token</label>
-                <input type="password" value={settingsForm.twilio_auth_token} onChange={(e) => setSettingsForm({ ...settingsForm, twilio_auth_token: e.target.value })}
-                  placeholder="••••••••" style={{ width: '100%', padding: '10px 12px', backgroundColor: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} />
-              </div>
-
-              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Automation</h3>
-                {[
-                  { key: 'auto_payment_reminders', label: 'Auto payment reminders', desc: `Send ${settingsForm.reminder_days_before} days before due date` },
-                  { key: 'auto_appointment_reminders', label: 'Auto appointment reminders', desc: '24 hours before appointment' },
-                ].map(({ key, label, desc }) => (
-                  <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: '500' }}>{label}</div>
-                      <div style={{ fontSize: '12px', color: theme.textMuted }}>{desc}</div>
-                    </div>
-                    <button onClick={() => setSettingsForm({ ...settingsForm, [key]: !settingsForm[key] })}
-                      style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', cursor: 'pointer', backgroundColor: settingsForm[key] ? theme.accent : theme.border, position: 'relative' }}>
-                      <div style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#fff', position: 'absolute', top: '2px', transition: 'left 0.2s', left: settingsForm[key] ? '22px' : '2px' }} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
-                <button onClick={() => setShowSettings(false)} style={{ padding: '10px 20px', backgroundColor: 'transparent', border: `1px solid ${theme.border}`, borderRadius: '8px', color: theme.text, cursor: 'pointer' }}>Cancel</button>
-                <button onClick={saveSettings} style={{ padding: '10px 20px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', fontWeight: '600', cursor: 'pointer' }}>Save Settings</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

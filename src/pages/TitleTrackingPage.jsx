@@ -5,8 +5,15 @@ import { useTheme } from '../components/Layout';
 
 export default function TitleTrackingPage() {
   const { theme } = useTheme();
-  const { dealer, inventory, employees } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId, inventory, employees } = useStore();
+  // Today's LOCAL date as YYYY-MM-DD (toISOString gives the UTC date)
+  const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  // When a title moves to a status, stamp that step's date (only if it isn't already filled in)
+  const statusDateField = { received: 'title_received_date', at_dmv: 'sent_to_dmv_date', issued: 'new_title_issued_date', mailed: 'mailed_to_customer_date', delivered: 'delivered_date' };
+  const stampForStatus = (status, existing = {}) => {
+    const field = statusDateField[status];
+    return field && !existing[field] ? { [field]: localToday() } : {};
+  };
 
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -54,15 +61,16 @@ export default function TitleTrackingPage() {
   };
 
   const formatCurrency = (amt) => amt == null ? '-' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amt);
-  const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
+  // Date-only values (YYYY-MM-DD) are parsed as LOCAL dates so they don't show as the day before
+  const formatDate = (d) => d ? new Date(typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d + 'T00:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 
   const getVehicleTitle = (vid) => {
     const v = inventory?.find(i => i.id === vid);
-    return v ? `${v.year} ${v.make} ${v.model}` : vid;
+    return v ? `${v.year} ${v.make} ${v.model}${v.stock_number ? ` #${v.stock_number}` : ''}` : vid;
   };
 
   const handleSave = async () => {
-    if (!form.vehicle_id) return;
+    if (!form.vehicle_id) { alert('Please pick a Vehicle.'); return; }
     const totalFees = (parseFloat(form.title_fee) || 0) + (parseFloat(form.registration_fee) || 0) + (parseFloat(form.plate_fee) || 0) + (parseFloat(form.sales_tax) || 0);
     const payload = {
       dealer_id: dealerId,
@@ -92,10 +100,14 @@ export default function TitleTrackingPage() {
       notes: form.notes || null,
       problem_description: form.problem_description || null,
     };
-    if (editing) {
-      await supabase.from('title_tracking').update(payload).eq('id', editing.id);
-    } else {
-      await supabase.from('title_tracking').insert(payload);
+    // Stamp the date for the chosen status if it's missing (e.g. mailed/delivered, which have no date box)
+    Object.assign(payload, stampForStatus(form.title_status, { ...(editing || {}), ...payload }));
+    const { error } = editing
+      ? await supabase.from('title_tracking').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editing.id).eq('dealer_id', dealerId)
+      : await supabase.from('title_tracking').insert(payload);
+    if (error) {
+      alert('Failed to save title record: ' + (error.code === '23505' ? 'this vehicle is already being tracked. Edit its existing record instead.' : error.message));
+      return;
     }
     setShowModal(false);
     setEditing(null);
@@ -145,11 +157,10 @@ export default function TitleTrackingPage() {
   };
 
   const handleUpdateStatus = async (id, newStatus) => {
-    const updates = { title_status: newStatus };
-    if (newStatus === 'received') updates.title_received_date = new Date().toISOString().split('T')[0];
-    if (newStatus === 'at_dmv') updates.sent_to_dmv_date = new Date().toISOString().split('T')[0];
-    if (newStatus === 'issued') updates.new_title_issued_date = new Date().toISOString().split('T')[0];
-    await supabase.from('title_tracking').update(updates).eq('id', id);
+    const rec = records.find(r => r.id === id) || {};
+    const updates = { title_status: newStatus, updated_at: new Date().toISOString(), ...stampForStatus(newStatus, rec) };
+    const { error } = await supabase.from('title_tracking').update(updates).eq('id', id).eq('dealer_id', dealerId);
+    if (error) alert('Failed to update status: ' + error.message);
     loadData();
   };
 
@@ -177,7 +188,7 @@ export default function TitleTrackingPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ color: theme.text, fontSize: '24px', fontWeight: '700', margin: 0 }}>Title & Registration</h1>
-          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Track title status, temp tags, plates, and DMV paperwork</p>
+          <p style={{ color: theme.textMuted, fontSize: '14px', margin: '4px 0 0' }}>Follow each car's title and plates through the DMV until the customer has them. Temp tag = the temporary paper plate; Lien = a loan on the car that must be released for a clean title.</p>
         </div>
         <button onClick={() => { setEditing(null); resetForm(); setShowModal(true); }} style={{ padding: '10px 16px', backgroundColor: theme.accent, border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
           + Track Vehicle
@@ -185,7 +196,7 @@ export default function TitleTrackingPage() {
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '24px' }}>
         {[
           { label: 'Total Tracked', val: records.length, color: theme.text },
           { label: 'Pending', val: pendingCount, color: '#eab308' },
@@ -235,14 +246,16 @@ export default function TitleTrackingPage() {
 
       {/* Records Table */}
       {filtered.length === 0 ? (
-        <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>No title records found</div>
+        <div style={{ ...card, textAlign: 'center', padding: '40px', color: theme.textMuted }}>
+          {records.length === 0 ? 'No title records yet. Click "+ Track Vehicle" to start tracking a car\'s title and plates.' : 'No title records match these filters.'}
+        </div>
       ) : (
         <div style={card}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${theme.border}` }}>
                 {['Vehicle', 'Title Status', 'Title #', 'Lien', 'Temp Tag', 'Tag Expiry', 'Plate', 'Registration', 'Fees', ''].map(h => (
-                  <th key={h} style={{ padding: '10px 8px', textAlign: 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
+                  <th key={h} title={h === 'Lien' ? 'Lien: a loan on the car. The lender (lien holder) must release it before the title is clean.' : h === 'Temp Tag' ? 'Temp tag: the temporary paper plate the car drives on until real plates arrive' : h === 'Title Status' ? 'Held = you are intentionally keeping the title (e.g. until a BHPH loan is paid off)' : undefined} style={{ padding: '10px 8px', textAlign: 'left', color: theme.textMuted, fontSize: '12px', fontWeight: '600' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -294,8 +307,8 @@ export default function TitleTrackingPage() {
 
       {/* Add/Edit Modal */}
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }} onClick={() => setShowModal(false)}>
-          <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '16px', padding: '24px', width: '600px', maxWidth: '90vw', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: '16px', padding: '24px', width: '600px', maxWidth: '90vw', maxHeight: '85vh', overflowY: 'auto' }}>
             <h3 style={{ color: theme.text, fontSize: '18px', fontWeight: '600', marginBottom: '20px' }}>{editing ? 'Edit Title Record' : 'Track New Vehicle'}</h3>
 
             {/* Vehicle */}
@@ -304,7 +317,7 @@ export default function TitleTrackingPage() {
               <select value={form.vehicle_id} onChange={e => setForm(p => ({ ...p, vehicle_id: e.target.value }))} style={inputStyle} disabled={!!editing}>
                 <option value="">Select vehicle...</option>
                 {(inventory || []).map(v => (
-                  <option key={v.id} value={v.id}>{v.year} {v.make} {v.model} - #{v.unit_id}</option>
+                  <option key={v.id} value={v.id}>{v.year} {v.make} {v.model}{v.stock_number ? ` - #${v.stock_number}` : ''}{v.status ? ` (${v.status})` : ''}</option>
                 ))}
               </select>
             </div>
@@ -325,6 +338,7 @@ export default function TitleTrackingPage() {
                 <select value={form.title_status} onChange={e => setForm(p => ({ ...p, title_status: e.target.value }))} style={inputStyle}>
                   {titleStatuses.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
+                {form.title_status === 'held' && <div style={{ color: theme.textMuted, fontSize: '11px', marginTop: '3px' }}>Held = you are keeping the title on purpose (e.g. until a BHPH loan is paid off).</div>}
               </div>
               <div>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Assigned To</label>
@@ -348,7 +362,8 @@ export default function TitleTrackingPage() {
             </div>
 
             {/* Lien */}
-            <div style={{ color: theme.accent, fontSize: '13px', fontWeight: '600', marginBottom: '12px', marginTop: '16px' }}>LIEN</div>
+            <div style={{ color: theme.accent, fontSize: '13px', fontWeight: '600', marginBottom: '4px', marginTop: '16px' }}>LIEN</div>
+            <div style={{ color: theme.textMuted, fontSize: '11px', marginBottom: '12px' }}>A lien is a loan on the car. The lien holder (bank/lender) must send a release before you can get a clean title. Leave blank if there's no loan.</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
               <div>
                 <label style={{ display: 'block', color: theme.textSecondary, fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>Lien Holder</label>
@@ -365,7 +380,8 @@ export default function TitleTrackingPage() {
             </label>
 
             {/* Temp Tag */}
-            <div style={{ color: theme.accent, fontSize: '13px', fontWeight: '600', marginBottom: '12px' }}>TEMP TAG</div>
+            <div style={{ color: theme.accent, fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>TEMP TAG</div>
+            <div style={{ color: theme.textMuted, fontSize: '11px', marginBottom: '12px' }}>The temporary paper plate the customer drives on until the real plates arrive.</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
               {[
                 { key: 'temp_tag_number', label: 'Tag #', type: 'text' },

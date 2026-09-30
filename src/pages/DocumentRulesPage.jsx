@@ -151,6 +151,7 @@ export default function DocumentRulesPage() {
                 .from('document_packages')
                 .update({ form_ids: cleanedFormIds })
                 .eq('id', pkg.id)
+                .eq('dealer_id', dealerId)
                 .then(({ error }) => {
                   if (error) console.error('[DocumentRules] Failed to update package:', error);
                 });
@@ -199,10 +200,42 @@ export default function DocumentRulesPage() {
     showToast(`Removed "${type}" deal type`);
   };
 
+  // Only forms the dealer uploaded (dealer_custom_forms) belong to this dealer.
+  // Everything in form_library is a shared platform form used by every dealer,
+  // so it is read-only here. Platform forms are managed in the Dev Console.
+  const canEditForm = (form) => !!form?._isCustom;
+
+  // Call an edge function through the Supabase client (uses the signed-in
+  // user's session) and surface the real error message when it fails.
+  const invokeEdgeFunction = async (name, body) => {
+    const { data, error } = await supabase.functions.invoke(name, { body });
+    if (error) {
+      let msg = error.message || 'Request failed';
+      try {
+        if (error.context && typeof error.context.json === 'function') {
+          const j = await error.context.json();
+          if (j?.error) msg = j.error;
+        }
+      } catch { /* keep the generic message */ }
+      return { data: null, errorMessage: msg };
+    }
+    if (data?.error) return { data, errorMessage: data.error };
+    if (data && data.success === false) return { data, errorMessage: 'Request failed' };
+    return { data, errorMessage: null };
+  };
+
   // === MAPPING MODAL FUNCTIONS ===
   const openMappingModal = (form) => {
-    // Deep clone the form's field_mappings so edits don't mutate state
-    const mappings = (form.field_mappings || []).map(m => ({ ...m }));
+    // Deep clone the form's field_mappings so edits don't mutate state.
+    // Mappings written directly by the map-form-fields function use a single
+    // `universal_field` string; convert those to the UI's `universal_fields` array.
+    const mappings = (form.field_mappings || []).map(m => {
+      if (!m.universal_fields && m.universal_field && !m.status) {
+        const uiField = aiToUiFieldMap[m.universal_field] || m.universal_field.split('.').pop();
+        return { ...m, universal_fields: [uiField], status: 'mapped', matched: true };
+      }
+      return { ...m };
+    });
     setMappingForm({ ...form, field_mappings: mappings, _isCustom: !!form._isCustom });
   };
 
@@ -237,6 +270,10 @@ export default function DocumentRulesPage() {
 
   const saveMappings = async () => {
     if (!mappingForm) return;
+    if (!canEditForm(mappingForm)) {
+      showToast('Shared state forms can only be changed by OG Dealer support.', 'error');
+      return;
+    }
     const mappings = mappingForm.field_mappings || [];
     const mappedCount = mappings.filter(f => f.status === 'mapped').length;
     const dismissedCount = mappings.filter(f => f.status === 'dismissed').length;
@@ -244,16 +281,16 @@ export default function DocumentRulesPage() {
     const scorableTotal = mappings.length - dismissedCount - highlightCount;
     const confidence = scorableTotal > 0 ? Math.round((mappedCount / scorableTotal) * 100) : (mappings.length > 0 ? 100 : 0);
 
-    const table = mappingForm._isCustom ? 'dealer_custom_forms' : 'form_library';
     const { error } = await supabase
-      .from(table)
+      .from('dealer_custom_forms')
       .update({
         field_mappings: mappings,
         mapping_confidence: confidence,
         mapping_status: mappedCount > 0 ? 'mapped' : 'unmapped',
         updated_at: new Date().toISOString()
       })
-      .eq('id', mappingForm.id);
+      .eq('id', mappingForm.id)
+      .eq('dealer_id', dealerId);
 
     if (error) {
       showToast('Save failed: ' + error.message, 'error');
@@ -279,45 +316,40 @@ export default function DocumentRulesPage() {
     'financing.term_months': 'term_months', 'financing.monthly_payment': 'monthly_payment', 'financing.apr': 'apr',
   };
 
+  // Convert AI mappings (category.field) to UI format (flat field names)
+  const convertAiMappings = (fieldMappings) => (fieldMappings || []).map(m => {
+    const uiField = m.universal_field ? (aiToUiFieldMap[m.universal_field] || m.universal_field.split('.').pop()) : null;
+    return {
+      pdf_field: m.pdf_field,
+      pdf_field_type: m.pdf_field_type || 'text',
+      universal_fields: uiField ? [uiField] : [],
+      status: uiField ? 'mapped' : 'unmapped',
+      confidence: m.confidence || 0,
+      matched: !!uiField
+    };
+  });
+
   const analyzeFields = async () => {
     if (!mappingForm) return;
+    // map-form-fields writes its result straight into the source table, so only
+    // run it on the dealer's own forms, never on shared platform forms.
+    if (!canEditForm(mappingForm)) {
+      showToast('Auto-Map is only available for forms you uploaded.', 'error');
+      return;
+    }
     setAnalyzing(true);
     try {
-      const res = await fetch(
-        `https://rlzudfinlxonpbwacxpt.supabase.co/functions/v1/map-form-fields`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsenVkZmlubHhvbnBid2FjeHB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1OTk5MzksImV4cCI6MjA4NDE3NTkzOX0.93JAEAoYad2WStPpaZZbFAUR3cIKWF1PG5xEVmMkj4U`
-          },
-          body: JSON.stringify({
-            form_id: mappingForm.id,
-            source_table: mappingForm._isCustom ? 'dealer_custom_forms' : 'form_library'
-          })
-        }
-      );
-      const result = await res.json();
-      if (!result.success) throw new Error(result.error || 'Analysis failed');
-
-      // Convert AI mappings (category.field) to UI format (flat field names)
-      const convertedMappings = (result.field_mappings || []).map(m => {
-        const uiField = m.universal_field ? (aiToUiFieldMap[m.universal_field] || m.universal_field.split('.').pop()) : null;
-        return {
-          pdf_field: m.pdf_field,
-          pdf_field_type: m.pdf_field_type || 'text',
-          universal_fields: uiField ? [uiField] : [],
-          status: uiField ? 'mapped' : 'unmapped',
-          confidence: m.confidence || 0,
-          matched: !!uiField
-        };
+      const { data: result, errorMessage } = await invokeEdgeFunction('map-form-fields', {
+        form_id: mappingForm.id,
+        source_table: 'dealer_custom_forms'
       });
+      if (errorMessage) throw new Error(errorMessage);
 
-      setMappingForm(prev => ({ ...prev, field_mappings: convertedMappings }));
-      showToast(`Auto-mapped ${result.mapped_count}/${result.detected_fields_count} fields (${result.mapping_confidence}%)`);
+      setMappingForm(prev => ({ ...prev, field_mappings: convertAiMappings(result.field_mappings) }));
+      showToast(`Auto-mapped ${result.mapped_count}/${result.detected_fields_count} fields (${result.mapping_confidence}%). Check them, then Save.`);
     } catch (err) {
       console.error('Analyze error:', err);
-      showToast('Analysis failed: ' + err.message, 'error');
+      showToast('Auto-Map failed: ' + err.message, 'error');
     } finally {
       setAnalyzing(false);
     }
@@ -332,143 +364,96 @@ export default function DocumentRulesPage() {
     }
 
     setUploadingForm(true);
-    try {
-      // 1. Upload to storage
-      const fileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const storagePath = `${dealerId}/${Date.now()}_${fileName}`;
+    // 1. Upload to storage
+    const fileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const storagePath = `${dealerId}/${Date.now()}_${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('dealer-forms')
-        .upload(storagePath, file, { contentType: 'application/pdf' });
+    const { error: uploadError } = await supabase.storage
+      .from('dealer-forms')
+      .upload(storagePath, file, { contentType: 'application/pdf' });
 
-      if (uploadError) throw uploadError;
-
-      // 2. Extract form fields via edge function
-      const extractRes = await fetch(
-        `https://rlzudfinlxonpbwacxpt.supabase.co/functions/v1/extract-pdf-fields`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsenVkZmlubHhvbnBid2FjeHB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1OTk5MzksImV4cCI6MjA4NDE3NTkzOX0.93JAEAoYad2WStPpaZZbFAUR3cIKWF1PG5xEVmMkj4U` },
-          body: JSON.stringify({ storage_bucket: 'dealer-forms', storage_path: storagePath })
-        }
-      );
-      const extractResult = await extractRes.json();
-      if (!extractResult.success) throw new Error(extractResult.error || 'Field extraction failed');
-
-      // 3. Create database record
-      const { data: newForm, error: insertError } = await supabase
-        .from('dealer_custom_forms')
-        .insert({
-          dealer_id: dealerId,
-          form_name: uploadForm.form_name || file.name.replace('.pdf', ''),
-          form_number: uploadForm.form_number || null,
-          category: uploadForm.category || 'custom',
-          storage_bucket: 'dealer-forms',
-          storage_path: storagePath,
-          file_size_bytes: file.size,
-          detected_fields: extractResult.detected_fields.map(f => f.pdf_field),
-          field_mappings: extractResult.detected_fields,
-          is_fillable: extractResult.fields_count > 0,
-          mapping_status: extractResult.fields_count > 0 ? 'unmapped' : 'no_fields'
-        })
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
-
-      showToast(`Form uploaded - ${extractResult.fields_count} fillable fields detected`);
-      setShowUploadModal(false);
-      setUploadForm({ form_name: '', form_number: '', category: 'custom' });
-      loadData();
-
-      // Open mapping modal for the new form if it has fields
-      if (extractResult.fields_count > 0 && newForm) {
-        openMappingModal({ ...newForm, _isCustom: true });
-      }
-    } catch (err) {
-      console.error('Upload error:', err);
-      showToast('Upload failed: ' + err.message, 'error');
-    } finally {
+    if (uploadError) {
+      showToast('Upload failed: ' + uploadError.message, 'error');
       setUploadingForm(false);
+      return;
+    }
+
+    // 2. Create the database record
+    const { data: newForm, error: insertError } = await supabase
+      .from('dealer_custom_forms')
+      .insert({
+        dealer_id: dealerId,
+        form_name: uploadForm.form_name || file.name.replace('.pdf', ''),
+        form_number: uploadForm.form_number || null,
+        category: uploadForm.category || 'custom',
+        storage_bucket: 'dealer-forms',
+        storage_path: storagePath,
+        file_size_bytes: file.size,
+        mapping_status: 'pending'
+      })
+      .select()
+      .single();
+
+    if (insertError || !newForm) {
+      // Don't leave an orphaned PDF in storage
+      await supabase.storage.from('dealer-forms').remove([storagePath]);
+      showToast('Upload failed: ' + (insertError?.message || 'form was not saved'), 'error');
+      setUploadingForm(false);
+      return;
+    }
+
+    // 3. Find the fillable blanks and suggest matches. map-form-fields reads the
+    //    PDF from storage and saves detected_fields / field_mappings on the row.
+    const { data: mapResult, errorMessage } = await invokeEdgeFunction('map-form-fields', {
+      form_id: newForm.id,
+      source_table: 'dealer_custom_forms'
+    });
+
+    setShowUploadModal(false);
+    setUploadForm({ form_name: '', form_number: '', category: 'custom' });
+    setUploadingForm(false);
+    loadData();
+
+    if (errorMessage) {
+      showToast(`Form saved, but reading its fields failed: ${errorMessage}. Open it and click Auto-Map to try again.`, 'error');
+      return;
+    }
+
+    const fieldsCount = mapResult?.detected_fields_count || 0;
+    if (fieldsCount > 0) {
+      showToast(`Form uploaded - ${fieldsCount} fillable fields found. Check the matches, then Save.`);
+      openMappingModal({ ...newForm, field_mappings: convertAiMappings(mapResult.field_mappings), _isCustom: true });
+    } else {
+      showToast('Form uploaded, but it has no fillable fields. It will print as-is.');
     }
   };
 
   const deleteForm = async (form) => {
-    const isCustom = form._isCustom;
-
-    // Different warnings for platform vs custom forms
-    const warningMessage = isCustom
-      ? `Delete custom form "${form.form_name}"?\n\nThis cannot be undone.`
-      : `⚠️ WARNING: Delete platform form "${form.form_name}"?\n\n` +
-        `This will remove it from the library for ALL dealers.\n` +
-        `You can ONLY get it back by contacting support.\n\n` +
-        `Are you absolutely sure?`;
-
-    if (!confirm(warningMessage)) return;
-
-    // Extra confirmation for platform forms
-    if (!isCustom) {
-      if (!confirm('Final confirmation: This will DELETE the form from the platform library. Continue?')) return;
+    if (!canEditForm(form)) {
+      showToast('Shared state forms are used by every dealer and cannot be deleted here. Leave it out of your Doc Packages instead.', 'error');
+      return;
     }
 
-    try {
-      if (isCustom) {
-        // Delete custom form
-        if (form.storage_path) {
-          await supabase.storage.from(form.storage_bucket || 'dealer-forms').remove([form.storage_path]);
-        }
-        const { error } = await supabase.from('dealer_custom_forms').delete().eq('id', form.id);
-        if (error) throw error;
-        showToast('Custom form deleted');
-      } else {
-        // Delete platform form - must clean up all references first
+    if (!confirm(`Delete your form "${form.form_name}"?\n\nIt will also be removed from your Doc Packages. This cannot be undone.`)) return;
 
-        // 1. Null out generated_documents that reference this form
-        await supabase.from('generated_documents').update({ form_library_id: null }).eq('form_library_id', form.id);
-
-        // 2. Remove from compliance_rules.required_forms arrays
-        const { data: rulesWithForm } = await supabase
-          .from('compliance_rules')
-          .select('id, required_forms')
-          .contains('required_forms', [form.id]);
-
-        if (rulesWithForm && rulesWithForm.length > 0) {
-          for (const rule of rulesWithForm) {
-            const updatedForms = (rule.required_forms || []).filter(fid => fid !== form.id);
-            await supabase
-              .from('compliance_rules')
-              .update({ required_forms: updatedForms })
-              .eq('id', rule.id);
-          }
-        }
-
-        // 3. Remove from document_packages
-        const { data: pkgs } = await supabase.from('document_packages').select('id, form_ids');
-        if (pkgs) {
-          for (const pkg of pkgs) {
-            if (pkg.form_ids && pkg.form_ids.includes(form.id)) {
-              const newFormIds = pkg.form_ids.filter(id => id !== form.id);
-              await supabase.from('document_packages').update({ form_ids: newFormIds }).eq('id', pkg.id);
-            }
-          }
-        }
-
-        // 4. Update form_staging if this was promoted
-        const { data: libForm } = await supabase.from('form_library').select('promoted_from').eq('id', form.id).single();
-        if (libForm?.promoted_from) {
-          await supabase.from('form_staging').update({ status: 'pending', promoted_at: null }).eq('id', libForm.promoted_from);
-        }
-
-        // 5. Finally, delete from form_library
-        const { error } = await supabase.from('form_library').delete().eq('id', form.id);
-        if (error) throw error;
-        showToast('Platform form deleted - contact support to restore');
-      }
-
-      loadData();
-    } catch (err) {
-      showToast('Delete failed: ' + err.message, 'error');
+    const { error } = await supabase
+      .from('dealer_custom_forms')
+      .delete()
+      .eq('id', form.id)
+      .eq('dealer_id', dealerId);
+    if (error) {
+      showToast('Delete failed: ' + error.message, 'error');
+      return;
     }
+
+    if (form.storage_path) {
+      const { error: storageError } = await supabase.storage.from(form.storage_bucket || 'dealer-forms').remove([form.storage_path]);
+      if (storageError) console.error('[DocumentRules] Could not remove PDF from storage:', storageError);
+    }
+
+    showToast('Form deleted');
+    // loadData also strips the deleted form out of this dealer's packages
+    loadData();
   };
 
   // Keep old function name for compatibility
@@ -495,11 +480,10 @@ export default function DocumentRulesPage() {
         updated_at: new Date().toISOString()
       };
 
-      if (existing) {
-        await supabase.from('document_packages').update(packageData).eq('id', existing.id);
-      } else {
-        await supabase.from('document_packages').insert(packageData);
-      }
+      const { error } = existing
+        ? await supabase.from('document_packages').update(packageData).eq('id', existing.id).eq('dealer_id', dealerId)
+        : await supabase.from('document_packages').insert(packageData);
+      if (error) throw error;
       showToast(`${editingPackage} package saved`);
       setEditingPackage(null);
       setSelectedForms([]);
@@ -565,7 +549,10 @@ export default function DocumentRulesPage() {
         <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <h1 style={{ fontSize: '24px', fontWeight: '700', margin: '0 0 8px 0' }}>Document Rules</h1>
-            <p style={{ color: '#a1a1aa', margin: 0 }}>
+            <p style={{ color: '#a1a1aa', margin: '0 0 4px 0', fontSize: '14px' }}>
+              Choose which forms print for each type of sale. State forms are provided for you; you can also upload your own PDFs.
+            </p>
+            <p style={{ color: '#71717a', margin: 0, fontSize: '13px' }}>
               {dealer?.state || 'UT'} • {forms.length} platform forms • {dealerCustomForms.length} custom • {packages.length} packages
             </p>
           </div>
@@ -632,6 +619,11 @@ export default function DocumentRulesPage() {
         {/* === FORMS TAB === */}
         {activeTab === 'forms' && (
           <div>
+            <p style={{ color: '#71717a', fontSize: '13px', margin: '0 0 12px 0' }}>
+              Click a form to see its <b style={{ color: '#a1a1aa' }}>field mappings</b>: which blank on the PDF gets which deal detail (buyer name, VIN, price).
+              The % is how many blanks are matched; 70% or more counts as Ready. State forms are shared and read-only; forms marked CUSTOM are yours to edit or delete.
+            </p>
+
             {/* Filters */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
               {['all', 'mapped', 'unmapped', ...(dealerCustomForms.length > 0 ? ['custom'] : [])].map(filter => (
@@ -675,12 +667,15 @@ export default function DocumentRulesPage() {
                       const confidence = form.mapping_confidence || 0;
                       const isReady = confidence >= 70;
                       const isCustom = form._isCustom;
+                      // Custom forms can always be opened (so Auto-Map can be run on them);
+                      // shared forms only when there is something to look at.
+                      const canOpen = isCustom || fieldsCount > 0;
 
                       return (
                         <tr
                           key={form.id}
-                          style={{ borderBottom: '1px solid #3f3f46', cursor: fieldsCount > 0 ? 'pointer' : 'default' }}
-                          onClick={() => fieldsCount > 0 && openMappingModal(form)}
+                          style={{ borderBottom: '1px solid #3f3f46', cursor: canOpen ? 'pointer' : 'default' }}
+                          onClick={() => canOpen && openMappingModal(form)}
                         >
                           <td style={{ padding: '12px 8px' }}>
                             <div style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -735,21 +730,22 @@ export default function DocumentRulesPage() {
                                 Pending
                               </span>
                             )}
-                            <button
-                              onClick={(e) => { e.stopPropagation(); deleteForm(form); }}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: isCustom ? '#ef4444' : '#dc2626',
-                                cursor: 'pointer',
-                                fontSize: '12px',
-                                padding: '4px 6px',
-                                fontWeight: isCustom ? 'normal' : '700'
-                              }}
-                              title={isCustom ? "Delete custom form" : "⚠️ Delete platform form (requires support to restore)"}
-                            >
-                              {isCustom ? 'Delete' : '⚠️ Delete'}
-                            </button>
+                            {canEditForm(form) && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); deleteForm(form); }}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: '#ef4444',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  padding: '4px 6px'
+                                }}
+                                title="Delete your custom form"
+                              >
+                                Delete
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -923,6 +919,18 @@ export default function DocumentRulesPage() {
               <button onClick={() => setMappingForm(null)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: '24px', cursor: 'pointer' }}>x</button>
             </div>
 
+            {/* Plain-English help */}
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid #27272a', fontSize: '12px', color: '#a1a1aa', lineHeight: 1.6 }}>
+              Each row is a blank on the PDF. Pick which deal detail fills it in (for example, buyer name or VIN).
+              {' '}<b>HL</b> = leave it blank and highlight it yellow so someone fills it in by hand. <b>X</b> = ignore this blank.
+              {canEditForm(mappingForm) && <> <b>Auto-Map</b> reads the PDF and guesses the matches for you. Check them before you save.</>}
+            </div>
+            {!canEditForm(mappingForm) && (
+              <div style={{ padding: '10px 20px', backgroundColor: 'rgba(59,130,246,0.08)', borderBottom: '1px solid #27272a', fontSize: '12px', color: '#93c5fd' }}>
+                This is a shared state form kept up to date by OG Dealer, so it is view-only. If it fills in wrong, contact support.
+              </div>
+            )}
+
             {/* Field List */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
               <div style={{ display: 'grid', gap: '6px' }}>
@@ -958,8 +966,9 @@ export default function DocumentRulesPage() {
                       ) : (
                         <select
                           value={mapping.universal_fields?.[0] || ''}
+                          disabled={!canEditForm(mappingForm)}
                           onChange={(e) => updateFieldMapping(idx, 'universal_fields', e.target.value ? [e.target.value] : [])}
-                          style={{ flex: 1, padding: '7px 10px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: isMapped ? '#22c55e' : '#a1a1aa', fontSize: '12px', outline: 'none', cursor: 'pointer' }}
+                          style={{ flex: 1, padding: '7px 10px', borderRadius: '6px', backgroundColor: '#27272a', border: '1px solid #3f3f46', color: isMapped ? '#22c55e' : '#a1a1aa', fontSize: '12px', outline: 'none', cursor: canEditForm(mappingForm) ? 'pointer' : 'default' }}
                         >
                           <option value="">Not mapped</option>
                           {fieldContextOptions.map(group => (
@@ -982,6 +991,7 @@ export default function DocumentRulesPage() {
                       </span>
 
                       {/* Action buttons */}
+                      {canEditForm(mappingForm) && (
                       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                         <button
                           onClick={() => updateFieldMapping(idx, 'status', isHighlighted ? 'unmapped' : 'highlight')}
@@ -1006,6 +1016,7 @@ export default function DocumentRulesPage() {
                           X
                         </button>
                       </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1013,7 +1024,8 @@ export default function DocumentRulesPage() {
 
               {(!mappingForm.field_mappings || mappingForm.field_mappings.length === 0) && (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#71717a' }}>
-                  No fields detected in this form.
+                  No fillable fields found on this form yet.
+                  {canEditForm(mappingForm) && ' Click Auto-Map to read the PDF and find them.'}
                 </div>
               )}
             </div>
@@ -1030,17 +1042,22 @@ export default function DocumentRulesPage() {
                 )}
                 {' / '}{mappingForm.field_mappings?.length || 0} total
               </div>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={() => setMappingForm(null)} style={btnSecondary}>Cancel</button>
-                <button
-                  onClick={analyzeFields}
-                  disabled={analyzing}
-                  style={{ ...btnPrimary, backgroundColor: '#8b5cf6', opacity: analyzing ? 0.6 : 1 }}
-                >
-                  {analyzing ? 'Analyzing...' : 'Auto-Map'}
-                </button>
-                <button onClick={saveMappings} style={{ ...btnPrimary, backgroundColor: '#f97316' }}>Save Mappings</button>
-              </div>
+              {canEditForm(mappingForm) ? (
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button onClick={() => setMappingForm(null)} style={btnSecondary}>Cancel</button>
+                  <button
+                    onClick={analyzeFields}
+                    disabled={analyzing}
+                    title="Read the PDF and guess which deal detail goes in each blank"
+                    style={{ ...btnPrimary, backgroundColor: '#8b5cf6', opacity: analyzing ? 0.6 : 1 }}
+                  >
+                    {analyzing ? 'Analyzing...' : 'Auto-Map'}
+                  </button>
+                  <button onClick={saveMappings} style={{ ...btnPrimary, backgroundColor: '#f97316' }}>Save Mappings</button>
+                </div>
+              ) : (
+                <button onClick={() => setMappingForm(null)} style={btnSecondary}>Close</button>
+              )}
             </div>
           </div>
         </div>

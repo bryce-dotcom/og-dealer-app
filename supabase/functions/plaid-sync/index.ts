@@ -23,6 +23,25 @@ serve(async (req) => {
 
     console.log(`[PLAID] Action: ${action}`);
 
+    // Caller must be signed in and belong to this dealer (owner or active employee).
+    const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+    const { data: userData } = jwt ? await supabase.auth.getUser(jwt) : { data: { user: null } };
+    const user = userData?.user;
+    if (!user || !dealer_id) {
+      return new Response(JSON.stringify({ success: false, error: "Not signed in" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const [{ data: ownedDealer }, { data: employee }] = await Promise.all([
+      supabase.from("dealer_settings").select("id").eq("id", dealer_id).eq("owner_user_id", user.id).maybeSingle(),
+      supabase.from("employees").select("id").eq("dealer_id", dealer_id).eq("user_id", user.id).eq("active", true).maybeSingle(),
+    ]);
+    if (!ownedDealer && !employee) {
+      return new Response(JSON.stringify({ success: false, error: "Not allowed for this dealer" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Determine Plaid API URL based on environment
     const plaidUrl = plaidEnv === "production"
       ? "https://production.plaid.com"
@@ -141,7 +160,8 @@ serve(async (req) => {
       }
 
       // Immediately sync transactions for these accounts (last 30 days by default)
-      await syncTransactions(supabase, plaidUrl, plaidClientId, plaidSecret, access_token, dealer_id, savedAccounts);
+      const initial = await syncTransactions(supabase, plaidUrl, plaidClientId, plaidSecret, access_token, dealer_id, savedAccounts);
+      if (initial.error) console.error(`[PLAID] Initial sync failed: ${initial.error}`);
 
       return new Response(
         JSON.stringify({
@@ -176,27 +196,38 @@ serve(async (req) => {
         throw new Error("No Plaid-connected accounts found");
       }
 
-      let totalSynced = 0;
+      // One Plaid call per bank login (access token), not per account.
+      const byToken = new Map<string, any[]>();
       for (const account of accounts) {
-        const synced = await syncTransactions(
-          supabase,
-          plaidUrl,
-          plaidClientId,
-          plaidSecret,
-          account.plaid_access_token,
-          dealer_id,
-          [account],
-          start_date,
-          end_date
-        );
-        totalSynced += synced;
+        const list = byToken.get(account.plaid_access_token) || [];
+        list.push(account);
+        byToken.set(account.plaid_access_token, list);
       }
+
+      let totalSynced = 0;
+      const failures: { institution: string; error: string; needsReconnect: boolean }[] = [];
+      for (const [token, group] of byToken) {
+        const result = await syncTransactions(
+          supabase, plaidUrl, plaidClientId, plaidSecret, token, dealer_id, group, start_date, end_date
+        );
+        totalSynced += result.synced;
+        if (result.error) {
+          failures.push({ institution: group[0].institution_name || "Bank", error: result.error, needsReconnect: result.needsReconnect });
+        }
+      }
+
+      const message = failures.length
+        ? `Synced ${totalSynced} new transaction(s). Problems: ${failures.map((f) => `${f.institution} — ${f.error}`).join("; ")}`
+        : `Synced ${totalSynced} new transaction(s)`;
 
       return new Response(
         JSON.stringify({
-          success: true,
+          success: failures.length === 0,
           synced: totalSynced,
-          message: `Synced ${totalSynced} new transaction(s)`,
+          failures,
+          needs_reconnect: failures.some((f) => f.needsReconnect),
+          message,
+          error: failures.length ? message : undefined,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -248,6 +279,12 @@ serve(async (req) => {
 // ============================================
 // SYNC TRANSACTIONS HELPER
 // ============================================
+// Plaid error codes that mean the person has to reconnect the bank in Books.
+const RECONNECT_CODES = new Set([
+  "ITEM_LOGIN_REQUIRED", "INVALID_ACCESS_TOKEN", "ITEM_NOT_FOUND", "PENDING_EXPIRATION",
+  "ACCESS_NOT_GRANTED", "NO_ACCOUNTS", "USER_PERMISSION_REVOKED", "ITEM_LOCKED",
+]);
+
 async function syncTransactions(
   supabase: any,
   plaidUrl: string,
@@ -258,65 +295,82 @@ async function syncTransactions(
   accounts: any[],
   customStartDate?: string,
   customEndDate?: string
-): Promise<number> {
+): Promise<{ synced: number; error: string | null; needsReconnect: boolean }> {
   let totalSynced = 0;
+  const accountIds = accounts.map((a) => a.id);
 
-  // Get transactions - use custom dates if provided, otherwise last 30 days
-  const startDate = customStartDate ? new Date(customStartDate) : (() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d;
-  })();
+  // Default window: from a week before the oldest last sync (so a long gap gets
+  // backfilled), or the last 30 days for brand-new connections.
+  const oldestSync = accounts
+    .map((a) => (a.last_synced_at ? new Date(a.last_synced_at).getTime() : null))
+    .filter((t) => t !== null) as number[];
+  const startDate = customStartDate
+    ? new Date(customStartDate)
+    : oldestSync.length
+      ? new Date(Math.min(...oldestSync) - 7 * 86400000)
+      : new Date(Date.now() - 30 * 86400000);
   const endDate = customEndDate ? new Date(customEndDate) : new Date();
+  const start = startDate.toISOString().split("T")[0];
+  const end = endDate.toISOString().split("T")[0];
 
-  const txResponse = await fetch(`${plaidUrl}/transactions/get`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      client_id: clientId,
-      secret: secret,
-      access_token: accessToken,
-      start_date: startDate.toISOString().split("T")[0],
-      end_date: endDate.toISOString().split("T")[0],
-    }),
-  });
+  // Page through results; /transactions/get returns at most 500 per call.
+  const all: any[] = [];
+  let plaidAccounts: any[] = [];
+  let offset = 0;
+  while (true) {
+    const txResponse = await fetch(`${plaidUrl}/transactions/get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        secret,
+        access_token: accessToken,
+        start_date: start,
+        end_date: end,
+        options: { count: 500, offset },
+      }),
+    });
 
-  if (!txResponse.ok) {
-    const errorData = await txResponse.json();
-    console.error(`[PLAID] Failed to fetch transactions:`, errorData);
-    return 0;
+    if (!txResponse.ok) {
+      const errorData = await txResponse.json().catch(() => ({}));
+      const code = errorData.error_code || `HTTP_${txResponse.status}`;
+      const needsReconnect = RECONNECT_CODES.has(code);
+      const message = needsReconnect
+        ? "Bank connection expired — reconnect this bank in Books."
+        : errorData.display_message || errorData.error_message || `Plaid error ${code}`;
+      console.error(`[PLAID] Failed to fetch transactions:`, errorData);
+      // Record it on the accounts so Books stops showing them as healthy.
+      await supabase
+        .from("bank_accounts")
+        .update({ sync_status: needsReconnect ? "needs_reconnect" : "error", plaid_error: `${code}: ${message}` })
+        .in("id", accountIds);
+      return { synced: 0, error: message, needsReconnect };
+    }
+
+    const txData = await txResponse.json();
+    all.push(...(txData.transactions || []));
+    plaidAccounts = txData.accounts || plaidAccounts;
+    offset = all.length;
+    if (offset >= (txData.total_transactions || 0) || (txData.transactions || []).length === 0) break;
   }
 
-  const txData = await txResponse.json();
-  const transactions = txData.transactions || [];
+  console.log(`[PLAID] Found ${all.length} transactions from Plaid (${start} to ${end})`);
 
-  console.log(`[PLAID] Found ${transactions.length} transactions from Plaid`);
-  console.log(`[PLAID] Date range: ${startDate.toISOString().split("T")[0]} to ${endDate.toISOString().split("T")[0]}`);
-  console.log(`[PLAID] Accounts to match:`, accounts.map(a => ({ id: a.id, plaid_account_id: a.plaid_account_id })));
-
-  for (const tx of transactions) {
-    // Find the matching bank account
-    const bankAccount = accounts.find(a => a.plaid_account_id === tx.account_id);
+  for (const tx of all) {
+    const bankAccount = accounts.find((a) => a.plaid_account_id === tx.account_id);
     if (!bankAccount) continue;
 
-    // Check if transaction already exists
     const { data: existing } = await supabase
       .from("bank_transactions")
       .select("id")
       .eq("plaid_transaction_id", tx.transaction_id)
-      .single();
+      .maybeSingle();
+    if (existing) continue;
 
-    if (existing) {
-      continue; // Skip duplicates
-    }
-
-    // Determine if income or expense
-    const isIncome = tx.amount < 0; // Plaid uses negative for income
+    // Plaid: positive = money out, negative = money in. We store money in as positive.
+    const isIncome = tx.amount < 0;
     const amount = Math.abs(tx.amount);
 
-    // Insert transaction
     const { error: insertError } = await supabase
       .from("bank_transactions")
       .insert({
@@ -331,21 +385,19 @@ async function syncTransactions(
         status: "inbox",
       });
 
-    if (!insertError) {
-      totalSynced++;
-    } else {
-      console.error(`[PLAID] Error inserting transaction: ${insertError.message}`);
-    }
+    if (!insertError) totalSynced++;
+    else console.error(`[PLAID] Error inserting transaction: ${insertError.message}`);
   }
 
-  // Update last_synced_at for all accounts
+  // Refresh balances from the same response, and mark the accounts healthy.
+  const now = new Date().toISOString();
   for (const account of accounts) {
-    await supabase
-      .from("bank_accounts")
-      .update({ last_synced_at: new Date().toISOString() })
-      .eq("id", account.id);
+    const pa = plaidAccounts.find((x) => x.account_id === account.plaid_account_id);
+    const update: Record<string, unknown> = { last_synced_at: now, sync_status: "active", plaid_error: null };
+    if (pa?.balances?.current != null) update.current_balance = pa.balances.current;
+    await supabase.from("bank_accounts").update(update).eq("id", account.id);
   }
 
   console.log(`[PLAID] Synced ${totalSynced} new transactions`);
-  return totalSynced;
+  return { synced: totalSynced, error: null, needsReconnect: false };
 }

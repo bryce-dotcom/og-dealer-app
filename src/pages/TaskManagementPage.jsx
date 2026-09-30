@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function TaskManagementPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,19 +33,22 @@ export default function TaskManagementPage() {
 
   useEffect(() => { if (dealerId) { fetchTasks(); fetchEmployees(); } }, [dealerId]);
 
-  const fetchTasks = async () => {
-    setLoading(true);
-    const { data } = await supabase
+  const fetchTasks = async (quiet = false) => {
+    // quiet refreshes (after ticking a box) don't blank the board with Loading...
+    if (!quiet) setLoading(true);
+    const { data, error } = await supabase
       .from('dealer_tasks')
       .select('*')
       .eq('dealer_id', dealerId)
       .order('sort_order').order('created_at', { ascending: false });
+    if (error) alert('Could not load tasks: ' + error.message);
     setTasks(data || []);
     setLoading(false);
   };
 
   const fetchEmployees = async () => {
-    const { data } = await supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true);
+    const { data, error } = await supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true);
+    if (error) console.error('Could not load employees:', error);
     setEmployees(data || []);
   };
 
@@ -73,10 +75,12 @@ export default function TaskManagementPage() {
     if (form.status === 'in_progress' && !editingTask?.started_at) payload.started_at = new Date().toISOString();
     if (form.status === 'completed' && !editingTask?.completed_at) payload.completed_at = new Date().toISOString();
 
-    if (editingTask) {
-      await supabase.from('dealer_tasks').update(payload).eq('id', editingTask.id);
-    } else {
-      await supabase.from('dealer_tasks').insert(payload);
+    const { error } = editingTask
+      ? await supabase.from('dealer_tasks').update(payload).eq('id', editingTask.id).eq('dealer_id', dealerId)
+      : await supabase.from('dealer_tasks').insert(payload);
+    if (error) {
+      alert('Could not save task: ' + error.message);
+      return;
     }
     setShowModal(false);
     setEditingTask(null);
@@ -116,14 +120,21 @@ export default function TaskManagementPage() {
     const updates = { status };
     if (status === 'in_progress') updates.started_at = new Date().toISOString();
     if (status === 'completed') updates.completed_at = new Date().toISOString();
-    await supabase.from('dealer_tasks').update(updates).eq('id', id);
-    fetchTasks();
+    const { error } = await supabase.from('dealer_tasks').update(updates).eq('id', id).eq('dealer_id', dealerId);
+    if (error) alert('Could not update task: ' + error.message);
+    fetchTasks(true);
   };
 
+  // Returns true only if the task was actually deleted.
   const deleteTask = async (id) => {
-    if (!confirm('Delete this task?')) return;
-    await supabase.from('dealer_tasks').delete().eq('id', id);
+    if (!confirm('Delete this task? This cannot be undone.')) return false;
+    const { error } = await supabase.from('dealer_tasks').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) {
+      alert('Could not delete task: ' + error.message);
+      return false;
+    }
     fetchTasks();
+    return true;
   };
 
   const toggleChecklist = async (taskId, idx) => {
@@ -131,8 +142,11 @@ export default function TaskManagementPage() {
     if (!task?.checklist) return;
     const updated = [...task.checklist];
     updated[idx] = { ...updated[idx], completed: !updated[idx].completed, completed_at: !updated[idx].completed ? new Date().toISOString() : null };
-    await supabase.from('dealer_tasks').update({ checklist: updated }).eq('id', taskId);
-    fetchTasks();
+    // Optimistic update so the box ticks immediately
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, checklist: updated } : t));
+    const { error } = await supabase.from('dealer_tasks').update({ checklist: updated }).eq('id', taskId).eq('dealer_id', dealerId);
+    if (error) alert('Could not update checklist: ' + error.message);
+    fetchTasks(true);
   };
 
   const addCheckItem = () => {
@@ -202,6 +216,25 @@ export default function TaskManagementPage() {
           </span>
         )}
       </div>
+      {task.checklist?.length > 0 && (
+        <div style={{ marginTop: '8px' }} onClick={e => e.stopPropagation()}>
+          {task.checklist.map((item, idx) => (
+            <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', padding: '2px 0' }}>
+              <input type="checkbox" checked={!!item.completed} onChange={() => toggleChecklist(task.id, idx)} style={{ cursor: 'pointer' }} />
+              <span style={{ color: item.completed ? theme.textMuted : theme.textSecondary, textDecoration: item.completed ? 'line-through' : 'none' }}>{item.item}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {!['completed', 'cancelled'].includes(task.status) && (
+        <button
+          onClick={e => { e.stopPropagation(); updateTaskStatus(task.id, 'completed'); }}
+          style={{
+            marginTop: '8px', width: '100%', padding: '5px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
+            backgroundColor: '#22c55e18', color: '#22c55e', border: '1px solid #22c55e44', cursor: 'pointer'
+          }}
+        >Mark done</button>
+      )}
     </div>
   );
 
@@ -210,7 +243,7 @@ export default function TaskManagementPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Task Management</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Track and manage team tasks</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>To-do list for your team. Assign a task, give it a due date, and mark it done when it's finished.</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <div style={{ display: 'flex', border: `1px solid ${theme.border}`, borderRadius: '8px', overflow: 'hidden' }}>
@@ -256,6 +289,12 @@ export default function TaskManagementPage() {
           {priorities.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
       </div>
+
+      {!loading && tasks.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '16px', marginBottom: '16px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, fontSize: '14px' }}>
+          No tasks yet. Click + New Task to add one.
+        </div>
+      )}
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: theme.textSecondary }}>Loading...</div>
@@ -320,6 +359,9 @@ export default function TaskManagementPage() {
                   </td>
                   <td style={{ padding: '12px' }}>
                     <div style={{ display: 'flex', gap: '8px' }}>
+                      {task.status !== 'completed' && (
+                        <button onClick={() => updateTaskStatus(task.id, 'completed')} style={{ background: 'none', border: 'none', color: '#22c55e', cursor: 'pointer', fontSize: '13px' }}>Mark done</button>
+                      )}
                       <button onClick={() => openEdit(task)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '13px' }}>Edit</button>
                       <button onClick={() => deleteTask(task.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '13px' }}>Del</button>
                     </div>
@@ -415,7 +457,7 @@ export default function TaskManagementPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: '20px' }}>
               <div>
                 {editingTask && (
-                  <button onClick={() => { deleteTask(editingTask.id); setShowModal(false); setEditingTask(null); }} style={{
+                  <button onClick={async () => { if (await deleteTask(editingTask.id)) { setShowModal(false); setEditingTask(null); } }} style={{
                     padding: '10px 20px', backgroundColor: 'transparent', color: '#ef4444',
                     border: '1px solid #ef4444', borderRadius: '8px', cursor: 'pointer', fontSize: '14px'
                   }}>Delete</button>

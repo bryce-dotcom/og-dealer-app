@@ -5,8 +5,7 @@ import { useTheme } from '../components/Layout';
 
 export default function ServiceOrdersPage() {
   const { theme } = useTheme();
-  const { dealer } = useStore();
-  const dealerId = dealer?.id;
+  const { dealerId } = useStore();
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,11 +46,12 @@ export default function ServiceOrdersPage() {
 
   const fetchOrders = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('service_orders')
       .select('*')
       .eq('dealer_id', dealerId)
       .order('created_at', { ascending: false });
+    if (error) alert('Could not load service orders: ' + error.message);
     setOrders(data || []);
     setLoading(false);
   };
@@ -59,10 +59,12 @@ export default function ServiceOrdersPage() {
   const fetchRelated = async () => {
     const [v, c, e, vn] = await Promise.all([
       supabase.from('inventory').select('id, year, make, model, stock_number').eq('dealer_id', dealerId),
-      supabase.from('customers').select('id, first_name, last_name, phone').eq('dealer_id', dealerId),
+      supabase.from('customers').select('id, name, first_name, last_name, phone').eq('dealer_id', dealerId),
       supabase.from('employees').select('id, name').eq('dealer_id', dealerId).eq('active', true),
       supabase.from('vendors').select('id, name, vendor_type').eq('dealer_id', dealerId).eq('active', true)
     ]);
+    const loadErr = v.error || c.error || e.error || vn.error;
+    if (loadErr) console.error('Could not load related data:', loadErr);
     setVehicles(v.data || []);
     setCustomers(c.data || []);
     setEmployees(e.data || []);
@@ -70,13 +72,47 @@ export default function ServiceOrdersPage() {
   };
 
   const fetchLineItems = async (orderId) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('service_line_items')
       .select('*')
       .eq('service_order_id', orderId)
       .eq('dealer_id', dealerId)
-      .order('sort_order');
+      .order('sort_order')
+      .order('created_at');
+    if (error) alert('Could not load line items: ' + error.message);
     setLineItems(data || []);
+  };
+
+  const customerName = (c) => c ? (c.name || [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed customer') : '';
+
+  // One place that turns line items into order totals. Discounts are
+  // subtracted (entered as a positive amount), fees are added.
+  const computeTotals = (items) => {
+    const sumOf = (type) => (items || []).filter(i => i.line_type === type).reduce((s, i) => s + (parseFloat(i.total) || 0), 0);
+    const parts = sumOf('parts');
+    const labor = sumOf('labor');
+    const sublet = sumOf('sublet');
+    const fees = sumOf('fee');
+    const discount = Math.abs(sumOf('discount'));
+    return { parts, labor, sublet, fees, discount, subtotal: parts + labor + sublet + fees - discount };
+  };
+
+  // Re-read the order's line items and write the totals back to the order.
+  const recalcTotals = async (orderId) => {
+    const { data: items, error } = await supabase
+      .from('service_line_items')
+      .select('line_type, total')
+      .eq('service_order_id', orderId)
+      .eq('dealer_id', dealerId);
+    if (error) { alert('Could not recalculate order total: ' + error.message); return; }
+    const t = computeTotals(items);
+    const order = orders.find(o => o.id === orderId);
+    const tax = parseFloat(order?.tax) || 0;
+    const { error: updError } = await supabase.from('service_orders').update({
+      parts_cost: t.parts, labor_cost: t.labor, sublet_cost: t.sublet, discount: t.discount,
+      total: t.subtotal + tax
+    }).eq('id', orderId).eq('dealer_id', dealerId);
+    if (updError) alert('Could not update order total: ' + updError.message);
   };
 
   const handleSave = async () => {
@@ -107,10 +143,12 @@ export default function ServiceOrdersPage() {
     if (form.status === 'in_progress' && !editingOrder?.started_at) payload.started_at = new Date().toISOString();
     if (form.status === 'completed' && !editingOrder?.completed_at) payload.completed_at = new Date().toISOString();
 
-    if (editingOrder) {
-      await supabase.from('service_orders').update(payload).eq('id', editingOrder.id);
-    } else {
-      await supabase.from('service_orders').insert(payload);
+    const { error } = editingOrder
+      ? await supabase.from('service_orders').update(payload).eq('id', editingOrder.id).eq('dealer_id', dealerId)
+      : await supabase.from('service_orders').insert(payload);
+    if (error) {
+      alert('Could not save service order: ' + error.message);
+      return;
     }
     setShowModal(false);
     setEditingOrder(null);
@@ -144,46 +182,49 @@ export default function ServiceOrdersPage() {
     const updates = { status };
     if (status === 'in_progress') updates.started_at = new Date().toISOString();
     if (status === 'completed') updates.completed_at = new Date().toISOString();
-    await supabase.from('service_orders').update(updates).eq('id', id);
+    const { error } = await supabase.from('service_orders').update(updates).eq('id', id).eq('dealer_id', dealerId);
+    if (error) alert('Could not update status: ' + error.message);
     fetchOrders();
   };
 
   const deleteOrder = async (id) => {
-    if (!confirm('Delete this service order?')) return;
-    await supabase.from('service_orders').delete().eq('id', id);
+    if (!confirm('Delete this service order and all its line items? This cannot be undone.')) return;
+    const { error } = await supabase.from('service_orders').delete().eq('id', id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not delete service order: ' + error.message); return; }
     fetchOrders();
   };
 
   const addLineItem = async () => {
-    const total = parseFloat(lineForm.quantity || 1) * parseFloat(lineForm.unit_price || 0);
-    await supabase.from('service_line_items').insert({
+    const qty = parseFloat(lineForm.quantity || 1);
+    const price = parseFloat(lineForm.unit_price || 0);
+    // Discounts are stored as a positive amount and subtracted in computeTotals
+    const total = lineForm.line_type === 'discount' ? Math.abs(qty * price) : qty * price;
+    const { error } = await supabase.from('service_line_items').insert({
       service_order_id: activeOrderId,
       dealer_id: dealerId,
       line_type: lineForm.line_type,
       description: lineForm.description,
-      quantity: parseFloat(lineForm.quantity || 1),
-      unit_price: parseFloat(lineForm.unit_price || 0),
+      quantity: qty,
+      unit_price: price,
       total,
       part_number: lineForm.part_number || null,
       labor_hours: lineForm.labor_hours ? parseFloat(lineForm.labor_hours) : null,
-      labor_rate: lineForm.labor_rate ? parseFloat(lineForm.labor_rate) : null
+      labor_rate: lineForm.labor_rate ? parseFloat(lineForm.labor_rate) : null,
+      sort_order: lineItems.length
     });
-    // Update order totals
-    const { data: items } = await supabase.from('service_line_items').select('*').eq('service_order_id', activeOrderId);
-    const parts = (items || []).filter(i => i.line_type === 'parts').reduce((s, i) => s + parseFloat(i.total || 0), 0);
-    const labor = (items || []).filter(i => i.line_type === 'labor').reduce((s, i) => s + parseFloat(i.total || 0), 0);
-    const sublet = (items || []).filter(i => i.line_type === 'sublet').reduce((s, i) => s + parseFloat(i.total || 0), 0);
-    await supabase.from('service_orders').update({
-      parts_cost: parts, labor_cost: labor, sublet_cost: sublet, total: parts + labor + sublet
-    }).eq('id', activeOrderId);
+    if (error) { alert('Could not add line item: ' + error.message); return; }
+    await recalcTotals(activeOrderId);
 
     setLineForm({ line_type: 'labor', description: '', quantity: '1', unit_price: '0', part_number: '', labor_hours: '', labor_rate: '' });
     fetchLineItems(activeOrderId);
     fetchOrders();
   };
 
-  const deleteLineItem = async (itemId) => {
-    await supabase.from('service_line_items').delete().eq('id', itemId);
+  const deleteLineItem = async (item) => {
+    if (!confirm(`Remove "${item.description}" from this order?`)) return;
+    const { error } = await supabase.from('service_line_items').delete().eq('id', item.id).eq('dealer_id', dealerId);
+    if (error) { alert('Could not remove line item: ' + error.message); return; }
+    await recalcTotals(activeOrderId);
     fetchLineItems(activeOrderId);
     fetchOrders();
   };
@@ -213,7 +254,7 @@ export default function ServiceOrdersPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: theme.text, margin: 0 }}>Service Orders</h1>
-          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Manage repair and service work orders</p>
+          <p style={{ color: theme.textSecondary, fontSize: '14px', margin: '4px 0 0' }}>Work orders for repairs and recon: what's being fixed, who's on it, and what it costs.</p>
         </div>
         <button onClick={() => { resetForm(); setEditingOrder(null); setShowModal(true); }} style={{
           padding: '10px 20px', backgroundColor: theme.accent, color: '#fff',
@@ -261,7 +302,9 @@ export default function ServiceOrdersPage() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: theme.textSecondary }}>Loading...</div>
       ) : filtered.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>No service orders found</div>
+        <div style={{ textAlign: 'center', padding: '60px', color: theme.textMuted, backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}` }}>
+          {orders.length === 0 ? 'No service orders yet. Click + New Order to start one.' : 'No orders with this status.'}
+        </div>
       ) : (
         <div style={{ backgroundColor: theme.bgCard, borderRadius: '12px', border: `1px solid ${theme.border}`, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
@@ -280,7 +323,7 @@ export default function ServiceOrdersPage() {
                   <tr key={order.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
                     <td style={{ padding: '12px', fontWeight: '600', color: theme.text }}>{order.order_number || '-'}</td>
                     <td style={{ padding: '12px', color: theme.text }}>{veh ? `${veh.year} ${veh.make} ${veh.model}` : '-'}</td>
-                    <td style={{ padding: '12px', color: theme.textSecondary }}>{cust ? `${cust.first_name} ${cust.last_name}` : '-'}</td>
+                    <td style={{ padding: '12px', color: theme.textSecondary }}>{cust ? customerName(cust) : '-'}</td>
                     <td style={{ padding: '12px' }}>
                       <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '12px', backgroundColor: theme.accentBg, color: theme.accent }}>{orderTypes[order.order_type] || order.order_type}</span>
                     </td>
@@ -331,7 +374,7 @@ export default function ServiceOrdersPage() {
                 <label style={labelStyle}>Customer</label>
                 <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} style={inputStyle}>
                   <option value="">Select customer</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
+                  {customers.map(c => <option key={c.id} value={c.id}>{customerName(c)}</option>)}
                 </select>
               </div>
               <div>
@@ -373,7 +416,7 @@ export default function ServiceOrdersPage() {
                 <input type="date" value={form.promised_date} onChange={e => setForm({ ...form, promised_date: e.target.value })} style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Vendor (Sublet)</label>
+                <label style={labelStyle}>Vendor (Sublet = work sent to an outside shop)</label>
                 <select value={form.vendor_id} onChange={e => setForm({ ...form, vendor_id: e.target.value })} style={inputStyle}>
                   <option value="">None</option>
                   {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -418,7 +461,11 @@ export default function ServiceOrdersPage() {
             </div>
 
             {/* Existing items */}
-            {lineItems.length > 0 && (
+            {lineItems.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '16px', color: theme.textMuted, fontSize: '13px', marginBottom: '8px' }}>
+                No line items yet. Add labor, parts, fees or discounts below.
+              </div>
+            ) : (
               <div style={{ marginBottom: '16px' }}>
                 {lineItems.map(item => (
                   <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: `1px solid ${theme.border}` }}>
@@ -427,14 +474,24 @@ export default function ServiceOrdersPage() {
                       <span style={{ color: theme.text, fontSize: '13px' }}>{item.description}</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ color: theme.text, fontWeight: '600', fontSize: '13px' }}>${parseFloat(item.total || 0).toFixed(2)}</span>
-                      <button onClick={() => deleteLineItem(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>×</button>
+                      <span style={{ color: item.line_type === 'discount' ? '#22c55e' : theme.text, fontWeight: '600', fontSize: '13px' }}>
+                        {item.line_type === 'discount' ? '-' : ''}${Math.abs(parseFloat(item.total || 0)).toFixed(2)}
+                      </span>
+                      <button onClick={() => deleteLineItem(item)} title="Remove line item" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>×</button>
                     </div>
                   </div>
                 ))}
-                <div style={{ padding: '8px 12px', fontWeight: '700', color: theme.text, textAlign: 'right' }}>
-                  Total: ${lineItems.reduce((s, i) => s + parseFloat(i.total || 0), 0).toFixed(2)}
-                </div>
+                {(() => {
+                  const order = orders.find(o => o.id === activeOrderId);
+                  const tax = parseFloat(order?.tax) || 0;
+                  const t = computeTotals(lineItems);
+                  return (
+                    <div style={{ padding: '8px 12px', fontWeight: '700', color: theme.text, textAlign: 'right' }}>
+                      {tax > 0 && <div style={{ fontWeight: '400', fontSize: '12px', color: theme.textMuted }}>Includes ${tax.toFixed(2)} tax</div>}
+                      Total: ${(t.subtotal + tax).toFixed(2)}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -447,6 +504,12 @@ export default function ServiceOrdersPage() {
                   <select value={lineForm.line_type} onChange={e => setLineForm({ ...lineForm, line_type: e.target.value })} style={inputStyle}>
                     {['labor', 'parts', 'sublet', 'fee', 'discount'].map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
+                  <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '4px' }}>
+                    {lineForm.line_type === 'discount' ? 'Enter the discount as a positive amount; it is subtracted from the total.'
+                      : lineForm.line_type === 'sublet' ? 'Sublet = work sent out to another shop.'
+                      : lineForm.line_type === 'fee' ? 'Shop supplies, disposal, and other fees. Added to the total.'
+                      : ''}
+                  </div>
                 </div>
                 <div>
                   <label style={labelStyle}>Description *</label>

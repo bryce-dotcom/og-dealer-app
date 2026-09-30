@@ -124,8 +124,9 @@ export default function DealFinderPage() {
         // Update
         const { error } = await supabase
           .from('saved_vehicle_searches')
-          .update(payload)
-          .eq('id', selectedSearch.id);
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', selectedSearch.id)
+          .eq('dealer_id', dealer.id);
 
         if (error) {
           console.error('Update error:', error);
@@ -141,13 +142,10 @@ export default function DealFinderPage() {
         setSaveError(null);
       } else {
         // Insert
-        console.log('Inserting search with payload:', payload);
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from('saved_vehicle_searches')
           .insert(payload)
           .select();
-
-        console.log('Insert result:', { data, error });
 
         if (error) {
           console.error('Insert error:', error);
@@ -156,7 +154,6 @@ export default function DealFinderPage() {
           return;
         }
 
-        console.log('Search saved successfully!', data);
         loadSearches();
         setShowAddSearch(false);
         resetForm();
@@ -227,22 +224,28 @@ export default function DealFinderPage() {
     const { error } = await supabase
       .from('saved_vehicle_searches')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('dealer_id', dealer.id);
 
-    if (!error) {
-      loadSearches();
+    if (error) {
+      alert('Failed to delete search: ' + error.message);
+      return;
     }
+    loadSearches();
   };
 
   const handleToggleActive = async (search) => {
     const { error } = await supabase
       .from('saved_vehicle_searches')
-      .update({ active: !search.active })
-      .eq('id', search.id);
+      .update({ active: !search.active, updated_at: new Date().toISOString() })
+      .eq('id', search.id)
+      .eq('dealer_id', dealer.id);
 
-    if (!error) {
-      loadSearches();
+    if (error) {
+      alert('Failed to update search: ' + error.message);
+      return;
     }
+    loadSearches();
   };
 
   const handleRunAllSearches = async () => {
@@ -256,19 +259,14 @@ export default function DealFinderPage() {
         body: { dealer_id: dealer.id }
       });
 
-      console.log('Edge Function response:', { data, error });
-
-      if (error) {
-        console.error('Edge Function error details:', JSON.stringify(error, null, 2));
-        throw error;
-      }
+      if (error) throw error;
 
       if (!data) {
-        throw new Error('No data returned from Edge Function');
+        throw new Error('The search service did not respond. Please try again.');
       }
 
       if (!data.success) {
-        throw new Error(data.error || 'Edge Function returned success=false');
+        throw new Error(data.error || 'The search did not finish. Please try again.');
       }
 
       if (data.deals_found === 0) {
@@ -280,8 +278,7 @@ export default function DealFinderPage() {
       await loadDealAlerts();
     } catch (error) {
       console.error('Error running searches:', error);
-      console.error('Error details:', JSON.stringify(error, null, 2));
-      alert('Error running searches: ' + (error.message || JSON.stringify(error)));
+      alert('Error running searches: ' + (error.message || 'Unknown error'));
     } finally {
       setRunningSearch(false);
     }
@@ -295,11 +292,14 @@ export default function DealFinderPage() {
         actioned_at: new Date().toISOString(),
         viewed_at: status === 'viewed' ? new Date().toISOString() : undefined,
       })
-      .eq('id', dealId);
+      .eq('id', dealId)
+      .eq('dealer_id', dealer.id);
 
-    if (!error) {
-      loadDealAlerts();
+    if (error) {
+      alert('Failed to update deal: ' + error.message);
+      return;
     }
+    loadDealAlerts();
   };
 
   const markAsViewed = async (dealId) => {
@@ -307,6 +307,7 @@ export default function DealFinderPage() {
       .from('deal_alerts')
       .update({ viewed_at: new Date().toISOString() })
       .eq('id', dealId)
+      .eq('dealer_id', dealer.id)
       .is('viewed_at', null);
 
     if (!error) {
@@ -364,7 +365,7 @@ export default function DealFinderPage() {
               Deal Finder
             </h1>
             <p style={{ color: '#71717a', margin: '4px 0 0', fontSize: '14px' }}>
-              AI finds good deals for you automatically (runs daily at 3am)
+              Save the kinds of cars you want to buy, then click "Run All Searches Now" to find listings priced under market
             </p>
           </div>
           <div style={{ display: 'flex', gap: '12px' }}>
@@ -544,25 +545,25 @@ export default function DealFinderPage() {
                     <div>
                       <div style={{ fontSize: '11px', color: '#71717a', marginBottom: '4px' }}>Price</div>
                       <div style={{ fontSize: '20px', fontWeight: '700', color: '#fff' }}>
-                        ${deal.price?.toLocaleString()}
+                        {deal.price != null ? `$${Number(deal.price).toLocaleString()}` : '—'}
                       </div>
                     </div>
-                    <div>
+                    <div title="MMR (Manheim Market Report): the typical wholesale auction price for this car">
                       <div style={{ fontSize: '11px', color: '#71717a', marginBottom: '4px' }}>MMR Value</div>
                       <div style={{ fontSize: '16px', fontWeight: '600', color: '#a1a1aa' }}>
-                        ${deal.mmr?.toLocaleString()}
+                        {deal.mmr != null ? `$${Number(deal.mmr).toLocaleString()}` : '—'}
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: '11px', color: '#71717a', marginBottom: '4px' }}>Savings</div>
                       <div style={{ fontSize: '16px', fontWeight: '700', color: '#22c55e' }}>
-                        ${deal.savings?.toLocaleString()} ({deal.savings_percentage}%)
+                        {deal.savings != null ? `$${Number(deal.savings).toLocaleString()}${deal.savings_percentage != null ? ` (${deal.savings_percentage}%)` : ''}` : '—'}
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: '11px', color: '#71717a', marginBottom: '4px' }}>Est. Profit</div>
                       <div style={{ fontSize: '16px', fontWeight: '700', color: '#f97316' }}>
-                        {deal.estimated_profit ? `$${deal.estimated_profit.toLocaleString()}` : 'N/A'}
+                        {deal.estimated_profit != null ? `$${Number(deal.estimated_profit).toLocaleString()}` : '—'}
                       </div>
                     </div>
                   </div>
@@ -573,7 +574,7 @@ export default function DealFinderPage() {
                       <span style={{ color: '#71717a' }}>Miles:</span> <span style={{ color: '#fff', fontWeight: '600' }}>{deal.miles?.toLocaleString() || 'Unknown'}</span>
                     </div>
                     {deal.bhph_score && (
-                      <div>
+                      <div title="How good this car is for Buy Here Pay Here financing (1-10)">
                         <span style={{ color: '#71717a' }}>BHPH Score:</span> <span style={{ color: '#fff', fontWeight: '600' }}>{deal.bhph_score}/10</span>
                       </div>
                     )}
@@ -649,7 +650,9 @@ export default function DealFinderPage() {
               <div style={{ ...cardStyle, textAlign: 'center', color: '#71717a', padding: '40px' }}>
                 <div style={{ fontSize: '16px', marginBottom: '8px' }}>No deals yet</div>
                 <div style={{ fontSize: '14px' }}>
-                  {filter === 'new' ? 'Create a saved search and AI will find deals for you automatically!' : 'No deals in this filter'}
+                  {filter === 'new'
+                    ? (searches.length === 0 ? 'Click "+ New Search" to save the kind of car you want, then click "Run All Searches Now".' : 'Click "Run All Searches Now" to look for new deals.')
+                    : 'No deals in this filter'}
                 </div>
               </div>
             )}
@@ -761,7 +764,6 @@ export default function DealFinderPage() {
                   </select>
                   <div style={{ fontSize: '11px', color: '#71717a', marginTop: '4px' }}>
                     {!formData.make && '💡 Select a make first'}
-                    {formData.make && '💡 Tip: Use commas for multiple (e.g., "2500, 3500")'}
                   </div>
                 </div>
                 <div>
