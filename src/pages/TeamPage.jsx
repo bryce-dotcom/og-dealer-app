@@ -194,7 +194,7 @@ export default function TeamPage() {
 
   async function inviteEmployee(emp) {
     if (!emp.email) { alert('Employee needs an email address.'); return; }
-    if (!confirm(`Send app invite to ${emp.email}?`)) return;
+    if (!confirm(`Email ${emp.email} a link to set their password?\n\nAny link they were sent before will stop working.`)) return;
     setInviting(true);
     try {
       // supabase.functions.invoke() does NOT throw on non-2xx — it returns { data, error }.
@@ -233,7 +233,7 @@ export default function TeamPage() {
         setInviting(false);
         return;
       }
-      alert(`Invitation sent to ${emp.email}!`);
+      alert(`Sent to ${emp.email}.\n\nTell them to open the NEWEST email from noreply@ogdix.com and tap the green button. It works once and expires in 24 hours.`);
       await refreshEmployees();
       const { data } = await supabase.from('employees').select('*').eq('id', emp.id).single();
       if (data) setSelectedEmployee(data);
@@ -368,22 +368,28 @@ export default function TeamPage() {
             <div style={{ padding: '20px', maxHeight: '550px', overflowY: 'auto' }}>
               {activeTab === 'info' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  {isAdmin && !(selectedEmployee || currentEmployee)?.user_id && (
-                    <div style={{ gridColumn: 'span 2', padding: '16px', background: 'linear-gradient(135deg, rgba(139,92,246,0.15) 0%, rgba(109,40,217,0.15) 100%)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>📧 Invite to App</div>
-                        <div style={{ color: theme.textMuted, fontSize: '13px' }}>Send {(selectedEmployee || currentEmployee).name} an email to set up their login</div>
+                  {/* user_id is set as soon as a link is sent, so it does NOT mean the
+                      person has finished setting a password — keep the button available. */}
+                  {isAdmin && (() => {
+                    const emp = selectedEmployee || currentEmployee;
+                    const hasLogin = !!emp?.user_id;
+                    const firstName = (emp?.name || '').trim().split(/\s+/)[0] || 'them';
+                    return (
+                      <div style={{ gridColumn: 'span 2', padding: '16px', background: 'linear-gradient(135deg, rgba(139,92,246,0.15) 0%, rgba(109,40,217,0.15) 100%)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ flex: '1 1 240px' }}>
+                          <div style={{ color: theme.text, fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>📧 {hasLogin ? 'App login' : 'Invite to App'}</div>
+                          <div style={{ color: theme.textMuted, fontSize: '13px', lineHeight: 1.45 }}>
+                            {hasLogin
+                              ? `Login created${emp.invited_at ? ` · last link sent ${new Date(emp.invited_at).toLocaleDateString()}` : ''}. If ${firstName} can't sign in, send a fresh link to set a password.`
+                              : `Send ${emp.name} an email to set up their login.`}
+                          </div>
+                        </div>
+                        <button onClick={() => inviteEmployee(emp)} disabled={inviting} style={{ padding: '10px 20px', background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: inviting ? 'not-allowed' : 'pointer', opacity: inviting ? 0.6 : 1, whiteSpace: 'nowrap' }}>
+                          {inviting ? 'Sending...' : hasLogin ? 'Send login link' : 'Send Invite'}
+                        </button>
                       </div>
-                      <button onClick={() => inviteEmployee(selectedEmployee || currentEmployee)} disabled={inviting} style={{ padding: '10px 20px', background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: inviting ? 'not-allowed' : 'pointer', opacity: inviting ? 0.6 : 1 }}>
-                        {inviting ? 'Sending...' : 'Send Invite'}
-                      </button>
-                    </div>
-                  )}
-                  {isAdmin && (selectedEmployee || currentEmployee)?.user_id && (
-                    <div style={{ gridColumn: 'span 2', padding: '12px 16px', backgroundColor: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', color: '#22c55e', fontWeight: '600', fontSize: '14px' }}>
-                      ✓ Has app access
-                    </div>
-                  )}
+                    );
+                  })()}
                   <div><label style={labelStyle}>Name</label><input type="text" value={(selectedEmployee || currentEmployee).name || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), name: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
                   <div><label style={labelStyle}>Email</label><input type="email" value={(selectedEmployee || currentEmployee).email || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), email: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
                   <div><label style={labelStyle}>Phone</label><input type="tel" value={(selectedEmployee || currentEmployee).phone || ''} onChange={(e) => setSelectedEmployee({ ...(selectedEmployee || currentEmployee), phone: e.target.value })} disabled={!editMode} style={{ ...inputStyle, opacity: editMode ? 1 : 0.7 }} /></div>
